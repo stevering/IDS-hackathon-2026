@@ -1,7 +1,6 @@
 import { xai } from "@ai-sdk/xai";
 import { streamText, stepCountIs, convertToModelMessages } from "ai";
 import { createMCPClient, type MCPClient } from "@ai-sdk/mcp";
-import { Experimental_StdioMCPTransport } from "@ai-sdk/mcp/mcp-stdio";
 import { GUARDIAN_SYSTEM_PROMPT } from "@/lib/system-prompt";
 
 export const maxDuration = 60;
@@ -12,46 +11,47 @@ function ensureSsePath(url: string): string {
   return `${trimmed}/sse`;
 }
 
-async function connectSSE(
+type CachedMCP = { client: MCPClient; tools: Record<string, unknown> };
+
+const globalCache = globalThis as unknown as {
+  __mcpSseClients?: Map<string, CachedMCP>;
+};
+if (!globalCache.__mcpSseClients) {
+  globalCache.__mcpSseClients = new Map();
+}
+const sseClients = globalCache.__mcpSseClients;
+
+async function getOrConnectSSE(
   url: string,
   label: string,
-): Promise<{ client: MCPClient; tools: Record<string, unknown> }> {
+): Promise<CachedMCP> {
   const sseUrl = ensureSsePath(url);
-  console.log(`[${label}] Connecting to MCP at ${sseUrl} …`);
 
+  const cached = sseClients.get(sseUrl);
+  if (cached) {
+    return cached;
+  }
+
+  console.log(`[${label}] Connecting to MCP at ${sseUrl} …`);
   const client = await createMCPClient({
     transport: { type: "sse", url: sseUrl },
   });
   const tools = await client.tools();
   console.log(`[${label}] Connected — tools:`, Object.keys(tools));
-  return { client, tools };
-}
-
-async function connectStdio(
-  command: string,
-  args: string[],
-  label: string,
-): Promise<{ client: MCPClient; tools: Record<string, unknown> }> {
-  console.log(`[${label}] Spawning MCP via stdio: ${command} ${args.join(" ")} …`);
-
-  const transport = new Experimental_StdioMCPTransport({ command, args });
-  const client = await createMCPClient({ transport });
-  const tools = await client.tools();
-  console.log(`[${label}] Connected — tools:`, Object.keys(tools));
-  return { client, tools };
+  const entry = { client, tools };
+  sseClients.set(sseUrl, entry);
+  return entry;
 }
 
 export async function POST(req: Request) {
   const { messages, figmaMcpUrl, codeProjectPath } = await req.json();
 
-  const mcpClients: MCPClient[] = [];
   let allTools: Record<string, unknown> = {};
   const mcpErrors: string[] = [];
 
   if (figmaMcpUrl) {
     try {
-      const { client, tools } = await connectSSE(figmaMcpUrl, "Figma");
-      mcpClients.push(client);
+      const { tools } = await getOrConnectSSE(figmaMcpUrl, "Figma");
       allTools = { ...allTools, ...tools };
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
@@ -62,17 +62,12 @@ export async function POST(req: Request) {
 
   if (codeProjectPath) {
     try {
-      const { client, tools } = await connectStdio(
-        "npx",
-        ["-y", "@anthropic-ai/mcp-server-filesystem", codeProjectPath],
-        "Code",
-      );
-      mcpClients.push(client);
+      const { tools } = await getOrConnectSSE(codeProjectPath, "Code");
       allTools = { ...allTools, ...tools };
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
       console.error("[Code] MCP connection failed:", msg);
-      mcpErrors.push(`Code MCP (filesystem) connection failed for path "${codeProjectPath}": ${msg}`);
+      mcpErrors.push(`Code MCP (filesystem) connection failed for "${codeProjectPath}": ${msg}`);
     }
   }
 
@@ -90,11 +85,6 @@ export async function POST(req: Request) {
     messages: await convertToModelMessages(messages),
     tools: allTools as Parameters<typeof streamText>[0]["tools"],
     stopWhen: stepCountIs(10),
-    onFinish: async () => {
-      for (const client of mcpClients) {
-        await client.close().catch(console.error);
-      }
-    },
   });
 
   return result.toUIMessageStreamResponse();

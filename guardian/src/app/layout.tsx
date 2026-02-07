@@ -14,7 +14,7 @@ const geistMono = Geist_Mono({
 
 export const metadata: Metadata = {
   title: "DS AI Guardian",
-  description: "Design System drift detector — Figma ↔ Code comparison agent",
+  description: "Design System drift detector — Figma ↔ Code comparison agent2",
 };
 
 export default function RootLayout({

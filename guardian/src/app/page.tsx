@@ -6,7 +6,7 @@ import { useState, useRef, useEffect, useMemo } from "react";
 
 export default function Home() {
   const [figmaMcpUrl, setFigmaMcpUrl] = useState("http://127.0.0.1:3845/sse");
-  const [codeProjectPath, setCodeProjectPath] = useState("");
+  const [codeProjectPath, setCodeProjectPath] = useState("http://[::1]:3846/sse");
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [input, setInput] = useState("");
   const messagesEndRef = useRef<HTMLDivElement>(null);

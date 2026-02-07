@@ -1,0 +1,72 @@
+import requests
+import json
+import time
+
+MCP_BASE_URL = "http://127.0.0.1:3845"
+# Pour IntelliJ, le serveur est souvent accessible via un endpoint simple si le proxy est déjà en place
+# Mais testons l'approche directe recommandée par le protocole MCP SSE
+
+def test_mcp_direct():
+    print(f"--- Test du serveur MCP (Direct) sur {MCP_BASE_URL}/mcp ---")
+    session = requests.Session()
+    post_url = f"{MCP_BASE_URL}/mcp"
+    
+    try:
+        # 1. Initialisation
+        print(f"[1] Envoi de 'initialize' à {post_url}...")
+        init_payload = {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {
+                "protocolVersion": "2024-11-05",
+                "capabilities": {},
+                "clientInfo": {"name": "Test-Client", "version": "1.0.0"}
+            }
+        }
+        
+        headers = {
+            'Content-Type': 'application/json',
+            'Accept': 'application/json, text/event-stream',
+            'Mcp-Protocol-Version': '2024-11-05'
+        }
+        
+        resp = session.post(post_url, json=init_payload, headers=headers)
+        print(f"  Statut: {resp.status_code}")
+        print(f"  Headers: {resp.headers}")
+        
+        session_id = resp.headers.get('Mcp-Session-Id')
+        if session_id:
+            print(f"  [OK] Session ID reçu: {session_id}")
+            headers['Mcp-Session-Id'] = session_id
+
+        # 2. Notification Initialized
+        print(f"\n[2] Envoi de 'notifications/initialized'...")
+        notif_payload = {
+            "jsonrpc": "2.0",
+            "method": "notifications/initialized",
+            "params": {}
+        }
+        resp = session.post(post_url, json=notif_payload, headers=headers)
+        print(f"  Statut: {resp.status_code}")
+
+        # 3. Liste des outils
+        print(f"\n[3] Demande de 'tools/list'...")
+        list_payload = {
+            "jsonrpc": "2.0",
+            "id": 2,
+            "method": "tools/list",
+            "params": {}
+        }
+        resp = session.post(post_url, json=list_payload, headers=headers)
+        print(f"  Statut: {resp.status_code}")
+        if resp.status_code == 200:
+            print(f"  Réponse: {resp.text}")
+        else:
+             print(f"  Erreur: {resp.text}")
+
+    except Exception as e:
+        print(f"  [ERROR] {e}")
+
+if __name__ == "__main__":
+    test_mcp_direct()
