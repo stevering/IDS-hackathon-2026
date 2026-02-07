@@ -107,8 +107,9 @@ body {
   border-collapse: collapse !important;
   margin: 0.75em 0;
   font-size: 0.9em;
-  display: table !important;
+  display: block;
   overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
 }
 
 .markdown-body thead {
@@ -140,4 +141,24 @@ body {
 
 .markdown-body tr:nth-child(even) {
   background: rgba(255, 255, 255, 0.03);
+}
+
+.markdown-body pre {
+  max-width: 100%;
+}
+
+.markdown-body img {
+  max-width: 100%;
+  height: auto;
+}
+
+@media (max-width: 640px) {
+  .markdown-body pre {
+    padding: 0.5em 0.75em;
+    font-size: 0.8em;
+  }
+
+  .markdown-body code {
+    word-break: break-word;
+  }
 }

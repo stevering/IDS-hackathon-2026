@@ -111,9 +111,15 @@ export default function Home() {
   const codeConnected = codeProjectPath.trim().length > 0;
 
   return (
-    <div className="flex h-screen bg-[#0a0a0a] text-white">
+    <div className="flex h-screen bg-[#0a0a0a] text-white overflow-hidden">
+      {settingsOpen && (
+        <div
+          className="fixed inset-0 bg-black/50 z-40 md:hidden"
+          onClick={() => setSettingsOpen(false)}
+        />
+      )}
       <div
-        className={`${settingsOpen ? "w-80" : "w-0"} transition-all duration-200 overflow-hidden border-r border-white/10 bg-[#111]`}
+        className={`${settingsOpen ? "w-80 translate-x-0" : "w-0 -translate-x-full md:translate-x-0"} fixed md:relative z-50 md:z-auto h-full transition-all duration-200 overflow-hidden border-r border-white/10 bg-[#111]`}
       >
         <div className="p-4 w-80">
           <h2 className="text-sm font-semibold text-white/60 uppercase tracking-wider mb-4">
@@ -174,12 +180,12 @@ export default function Home() {
         </div>
       </div>
 
-      <div className="flex-1 flex flex-col">
-        <header className="flex items-center justify-between px-4 py-3 border-b border-white/10">
-          <div className="flex items-center gap-3">
+      <div className="flex-1 flex flex-col min-w-0">
+        <header className="flex items-center justify-between px-3 sm:px-4 py-3 border-b border-white/10">
+          <div className="flex items-center gap-2 sm:gap-3 min-w-0">
             <button
               onClick={() => setSettingsOpen(!settingsOpen)}
-              className="p-2 rounded-md hover:bg-white/5 transition-colors"
+              className="p-2 rounded-md hover:bg-white/5 transition-colors shrink-0"
               title="Toggle settings"
             >
               <svg
@@ -194,30 +200,30 @@ export default function Home() {
                 <circle cx="12" cy="12" r="3" />
               </svg>
             </button>
-            <div>
-              <h1 className="text-sm font-semibold">DS AI Guardian</h1>
-              <p className="text-xs text-white/40">
+            <div className="min-w-0">
+              <h1 className="text-sm font-semibold truncate">DS AI Guardian</h1>
+              <p className="text-xs text-white/40 hidden sm:block">
                 Figma ↔ Code drift detector
               </p>
             </div>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
             <div
               className={`w-2 h-2 rounded-full ${figmaConnected ? "bg-emerald-400" : "bg-white/20"}`}
               title={`Figma MCP: ${figmaConnected ? "configured" : "not configured"}`}
             />
-            <span className="text-xs text-white/30">Figma</span>
+            <span className="text-xs text-white/30 hidden sm:inline">Figma</span>
             <div
-              className={`w-2 h-2 rounded-full ml-2 ${codeConnected ? "bg-emerald-400" : "bg-white/20"}`}
+              className={`w-2 h-2 rounded-full ml-1 sm:ml-2 ${codeConnected ? "bg-emerald-400" : "bg-white/20"}`}
               title={`Code MCP: ${codeConnected ? "configured" : "not configured"}`}
             />
-            <span className="text-xs text-white/30">Code</span>
+            <span className="text-xs text-white/30 hidden sm:inline">Code</span>
           </div>
         </header>
 
-        <div className="flex-1 overflow-y-auto px-4 py-6">
+        <div className="flex-1 overflow-y-auto px-3 sm:px-4 py-4 sm:py-6">
           {messages.length === 0 && (
-            <div className="flex flex-col items-center justify-center h-full text-center">
+            <div className="flex flex-col items-center justify-center h-full text-center px-4">
               <div className="text-4xl mb-4">🛡️</div>
               <h2 className="text-lg font-semibold mb-2">
                 Welcome to DS AI Guardian
@@ -232,13 +238,13 @@ export default function Home() {
                   onClick={() => sendMessage({ text: "Check the Button component" })}
                   className="block mx-auto px-3 py-1.5 rounded-md bg-white/5 hover:bg-white/10 transition-colors"
                 >
-                  "Check the Button component"
+                  &quot;Check the Button component&quot;
                 </button>
                 <button
                   onClick={() => sendMessage({ text: "List all components available in Figma" })}
                   className="block mx-auto px-3 py-1.5 rounded-md bg-white/5 hover:bg-white/10 transition-colors"
                 >
-                  "List all components available in Figma"
+                  &quot;List all components available in Figma&quot;
                 </button>
               </div>
             </div>
@@ -250,7 +256,7 @@ export default function Home() {
               className={`mb-4 ${m.role === "user" ? "flex justify-end" : ""}`}
             >
               <div
-                className={`max-w-[80%] rounded-lg px-4 py-3 text-sm leading-relaxed ${
+                className={`max-w-full sm:max-w-[80%] rounded-lg px-3 sm:px-4 py-2.5 sm:py-3 text-sm leading-relaxed ${
                   m.role === "user"
                     ? "bg-blue-600/20 border border-blue-500/20"
                     : "bg-white/5 border border-white/5"
@@ -261,12 +267,12 @@ export default function Home() {
                     const isLastMsg = m === messages[messages.length - 1];
                     const segments = parseTextWithImages(part.text, isLoading && isLastMsg);
                     return (
-                      <div key={i} className="markdown-body">
+                      <div key={i} className="markdown-body overflow-x-auto">
                         {segments.map((seg, j) => {
                           if (seg.type === "image") {
                             if (!seg.complete) {
                               return (
-                                <div key={j} className="my-3 flex flex-col items-center justify-center w-64 h-48 bg-white/5 border border-white/10 rounded-lg">
+                                <div key={j} className="my-3 flex flex-col items-center justify-center w-full max-w-64 h-48 bg-white/5 border border-white/10 rounded-lg">
                                   <svg className="animate-spin h-8 w-8 text-white/30 mb-2" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
                                     <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
                                     <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
@@ -316,7 +322,7 @@ export default function Home() {
 
           {isLoading && (
             <div className="mb-4">
-              <div className="max-w-[80%] rounded-lg px-4 py-3 bg-white/5 border border-white/5">
+              <div className="max-w-full sm:max-w-[80%] rounded-lg px-3 sm:px-4 py-3 bg-white/5 border border-white/5">
                 <div className="flex items-center gap-2 text-sm text-white/40">
                   <div className="animate-pulse">●</div>
                   Thinking...
@@ -326,7 +332,7 @@ export default function Home() {
           )}
 
           {error && (
-            <div className="mb-4 p-3 bg-red-500/10 border border-red-500/20 rounded-lg text-sm text-red-400">
+            <div className="mb-4 p-3 bg-red-500/10 border border-red-500/20 rounded-lg text-sm text-red-400 break-words">
               Error: {error.message}
             </div>
           )}
@@ -336,7 +342,7 @@ export default function Home() {
 
         <form
           onSubmit={onSubmit}
-          className="px-4 py-3 border-t border-white/10"
+          className="px-3 sm:px-4 py-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))] border-t border-white/10"
         >
           <div className="flex gap-2">
             <input
@@ -344,13 +350,13 @@ export default function Home() {
               value={input}
               onChange={(e) => setInput(e.target.value)}
               placeholder="Ask Guardian to check a component..."
-              className={`flex-1 bg-white/5 border border-white/10 rounded-lg px-4 py-3 text-sm text-white placeholder:text-white/20 focus:outline-none focus:border-white/30 ${isLoading ? "opacity-50" : ""}`}
+              className={`flex-1 min-w-0 bg-white/5 border border-white/10 rounded-lg px-3 sm:px-4 py-3 text-sm text-white placeholder:text-white/20 focus:outline-none focus:border-white/30 ${isLoading ? "opacity-50" : ""}`}
               readOnly={isLoading}
             />
             <button
               type="submit"
               disabled={isLoading || !input.trim()}
-              className="px-4 py-3 bg-blue-600 hover:bg-blue-500 disabled:bg-white/5 disabled:text-white/20 rounded-lg text-sm font-medium transition-colors"
+              className="px-3 sm:px-4 py-3 bg-blue-600 hover:bg-blue-500 disabled:bg-white/5 disabled:text-white/20 rounded-lg text-sm font-medium transition-colors shrink-0"
             >
               Send
             </button>
