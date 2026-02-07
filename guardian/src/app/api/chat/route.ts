@@ -7,6 +7,7 @@ export const maxDuration = 120;
 
 const TOOL_TIMEOUT_MS = 30_000;
 const CONNECTION_TIMEOUT_MS = 10_000;
+const MAX_AGE_MS = 2 * 60_000;
 
 function ensureSsePath(url: string): string {
   const trimmed = url.trim().replace(/\/+$/, "");
@@ -27,25 +28,11 @@ function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise
   });
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function wrapToolsWithTimeout(tools: Record<string, any>): Record<string, any> {
-  const wrapped: Record<string, unknown> = {};
-  for (const [name, tool] of Object.entries(tools)) {
-    wrapped[name] = {
-      ...tool,
-      execute: async (...args: unknown[]) => {
-        return withTimeout(
-          tool.execute(...args),
-          TOOL_TIMEOUT_MS,
-          `Tool "${name}"`,
-        );
-      },
-    };
-  }
-  return wrapped;
-}
-
-type CachedMCP = { client: MCPClient; tools: Record<string, unknown> };
+type CachedMCP = {
+  client: MCPClient;
+  tools: Record<string, unknown>;
+  connectedAt: number;
+};
 
 const globalCache = globalThis as unknown as {
   __mcpSseClients?: Map<string, CachedMCP>;
@@ -55,17 +42,8 @@ if (!globalCache.__mcpSseClients) {
 }
 const sseClients = globalCache.__mcpSseClients;
 
-async function getOrConnectSSE(
-  url: string,
-  label: string,
-): Promise<CachedMCP> {
+async function connectSSE(url: string, label: string): Promise<CachedMCP> {
   const sseUrl = ensureSsePath(url);
-
-  const cached = sseClients.get(sseUrl);
-  if (cached) {
-    return cached;
-  }
-
   console.log(`[${label}] Connecting to MCP at ${sseUrl} …`);
   const client = await withTimeout(
     createMCPClient({ transport: { type: "sse", url: sseUrl } }),
@@ -78,9 +56,71 @@ async function getOrConnectSSE(
     `Tool discovery for ${label}`,
   );
   console.log(`[${label}] Connected — tools:`, Object.keys(tools));
-  const entry = { client, tools: wrapToolsWithTimeout(tools) };
+  const entry: CachedMCP = { client, tools, connectedAt: Date.now() };
   sseClients.set(sseUrl, entry);
   return entry;
+}
+
+async function evict(url: string) {
+  const sseUrl = ensureSsePath(url);
+  const cached = sseClients.get(sseUrl);
+  sseClients.delete(sseUrl);
+  if (cached) {
+    try { await cached.client.close(); } catch { /* ignore */ }
+  }
+}
+
+async function getOrConnectSSE(url: string, label: string): Promise<CachedMCP> {
+  const sseUrl = ensureSsePath(url);
+  const cached = sseClients.get(sseUrl);
+
+  if (cached && Date.now() - cached.connectedAt < MAX_AGE_MS) {
+    return cached;
+  }
+
+  if (cached) {
+    console.log(`[${label}] Connection stale (age ${Math.round((Date.now() - cached.connectedAt) / 1000)}s), reconnecting…`);
+    await evict(url);
+  }
+
+  return connectSSE(url, label);
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function wrapToolsWithRetry(tools: Record<string, any>, url: string, label: string): Record<string, any> {
+  const wrapped: Record<string, unknown> = {};
+  for (const [name, tool] of Object.entries(tools)) {
+    wrapped[name] = {
+      ...tool,
+      execute: async (...args: unknown[]) => {
+        try {
+          return await withTimeout(
+            tool.execute(...args),
+            TOOL_TIMEOUT_MS,
+            `Tool "${name}"`,
+          );
+        } catch (firstError) {
+          console.warn(`[${label}] Tool "${name}" failed, reconnecting: ${firstError instanceof Error ? firstError.message : firstError}`);
+          await evict(url);
+          try {
+            const fresh = await connectSSE(url, label);
+            const freshTool = fresh.tools[name];
+            if (!freshTool || typeof (freshTool as { execute?: unknown }).execute !== "function") {
+              throw firstError;
+            }
+            return await withTimeout(
+              (freshTool as { execute: (...a: unknown[]) => Promise<unknown> }).execute(...args),
+              TOOL_TIMEOUT_MS,
+              `Tool "${name}" (retry)`,
+            );
+          } catch {
+            throw firstError;
+          }
+        }
+      },
+    };
+  }
+  return wrapped;
 }
 
 export async function POST(req: Request) {
@@ -92,11 +132,11 @@ export async function POST(req: Request) {
   if (figmaMcpUrl) {
     try {
       const { tools } = await getOrConnectSSE(figmaMcpUrl, "Figma");
-      allTools = { ...allTools, ...tools };
+      allTools = { ...allTools, ...wrapToolsWithRetry(tools, figmaMcpUrl, "Figma") };
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
       console.error("[Figma] MCP connection failed:", msg);
-      sseClients.delete(ensureSsePath(figmaMcpUrl));
+      await evict(figmaMcpUrl);
       mcpErrors.push(`Figma MCP connection failed (${ensureSsePath(figmaMcpUrl)}): ${msg}`);
     }
   }
@@ -104,11 +144,11 @@ export async function POST(req: Request) {
   if (codeProjectPath) {
     try {
       const { tools } = await getOrConnectSSE(codeProjectPath, "Code");
-      allTools = { ...allTools, ...tools };
+      allTools = { ...allTools, ...wrapToolsWithRetry(tools, codeProjectPath, "Code") };
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
       console.error("[Code] MCP connection failed:", msg);
-      sseClients.delete(ensureSsePath(codeProjectPath));
+      await evict(codeProjectPath);
       mcpErrors.push(`Code MCP (filesystem) connection failed for "${codeProjectPath}": ${msg}`);
     }
   }
