@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>🛡️ DS AI Guardian - MCP Prompt</title>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, sans-serif; max-width: 800px; margin: 0 auto; padding: 20px; }
+        .chat { height: 500px; overflow-y: auto; border: 1px solid #ddd; padding: 20px; margin-bottom: 20px; background: #f9f9f9; }
+        .message { margin-bottom: 15px; padding: 10px; border-radius: 10px; }
+        .user { background: #007bff; color: white; margin-left: 20%; }
+        .assistant { background: #e9ecef; margin-right: 20%; }
+        .spinner { color: #666; font-style: italic; }
+        input { width: 70%; padding: 12px; border: 1px solid #ddd; border-radius: 5px; }
+        button { padding: 12px 20px; background: #28a745; color: white; border: none; border-radius: 5px; cursor: pointer; }
+        button:hover { background: #218838; }
+        .status { font-size: 0.9em; color: #666; }
+        .tools-list { font-size: 0.8em; color: #444; background: #fff; padding: 8px; border: 1px solid #eee; margin-top: 5px; }
+    </style>
+</head>
+<body>
+<h1>🛡️ DS AI Guardian</h1>
+<p class="status">MCP Figma: <span id="figma-status">checking...</span> | Storybook: <span id="storybook-status">checking...</span></p>
+<div id="figma-tools" class="tools-list" style="display:none;"></div>
+
+<div id="chat" class="chat"></div>
+
+<input type="text" id="prompt" placeholder="Collez un lien Figma (avec node-id) ou tapez 'list tools'" autofocus>
+<button onclick="sendPrompt()">Envoyer au Guardian</button>
+
+<script>
+    const FIGMA_MCP_URL = "/proxy/figma";
+    const STORYBOOK_MCP_URL = "/proxy/storybook";
+    const chat = document.getElementById('chat');
+    const promptInput = document.getElementById('prompt');
+    let figmaSessionId = null;
+    let jsonRpcId = 0;
+    let figmaInitialized = false;
+    let figmaTools = [];
+
+    function mcpHeaders() {
+        const h = {
+            'Content-Type': 'application/json',
+            'Accept': 'application/json, text/event-stream',
+            'MCP-Protocol-Version': '2024-11-05'
+        };
+        if (figmaSessionId) h['MCP-Session-Id'] = figmaSessionId;
+        return h;
+    }
+
+    async function mcpJsonRpc(url, method, params = {}, isNotification = false) {
+        const body = { jsonrpc: '2.0', method };
+        if (!isNotification) body.id = ++jsonRpcId;
+        if (Object.keys(params).length) body.params = params;
+        const res = await fetch(url, { method: 'POST', headers: mcpHeaders(), body: JSON.stringify(body) });
+        const sessionHeader = res.headers.get('MCP-Session-Id') || res.headers.get('mcp-session-id');
+        if (sessionHeader) figmaSessionId = sessionHeader;
+        if (res.status === 202) return {};
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const text = await res.text();
+        if (!text) return {};
+        const data = JSON.parse(text);
+        if (data.error) throw new Error(`MCP error ${data.error.code}: ${data.error.message}`);
+        return data.result || {};
+    }
+
+    async function initFigmaMCP() {
+        if (figmaInitialized) return true;
+        try {
+            await mcpJsonRpc(FIGMA_MCP_URL, 'initialize', {
+                protocolVersion: '2024-11-05',
+                capabilities: { roots: { listChanged: true }, sampling: {} },
+                clientInfo: { name: 'DS-AI-Guardian', version: '1.0.0' }
+            });
+            await mcpJsonRpc(FIGMA_MCP_URL, 'notifications/initialized', {}, true);
+            figmaInitialized = true;
+            return true;
+        } catch (e) {
+            console.warn('Figma MCP init:', e);
+            figmaSessionId = null;
+            figmaInitialized = false;
+            return false;
+        }
+    }
+
+    async function loadFigmaTools() {
+        try {
+            const result = await mcpJsonRpc(FIGMA_MCP_URL, 'tools/list', {});
+            figmaTools = result.tools || [];
+            const toolsDiv = document.getElementById('figma-tools');
+            toolsDiv.style.display = 'block';
+            toolsDiv.innerHTML = '<strong>Figma tools:</strong> ' + figmaTools.map(t => `<code>${t.name}</code>`).join(', ');
+            return figmaTools;
+        } catch (e) {
+            console.warn('tools/list failed:', e);
+            return [];
+        }
+    }
+
+    async function checkStatus() {
+        try {
+            if (!figmaInitialized) await initFigmaMCP();
+            if (figmaInitialized) {
+                if (figmaTools.length === 0) await loadFigmaTools();
+                document.getElementById('figma-status').textContent = '✅ OK';
+            } else {
+                document.getElementById('figma-status').textContent = '❌ Offline';
+            }
+        } catch (e) {
+            document.getElementById('figma-status').textContent = '❌ Offline';
+            figmaSessionId = null;
+            figmaInitialized = false;
+        }
+        try {
+            await mcpJsonRpc(STORYBOOK_MCP_URL, 'tools/list', {});
+            document.getElementById('storybook-status').textContent = '✅ OK';
+        } catch {
+            document.getElementById('storybook-status').textContent = '❌ Offline';
+        }
+    }
+
+    checkStatus();
+    setInterval(checkStatus, 30000);
+
+    function addMessage(role, content) {
+        const msg = document.createElement('div');
+        msg.className = `message ${role}`;
+        msg.innerHTML = content;
+        chat.appendChild(msg);
+        chat.scrollTop = chat.scrollHeight;
+    }
+
+    function escapeHtml(s) {
+        const div = document.createElement('div');
+        div.textContent = s;
+        return div.innerHTML;
+    }
+
+    function parseFigmaUrl(text) {
+        const urlMatch = text.match(/figma\.com\/(?:design|file)\/([\w-]+)/);
+        const nodeMatch = text.match(/node-id=([\w\-:;]+)/);
+        return {
+            fileKey: urlMatch ? urlMatch[1] : null,
+            nodeId: nodeMatch ? nodeMatch[1].replace(/-/g, ':') : null
+        };
+    }
+
+    async function queryGuardian(userPrompt) {
+        addMessage('user', userPrompt);
+
+        if (userPrompt.toLowerCase().trim() === 'list tools') {
+            addMessage('assistant', '<span class="spinner">Listing tools...</span>');
+            const tools = figmaTools.length ? figmaTools : await loadFigmaTools();
+            chat.lastElementChild.innerHTML = tools.length
+                ? '<strong>Figma MCP Tools:</strong><pre style="white-space:pre-wrap;font-size:0.85em;">' + escapeHtml(JSON.stringify(tools, null, 2)) + '</pre>'
+                : 'Aucun tool disponible (Figma MCP offline?)';
+            return;
+        }
+
+        addMessage('assistant', '<span class="spinner">Guardian analyse Figma...</span>');
+
+        const { fileKey, nodeId } = parseFigmaUrl(userPrompt);
+
+        if (!fileKey) {
+            chat.lastElementChild.innerHTML = `<strong>Pas de lien Figma détecté.</strong><br>Collez un lien du type:<br><code>https://www.figma.com/design/ABC123/Name?node-id=12:34</code>`;
+            return;
+        }
+
+        try {
+            if (!figmaInitialized) await initFigmaMCP();
+
+            const args = { fileKey };
+            if (nodeId) args.nodeId = nodeId;
+
+            const result = await mcpJsonRpc(FIGMA_MCP_URL, 'tools/call', {
+                name: 'get_figma_data',
+                arguments: args
+            });
+
+            const figmaText = result.content
+                ? result.content.map(c => c.text || JSON.stringify(c)).join('\n')
+                : JSON.stringify(result, null, 2);
+
+            chat.lastElementChild.innerHTML = `
+                <strong>Figma Data (${fileKey}${nodeId ? ' / node ' + nodeId : ''}):</strong>
+                <pre style="white-space:pre-wrap;font-size:0.85em;max-height:400px;overflow:auto;">${escapeHtml(figmaText)}</pre>
+            `;
+        } catch (e) {
+            chat.lastElementChild.innerHTML = `<strong>Erreur Figma:</strong> ${escapeHtml(e.message)}`;
+        }
+    }
+
+    async function sendPrompt() {
+        const p = promptInput.value.trim();
+        if (!p) return;
+        promptInput.value = '';
+        await queryGuardian(p);
+    }
+
+    promptInput.onkeypress = (e) => { if (e.key === 'Enter') sendPrompt(); };
+</script>
+</body>
+</html>
