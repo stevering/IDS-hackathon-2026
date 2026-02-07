@@ -8,6 +8,41 @@ type TextSegment = { type: "text"; content: string };
 type ImageSegment = { type: "image"; src: string; complete: boolean };
 type Segment = TextSegment | ImageSegment;
 
+function ToolCallProgress({ toolName }: { toolName: string }) {
+  const [elapsed, setElapsed] = useState(0);
+
+  useEffect(() => {
+    const start = Date.now();
+    const interval = setInterval(() => {
+      setElapsed(Math.floor((Date.now() - start) / 1000));
+    }, 1000);
+    return () => clearInterval(interval);
+  }, []);
+
+  const minutes = Math.floor(elapsed / 60);
+  const seconds = elapsed % 60;
+  const timeStr = minutes > 0
+    ? `${minutes}m ${seconds.toString().padStart(2, "0")}s`
+    : `${seconds}s`;
+
+  const isStalled = elapsed >= 15;
+
+  return (
+    <div className={`my-2 px-3 py-2 rounded text-xs font-mono flex items-center gap-2 ${
+      isStalled ? "bg-amber-500/10 border border-amber-500/20 text-amber-300/70" : "bg-white/5 text-white/50"
+    }`}>
+      <svg className="animate-spin h-3.5 w-3.5 text-amber-400/70 shrink-0" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+      </svg>
+      <span className="text-amber-400/70">🔧 Tool:</span>{" "}
+      {toolName}
+      {isStalled && <span className="text-amber-400/60 text-[10px]">slow response…</span>}
+      <span className={`ml-auto tabular-nums ${isStalled ? "text-amber-400/50" : "text-white/30"}`}>{timeStr}</span>
+    </div>
+  );
+}
+
 function parseTextWithImages(text: string, isStreaming: boolean): Segment[] {
   const regex = /(data:image\/[a-zA-Z+]+;base64,[A-Za-z0-9+/=]*)/g;
   const segments: Segment[] = [];
@@ -246,18 +281,19 @@ export default function Home() {
                     );
                   }
                   if (part.type === "dynamic-tool") {
-                    return (
-                      <div
-                        key={i}
-                        className="my-2 px-3 py-2 bg-white/5 rounded text-xs font-mono text-white/50"
-                      >
-                        <span className="text-amber-400/70">🔧 Tool:</span>{" "}
-                        {part.toolName}
-                        {part.state === "output-available" && (
+                    if (part.state === "output-available") {
+                      return (
+                        <div
+                          key={i}
+                          className="my-2 px-3 py-2 bg-white/5 rounded text-xs font-mono text-white/50"
+                        >
+                          <span className="text-amber-400/70">🔧 Tool:</span>{" "}
+                          {part.toolName}
                           <span className="text-emerald-400/70"> ✓</span>
-                        )}
-                      </div>
-                    );
+                        </div>
+                      );
+                    }
+                    return <ToolCallProgress key={i} toolName={part.toolName} />;
                   }
                   return null;
                 })}

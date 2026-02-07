@@ -3,12 +3,46 @@ import { streamText, stepCountIs, convertToModelMessages } from "ai";
 import { createMCPClient, type MCPClient } from "@ai-sdk/mcp";
 import { GUARDIAN_SYSTEM_PROMPT } from "@/lib/system-prompt";
 
-export const maxDuration = 60;
+export const maxDuration = 120;
+
+const TOOL_TIMEOUT_MS = 30_000;
+const CONNECTION_TIMEOUT_MS = 10_000;
 
 function ensureSsePath(url: string): string {
   const trimmed = url.trim().replace(/\/+$/, "");
   if (trimmed.endsWith("/sse")) return trimmed;
   return `${trimmed}/sse`;
+}
+
+function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(
+      () => reject(new Error(`${label} timed out after ${ms / 1000}s`)),
+      ms,
+    );
+    promise.then(
+      (v) => { clearTimeout(timer); resolve(v); },
+      (e) => { clearTimeout(timer); reject(e); },
+    );
+  });
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function wrapToolsWithTimeout(tools: Record<string, any>): Record<string, any> {
+  const wrapped: Record<string, unknown> = {};
+  for (const [name, tool] of Object.entries(tools)) {
+    wrapped[name] = {
+      ...tool,
+      execute: async (...args: unknown[]) => {
+        return withTimeout(
+          tool.execute(...args),
+          TOOL_TIMEOUT_MS,
+          `Tool "${name}"`,
+        );
+      },
+    };
+  }
+  return wrapped;
 }
 
 type CachedMCP = { client: MCPClient; tools: Record<string, unknown> };
@@ -33,12 +67,18 @@ async function getOrConnectSSE(
   }
 
   console.log(`[${label}] Connecting to MCP at ${sseUrl} …`);
-  const client = await createMCPClient({
-    transport: { type: "sse", url: sseUrl },
-  });
-  const tools = await client.tools();
+  const client = await withTimeout(
+    createMCPClient({ transport: { type: "sse", url: sseUrl } }),
+    CONNECTION_TIMEOUT_MS,
+    `MCP connection to ${label}`,
+  );
+  const tools = await withTimeout(
+    client.tools(),
+    CONNECTION_TIMEOUT_MS,
+    `Tool discovery for ${label}`,
+  );
   console.log(`[${label}] Connected — tools:`, Object.keys(tools));
-  const entry = { client, tools };
+  const entry = { client, tools: wrapToolsWithTimeout(tools) };
   sseClients.set(sseUrl, entry);
   return entry;
 }
@@ -56,6 +96,7 @@ export async function POST(req: Request) {
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
       console.error("[Figma] MCP connection failed:", msg);
+      sseClients.delete(ensureSsePath(figmaMcpUrl));
       mcpErrors.push(`Figma MCP connection failed (${ensureSsePath(figmaMcpUrl)}): ${msg}`);
     }
   }
@@ -67,6 +108,7 @@ export async function POST(req: Request) {
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
       console.error("[Code] MCP connection failed:", msg);
+      sseClients.delete(ensureSsePath(codeProjectPath));
       mcpErrors.push(`Code MCP (filesystem) connection failed for "${codeProjectPath}": ${msg}`);
     }
   }

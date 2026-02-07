@@ -1,17 +1,28 @@
 This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
 
+## Prerequisites
+
+### MCP Filesystem Gateway
+
+Before starting the dev server, launch the MCP filesystem gateway.
+If you are editing code inside a classic editor like vscode, do the next:
+
+```bash
+supergateway --sse --port 3846 --cors --stdio "mcp-server-filesystem $(pwd)"
+```
+
+If you are running an development editor with an integrated MCP server like
+Intellij idea:
+- be sure the MCP server is enable on the good port
+
 ## Getting Started
 
 First, run the development server:
 
 ```bash
+
+
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
 Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
