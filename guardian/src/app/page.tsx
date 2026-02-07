@@ -4,9 +4,37 @@ import { useChat } from "@ai-sdk/react";
 import { DefaultChatTransport } from "ai";
 import { useState, useRef, useEffect, useMemo } from "react";
 
+type TextSegment = { type: "text"; content: string };
+type ImageSegment = { type: "image"; src: string; complete: boolean };
+type Segment = TextSegment | ImageSegment;
+
+function parseTextWithImages(text: string, isStreaming: boolean): Segment[] {
+  const regex = /(data:image\/[a-zA-Z+]+;base64,[A-Za-z0-9+/=]*)/g;
+  const segments: Segment[] = [];
+  let lastIndex = 0;
+  let match: RegExpExecArray | null;
+
+  while ((match = regex.exec(text)) !== null) {
+    if (match.index > lastIndex) {
+      segments.push({ type: "text", content: text.slice(lastIndex, match.index) });
+    }
+    const src = match[1];
+    const isLast = regex.lastIndex >= text.length || text.slice(regex.lastIndex).trim() === "";
+    const complete = !(isStreaming && isLast);
+    segments.push({ type: "image", src, complete });
+    lastIndex = regex.lastIndex;
+  }
+
+  if (lastIndex < text.length) {
+    segments.push({ type: "text", content: text.slice(lastIndex) });
+  }
+
+  return segments;
+}
+
 export default function Home() {
   const [figmaMcpUrl, setFigmaMcpUrl] = useState("http://127.0.0.1:3845/sse");
-  const [codeProjectPath, setCodeProjectPath] = useState("http://[::1]:3846/sse");
+  const [codeProjectPath, setCodeProjectPath] = useState("http://127.0.0.1:64342/sse");//"http://[::1]:3846/sse");
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [input, setInput] = useState("");
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -186,9 +214,34 @@ export default function Home() {
               >
                 {m.parts?.map((part, i) => {
                   if (part.type === "text") {
+                    const isLastMsg = m === messages[messages.length - 1];
+                    const segments = parseTextWithImages(part.text, isLoading && isLastMsg);
                     return (
                       <div key={i} className="whitespace-pre-wrap">
-                        {part.text}
+                        {segments.map((seg, j) => {
+                          if (seg.type === "image") {
+                            if (!seg.complete) {
+                              return (
+                                <div key={j} className="my-3 flex flex-col items-center justify-center w-64 h-48 bg-white/5 border border-white/10 rounded-lg">
+                                  <svg className="animate-spin h-8 w-8 text-white/30 mb-2" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                                  </svg>
+                                  <span className="text-xs text-white/30">Loading image…</span>
+                                </div>
+                              );
+                            }
+                            return (
+                              <img
+                                key={j}
+                                src={seg.src}
+                                alt="Generated image"
+                                className="my-3 max-w-full rounded-lg border border-white/10"
+                              />
+                            );
+                          }
+                          return <span key={j}>{seg.content}</span>;
+                        })}
                       </div>
                     );
                   }
