@@ -70,20 +70,28 @@ function parseTextWithImages(text: string, isStreaming: boolean): Segment[] {
 }
 
 export default function Home() {
-  const [figmaMcpUrl, setFigmaMcpUrl] = useState("http://127.0.0.1:3845/sse");
+  const [figmaMcpUrl, setFigmaMcpUrl] = useState("https://mcp.figma.com/mcp");
+  const [figmaAccessToken, setFigmaAccessToken] = useState("");
   const [codeProjectPath, setCodeProjectPath] = useState("http://127.0.0.1:64342/sse");//"http://[::1]:3846/sse");
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [input, setInput] = useState("");
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
+  const figmaMcpUrlRef = useRef(figmaMcpUrl);
+  figmaMcpUrlRef.current = figmaMcpUrl;
+  const figmaAccessTokenRef = useRef(figmaAccessToken);
+  figmaAccessTokenRef.current = figmaAccessToken;
+  const codeProjectPathRef = useRef(codeProjectPath);
+  codeProjectPathRef.current = codeProjectPath;
+
   const transport = useMemo(
     () =>
       new DefaultChatTransport({
         api: "/api/chat",
-        body: { figmaMcpUrl, codeProjectPath },
+        body: () => ({ figmaMcpUrl: figmaMcpUrlRef.current, figmaAccessToken: figmaAccessTokenRef.current, codeProjectPath: codeProjectPathRef.current }),
       }),
-    [figmaMcpUrl, codeProjectPath],
+    [],
   );
 
   const { messages, sendMessage, status, error } = useChat({ transport });
@@ -129,13 +137,13 @@ export default function Home() {
           <div className="space-y-4">
             <div>
               <label className="block text-xs text-white/50 mb-1">
-                Figma MCP (SSE URL)
+                Figma MCP URL
               </label>
               <input
                 type="url"
                 value={figmaMcpUrl}
                 onChange={(e) => setFigmaMcpUrl(e.target.value)}
-                placeholder="http://localhost:3333/sse"
+                placeholder="https://mcp.figma.com/mcp"
                 className="w-full bg-white/5 border border-white/10 rounded-md px-3 py-2 text-sm text-white placeholder:text-white/20 focus:outline-none focus:border-white/30"
               />
               <div className="flex items-center gap-1.5 mt-1.5">
@@ -150,13 +158,29 @@ export default function Home() {
 
             <div>
               <label className="block text-xs text-white/50 mb-1">
+                Figma Access Token
+              </label>
+              <input
+                type="password"
+                value={figmaAccessToken}
+                onChange={(e) => setFigmaAccessToken(e.target.value)}
+                placeholder="figd_..."
+                className="w-full bg-white/5 border border-white/10 rounded-md px-3 py-2 text-sm text-white placeholder:text-white/20 focus:outline-none focus:border-white/30"
+              />
+              <span className="text-xs text-white/30 mt-1 block">
+                Optional if FIGMA_ACCESS_TOKEN is set in .env.local
+              </span>
+            </div>
+
+            <div>
+              <label className="block text-xs text-white/50 mb-1">
                 Code Project Path (local)
               </label>
               <input
                 type="text"
                 value={codeProjectPath}
                 onChange={(e) => setCodeProjectPath(e.target.value)}
-                placeholder="/Users/you/projects/my-design-system"
+                placeholder="http://127.0.0.1:64342/sse"
                 className="w-full bg-white/5 border border-white/10 rounded-md px-3 py-2 text-sm text-white placeholder:text-white/20 focus:outline-none focus:border-white/30"
               />
               <div className="flex items-center gap-1.5 mt-1.5">

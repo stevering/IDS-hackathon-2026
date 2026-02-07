@@ -10,9 +10,7 @@ const CONNECTION_TIMEOUT_MS = 10_000;
 const MAX_AGE_MS = 2 * 60_000;
 
 function ensureSsePath(url: string): string {
-  const trimmed = url.trim().replace(/\/+$/, "");
-  if (trimmed.endsWith("/sse")) return trimmed;
-  return `${trimmed}/sse`;
+  return url.trim().replace(/\/+$/, "");
 }
 
 function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
@@ -35,21 +33,34 @@ type CachedMCP = {
 };
 
 const globalCache = globalThis as unknown as {
-  __mcpSseClients?: Map<string, CachedMCP>;
+  __mcpClients?: Map<string, CachedMCP>;
 };
-if (!globalCache.__mcpSseClients) {
-  globalCache.__mcpSseClients = new Map();
+if (!globalCache.__mcpClients) {
+  globalCache.__mcpClients = new Map();
 }
-const sseClients = globalCache.__mcpSseClients;
+const mcpClients = globalCache.__mcpClients;
 
-async function connectSSE(url: string, label: string): Promise<CachedMCP> {
-  const sseUrl = ensureSsePath(url);
-  console.log(`[${label}] Connecting to MCP at ${sseUrl} …`);
-  const client = await withTimeout(
-    createMCPClient({ transport: { type: "sse", url: sseUrl } }),
-    CONNECTION_TIMEOUT_MS,
-    `MCP connection to ${label}`,
-  );
+async function connectMCP(url: string, label: string, headers?: Record<string, string>): Promise<CachedMCP> {
+  const cleanUrl = ensureSsePath(url);
+
+  let client: MCPClient;
+  try {
+    console.log(`[${label}] Connecting to MCP at ${cleanUrl} (trying SSE) …`);
+    client = await withTimeout(
+      createMCPClient({ transport: { type: "sse", url: cleanUrl, headers } }),
+      CONNECTION_TIMEOUT_MS,
+      `MCP SSE connection to ${label}`,
+    );
+  } catch (sseError) {
+    const msg = sseError instanceof Error ? sseError.message : String(sseError);
+    console.warn(`[${label}] SSE transport failed (${msg}), falling back to streamable HTTP …`);
+    client = await withTimeout(
+      createMCPClient({ transport: { type: "http", url: cleanUrl, headers } }),
+      CONNECTION_TIMEOUT_MS,
+      `MCP HTTP connection to ${label}`,
+    );
+  }
+
   const tools = await withTimeout(
     client.tools(),
     CONNECTION_TIMEOUT_MS,
@@ -57,22 +68,22 @@ async function connectSSE(url: string, label: string): Promise<CachedMCP> {
   );
   console.log(`[${label}] Connected — tools:`, Object.keys(tools));
   const entry: CachedMCP = { client, tools, connectedAt: Date.now() };
-  sseClients.set(sseUrl, entry);
+  mcpClients.set(cleanUrl, entry);
   return entry;
 }
 
 async function evict(url: string) {
-  const sseUrl = ensureSsePath(url);
-  const cached = sseClients.get(sseUrl);
-  sseClients.delete(sseUrl);
+  const cleanUrl = ensureSsePath(url);
+  const cached = mcpClients.get(cleanUrl);
+  mcpClients.delete(cleanUrl);
   if (cached) {
     try { await cached.client.close(); } catch { /* ignore */ }
   }
 }
 
-async function getOrConnectSSE(url: string, label: string): Promise<CachedMCP> {
-  const sseUrl = ensureSsePath(url);
-  const cached = sseClients.get(sseUrl);
+async function getOrConnect(url: string, label: string, headers?: Record<string, string>): Promise<CachedMCP> {
+  const cleanUrl = ensureSsePath(url);
+  const cached = mcpClients.get(cleanUrl);
 
   if (cached && Date.now() - cached.connectedAt < MAX_AGE_MS) {
     return cached;
@@ -83,11 +94,11 @@ async function getOrConnectSSE(url: string, label: string): Promise<CachedMCP> {
     await evict(url);
   }
 
-  return connectSSE(url, label);
+  return connectMCP(url, label, headers);
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-function wrapToolsWithRetry(tools: Record<string, any>, url: string, label: string): Record<string, any> {
+function wrapToolsWithRetry(tools: Record<string, any>, url: string, label: string, headers?: Record<string, string>): Record<string, any> {
   const wrapped: Record<string, unknown> = {};
   for (const [name, tool] of Object.entries(tools)) {
     wrapped[name] = {
@@ -103,7 +114,7 @@ function wrapToolsWithRetry(tools: Record<string, any>, url: string, label: stri
           console.warn(`[${label}] Tool "${name}" failed, reconnecting: ${firstError instanceof Error ? firstError.message : firstError}`);
           await evict(url);
           try {
-            const fresh = await connectSSE(url, label);
+            const fresh = await connectMCP(url, label, headers);
             const freshTool = fresh.tools[name];
             if (!freshTool || typeof (freshTool as { execute?: unknown }).execute !== "function") {
               throw firstError;
@@ -124,18 +135,20 @@ function wrapToolsWithRetry(tools: Record<string, any>, url: string, label: stri
 }
 
 export async function POST(req: Request) {
-  const { messages, figmaMcpUrl, codeProjectPath } = await req.json();
+  const { messages, figmaMcpUrl, figmaAccessToken, codeProjectPath } = await req.json();
 
   let allTools: Record<string, unknown> = {};
   const mcpErrors: string[] = [];
 
   if (figmaMcpUrl) {
+    const token = figmaAccessToken || process.env.FIGMA_ACCESS_TOKEN;
+    const figmaHeaders = token ? { Authorization: `Bearer ${token}` } : undefined;
     try {
-      const { tools } = await getOrConnectSSE(figmaMcpUrl, "Figma");
+      const { tools } = await getOrConnect(figmaMcpUrl, "Figma", figmaHeaders);
       const prefixedTools = Object.fromEntries(
         Object.entries(tools).map(([name, tool]) => [`figma_${name}`, tool])
       );
-      allTools = { ...allTools, ...wrapToolsWithRetry(prefixedTools, figmaMcpUrl, "Figma") };
+      allTools = { ...allTools, ...wrapToolsWithRetry(prefixedTools, figmaMcpUrl, "Figma", figmaHeaders) };
 
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
@@ -147,7 +160,7 @@ export async function POST(req: Request) {
 
   if (codeProjectPath) {
     try {
-      const { tools } = await getOrConnectSSE(codeProjectPath, "Code");
+      const { tools } = await getOrConnect(codeProjectPath, "Code");
       const prefixedTools = Object.fromEntries(
         Object.entries(tools).map(([name, tool]) => [`code_${name}`, tool])
       );
