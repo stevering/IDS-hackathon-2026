@@ -3,6 +3,8 @@
 import { useChat } from "@ai-sdk/react";
 import { DefaultChatTransport } from "ai";
 import { useState, useRef, useEffect, useMemo } from "react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 
 type TextSegment = { type: "text"; content: string };
 type ImageSegment = { type: "image"; src: string; complete: boolean };
@@ -73,6 +75,7 @@ export default function Home() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [input, setInput] = useState("");
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
 
   const transport = useMemo(
     () =>
@@ -90,6 +93,12 @@ export default function Home() {
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
+
+  useEffect(() => {
+    if (!isLoading) {
+      inputRef.current?.focus();
+    }
+  }, [isLoading]);
 
   const onSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -252,7 +261,7 @@ export default function Home() {
                     const isLastMsg = m === messages[messages.length - 1];
                     const segments = parseTextWithImages(part.text, isLoading && isLastMsg);
                     return (
-                      <div key={i} className="whitespace-pre-wrap">
+                      <div key={i} className="markdown-body">
                         {segments.map((seg, j) => {
                           if (seg.type === "image") {
                             if (!seg.complete) {
@@ -275,7 +284,11 @@ export default function Home() {
                               />
                             );
                           }
-                          return <span key={j}>{seg.content}</span>;
+                          return (
+                            <ReactMarkdown key={j} remarkPlugins={[remarkGfm]}>
+                              {seg.content}
+                            </ReactMarkdown>
+                          );
                         })}
                       </div>
                     );
@@ -327,11 +340,12 @@ export default function Home() {
         >
           <div className="flex gap-2">
             <input
+              ref={inputRef}
               value={input}
               onChange={(e) => setInput(e.target.value)}
               placeholder="Ask Guardian to check a component..."
-              className="flex-1 bg-white/5 border border-white/10 rounded-lg px-4 py-3 text-sm text-white placeholder:text-white/20 focus:outline-none focus:border-white/30"
-              disabled={isLoading}
+              className={`flex-1 bg-white/5 border border-white/10 rounded-lg px-4 py-3 text-sm text-white placeholder:text-white/20 focus:outline-none focus:border-white/30 ${isLoading ? "opacity-50" : ""}`}
+              readOnly={isLoading}
             />
             <button
               type="submit"
