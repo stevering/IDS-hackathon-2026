@@ -132,7 +132,11 @@ export async function POST(req: Request) {
   if (figmaMcpUrl) {
     try {
       const { tools } = await getOrConnectSSE(figmaMcpUrl, "Figma");
-      allTools = { ...allTools, ...wrapToolsWithRetry(tools, figmaMcpUrl, "Figma") };
+      const prefixedTools = Object.fromEntries(
+        Object.entries(tools).map(([name, tool]) => [`figma_${name}`, tool])
+      );
+      allTools = { ...allTools, ...wrapToolsWithRetry(prefixedTools, figmaMcpUrl, "Figma") };
+
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
       console.error("[Figma] MCP connection failed:", msg);
@@ -144,7 +148,10 @@ export async function POST(req: Request) {
   if (codeProjectPath) {
     try {
       const { tools } = await getOrConnectSSE(codeProjectPath, "Code");
-      allTools = { ...allTools, ...wrapToolsWithRetry(tools, codeProjectPath, "Code") };
+      const prefixedTools = Object.fromEntries(
+        Object.entries(tools).map(([name, tool]) => [`code_${name}`, tool])
+      );
+      allTools = { ...allTools, ...wrapToolsWithRetry(prefixedTools, codeProjectPath, "Code") };
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
       console.error("[Code] MCP connection failed:", msg);
@@ -158,7 +165,11 @@ export async function POST(req: Request) {
     system += `\n\n⚠️ MCP CONNECTION ERRORS:\n${mcpErrors.join("\n")}\nTell the user about these connection errors so they can fix them.`;
   }
   if (Object.keys(allTools).length > 0) {
-    system += `\n\nAvailable MCP tools: ${Object.keys(allTools).join(", ")}`;
+    const figmaTools = Object.keys(allTools).filter(t => t.startsWith('figma_') || t.includes('figma'));
+    const codeTools = Object.keys(allTools).filter(t => !figmaTools.includes(t));
+    system += `\n\nAvailable MCP tools:
+  - Figma MCP: ${figmaTools.join(", ")}
+  - Code MCP: ${codeTools.join(", ")}`;
   }
 
   const result = streamText({
