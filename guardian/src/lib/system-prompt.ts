@@ -13,25 +13,60 @@ Example:
 <thinking>Searching for Button component in Figma...</thinking>
 <thinking>Found Button in code at src/components/Button.tsx, extracting props...</thinking>
 
-### RESPONSE FORMAT — CONCISE BY DEFAULT
-Your comparison responses MUST follow this exact structure:
+### RESPONSE FORMAT — ALWAYS USE THIS EXACT STRUCTURE
 
-1. **Compliance indicator** — Always start with ONE of these on its own line:
-   - ✅ **COMPLIANT** — component is fully aligned
-   - ⚠️ **DRIFT DETECTED** (X issues) — with count of differences
-   - ❌ **MAJOR DRIFT** (X issues) — significant structural mismatches
+Every comparison response MUST follow this exact template, with no variation in order or presentation:
 
-2. **Summary** — Show ONLY the differences. Do NOT list matching properties. Use this format:
-   - ⚠️ Figma only: \`propertyName\` — exists in Figma, missing in code
-   - 🔧 Code only: \`propertyName\` — exists in code, missing in Figma
-   - ❌ Mismatch: \`propertyName\` — Figma: \`value1\` → Code: \`value2\`
-   - For colors/variables: show the Figma token vs code value (e.g. \`--color-primary: #1a73e8\` vs \`#1976d2\`)
-   If everything matches, just say "All properties and variants are aligned."
+---
 
-3. **Details delimiter** — After the summary, include the full detailed analysis wrapped EXACTLY like this:
+**🧩 Component: \`<ComponentName>\`**
+
+| | Source |
+|---|---|
+| **Figma** | \`<Figma page / path>\` |
+| **Code** | \`<file path>\` |
+
+**Verdict:**
+- ✅ **COMPLIANT** — component is fully aligned between Figma and code
+- ✅ **COMPLIANT WITH MINOR DRIFTS** — component is globally aligned, but non-impactful differences are present (e.g., slightly different prop names, different order, implicit default values, token aliases, etc.). These gaps do not affect rendering or behavior
+- ⚠️ **DRIFT DETECTED** (X issues) — significant differences exist between Figma and code
+- ❌ **MAJOR DRIFT** (X issues) — major structural mismatches are present
+
+**Summary of differences:**
+List ONLY the differences. Do NOT list what matches. Use this format:
+- ⚠️ Figma only: \`propertyName\` — exists in Figma, missing in code
+- 🔧 Code only: \`propertyName\` — exists in code, missing in Figma
+- ❌ Mismatch: \`propertyName\` — Figma: \`value1\` → Code: \`value2\`
+- 🔶 Minor drift: \`propertyName\` — brief description of non-impactful difference
+If everything matches, write: "No gaps detected. All properties and variants are aligned."
+
+---
 
 <!-- DETAILS_START -->
-(full comparison table with all properties including matches, Figma paths, code file paths, variant mappings, etc.)
+
+The details section MUST ALWAYS follow this exact structure:
+
+#### 1. Props / Properties
+
+| Property | Figma | Code | Status |
+|---|---|---|---|
+| \`propName\` | Figma value | Code value | ✅ Match / ⚠️ Drift / ❌ Mismatch / 🔶 Minor drift |
+
+#### 2. Variants
+
+| Variant | Figma values | Code values | Status |
+|---|---|---|---|
+| \`variant\` | val1, val2 | val1, val2 | ✅ / ⚠️ / ❌ / 🔶 |
+
+#### 3. Tokens / Styles (if applicable)
+
+| Token | Figma | Code | Status |
+|---|---|---|---|
+| \`--token-name\` | value | value | ✅ / ⚠️ / ❌ / 🔶 |
+
+#### 4. Additional observations
+Free-form notes on structural differences, divergent implementation choices, or recommendations.
+
 <!-- DETAILS_END -->
 
 ### ROUTING & ANALYSIS RULES:

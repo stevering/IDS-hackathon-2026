@@ -91,6 +91,112 @@ body {
   animation: waveReverse 2s linear infinite;
 }
 
+.wave-bg-layer {
+  position: absolute;
+  filter: blur(100px);
+  opacity: 0.12;
+  will-change: transform, border-radius;
+}
+
+.wave-bg-1 {
+  width: 60vw;
+  height: 60vh;
+  top: -10%;
+  left: -10%;
+  background: radial-gradient(ellipse at 30% 50%, #a259ff, #1abcfe 60%, transparent 80%);
+  animation: waveFloat1 18s ease-in-out infinite, waveMorph1 12s ease-in-out infinite;
+}
+
+.wave-bg-2 {
+  width: 55vw;
+  height: 55vh;
+  bottom: -15%;
+  right: -10%;
+  opacity: 0.09;
+  background: radial-gradient(ellipse at 70% 50%, #f24e1e, #a259ff 60%, transparent 80%);
+  animation: waveFloat2 22s ease-in-out infinite, waveMorph2 14s ease-in-out infinite;
+}
+
+.wave-bg-3 {
+  width: 70vw;
+  height: 50vh;
+  top: 30%;
+  left: 20%;
+  opacity: 0.07;
+  background: radial-gradient(ellipse at 50% 50%, #0acf83, #1abcfe 50%, transparent 80%);
+  animation: waveFloat3 25s ease-in-out infinite, waveMorph3 16s ease-in-out infinite;
+}
+
+@keyframes waveFloat1 {
+  0%, 100% { transform: translate(0, 0) scale(1); }
+  25% { transform: translate(8vw, 6vh) scale(1.08); }
+  50% { transform: translate(-4vw, 12vh) scale(0.95); }
+  75% { transform: translate(6vw, -4vh) scale(1.05); }
+}
+
+@keyframes waveFloat2 {
+  0%, 100% { transform: translate(0, 0) scale(1); }
+  25% { transform: translate(-10vw, -5vh) scale(1.1); }
+  50% { transform: translate(6vw, -10vh) scale(0.92); }
+  75% { transform: translate(-5vw, 8vh) scale(1.04); }
+}
+
+@keyframes waveFloat3 {
+  0%, 100% { transform: translate(0, 0) scale(1); }
+  33% { transform: translate(-8vw, 8vh) scale(1.12); }
+  66% { transform: translate(10vw, -6vh) scale(0.9); }
+}
+
+@keyframes waveMorph1 {
+  0%, 100% { border-radius: 40% 60% 60% 40% / 60% 30% 70% 40%; }
+  25% { border-radius: 60% 40% 30% 70% / 40% 60% 40% 60%; }
+  50% { border-radius: 30% 60% 70% 40% / 50% 60% 30% 60%; }
+  75% { border-radius: 50% 40% 50% 60% / 35% 55% 65% 45%; }
+}
+
+@keyframes waveMorph2 {
+  0%, 100% { border-radius: 50% 50% 40% 60% / 40% 60% 50% 50%; }
+  33% { border-radius: 35% 65% 55% 45% / 55% 35% 65% 45%; }
+  66% { border-radius: 60% 40% 45% 55% / 45% 55% 40% 60%; }
+}
+
+@keyframes waveMorph3 {
+  0%, 100% { border-radius: 45% 55% 50% 50% / 55% 45% 55% 45%; }
+  25% { border-radius: 55% 45% 40% 60% / 40% 60% 45% 55%; }
+  50% { border-radius: 40% 60% 55% 45% / 60% 40% 50% 50%; }
+  75% { border-radius: 60% 40% 45% 55% / 50% 50% 60% 40%; }
+}
+
+.glass-sidebar {
+  background: rgba(10, 10, 10, 0.85);
+  backdrop-filter: blur(20px);
+  border-right: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.glass-header {
+  background: rgba(10, 10, 10, 0.6);
+  backdrop-filter: blur(16px);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.glass-msg-user {
+  background: rgba(59, 130, 246, 0.15);
+  backdrop-filter: blur(12px);
+  border: 1px solid rgba(59, 130, 246, 0.25);
+}
+
+.glass-msg-ai {
+  background: rgba(255, 255, 255, 0.05);
+  backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.glass-input-bar {
+  background: rgba(10, 10, 10, 0.7);
+  backdrop-filter: blur(16px);
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+}
+
 .markdown-body p {
   margin: 0.5em 0;
 }
