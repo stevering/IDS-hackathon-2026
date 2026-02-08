@@ -367,7 +367,7 @@ export default function Home() {
   const [figmaOAuth, setFigmaOAuth] = useState(false);
   const [input, setInput] = useState("");
   const messagesEndRef = useRef<HTMLDivElement>(null);
-  const inputRef = useRef<HTMLInputElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const shouldAutoScroll = useRef(true);
 
@@ -428,6 +428,9 @@ export default function Home() {
     shouldAutoScroll.current = true;
     sendMessage({ text: input });
     setInput("");
+    if (inputRef.current) {
+      inputRef.current.style.height = "auto";
+    }
   };
 
   const figmaConnected = figmaOAuth || figmaAccessToken.trim().length > 0 || figmaMcpUrl.trim().length > 0;
@@ -728,13 +731,25 @@ export default function Home() {
           className="px-3 sm:px-4 py-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))] glass-input-bar"
         >
           <div className="flex gap-2">
-            <input
+            <textarea
               ref={inputRef}
               value={input}
-              onChange={(e) => setInput(e.target.value)}
+              onChange={(e) => {
+                setInput(e.target.value);
+                e.target.style.height = "auto";
+                const maxH = window.innerHeight * 0.1;
+                e.target.style.height = Math.min(e.target.scrollHeight, maxH) + "px";
+              }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && !e.shiftKey) {
+                  e.preventDefault();
+                  onSubmit(e);
+                }
+              }}
               placeholder="Ask Guardian to check a component..."
-              className={`flex-1 min-w-0 bg-white/5 border border-white/10 rounded-lg px-3 sm:px-4 py-3 text-sm text-white placeholder:text-white/20 focus:outline-none focus:border-white/30 ${isLoading ? "opacity-50" : ""}`}
+              className={`flex-1 min-w-0 bg-white/5 border border-white/10 rounded-lg px-3 sm:px-4 py-3 text-sm text-white placeholder:text-white/20 focus:outline-none focus:border-white/30 resize-none overflow-y-auto ${isLoading ? "opacity-50" : ""}`}
               readOnly={isLoading}
+              rows={1}
             />
             <button
               type="submit"
