@@ -155,7 +155,7 @@ function wrapToolsWithRetry(tools: Record<string, any>, url: string, label: stri
 }
 
 export async function POST(req: Request) {
-  const { messages, figmaMcpUrl, figmaAccessToken, codeProjectPath, figmaOAuth } = await req.json();
+  const { messages, figmaMcpUrl, figmaAccessToken, codeProjectPath, figmaOAuth, model } = await req.json();
 
   let allTools: Record<string, unknown> = {};
   const mcpErrors: string[] = [];
@@ -210,7 +210,7 @@ export async function POST(req: Request) {
   }
 
   const result = streamText({
-    model: xai("grok-4-1-fast-reasoning"),
+    model: xai(model === "grok-4-1-fast-non-reasoning" ? "grok-4-1-fast-non-reasoning" : "grok-4-1-fast-reasoning"),
     system,
     messages: await convertToModelMessages(messages),
     tools: allTools as Parameters<typeof streamText>[0]["tools"],

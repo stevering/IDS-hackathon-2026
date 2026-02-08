@@ -366,6 +366,7 @@ export default function Home() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [figmaOAuth, setFigmaOAuth] = useState(false);
   const [input, setInput] = useState("");
+  const [selectedModel, setSelectedModel] = useState<"grok-4-1-fast-reasoning" | "grok-4-1-fast-non-reasoning">("grok-4-1-fast-non-reasoning");
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
@@ -379,12 +380,14 @@ export default function Home() {
   codeProjectPathRef.current = codeProjectPath;
   const figmaOAuthRef = useRef(figmaOAuth);
   figmaOAuthRef.current = figmaOAuth;
+  const selectedModelRef = useRef(selectedModel);
+  selectedModelRef.current = selectedModel;
 
   const transport = useMemo(
     () =>
       new DefaultChatTransport({
         api: "/api/chat",
-        body: () => ({ figmaMcpUrl: figmaOAuthRef.current ? "https://mcp.figma.com/mcp" : figmaMcpUrlRef.current, figmaAccessToken: figmaAccessTokenRef.current, codeProjectPath: codeProjectPathRef.current, figmaOAuth: figmaOAuthRef.current }),
+        body: () => ({ figmaMcpUrl: figmaOAuthRef.current ? "https://mcp.figma.com/mcp" : figmaMcpUrlRef.current, figmaAccessToken: figmaAccessTokenRef.current, codeProjectPath: codeProjectPathRef.current, figmaOAuth: figmaOAuthRef.current, model: selectedModelRef.current }),
       }),
     [],
   );
@@ -730,6 +733,25 @@ export default function Home() {
           onSubmit={onSubmit}
           className="px-3 sm:px-4 py-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))] glass-input-bar"
         >
+          <div className="flex items-center gap-2 mb-2">
+            <span className="text-xs text-white/40">Model:</span>
+            <div className="flex rounded-md overflow-hidden border border-white/10">
+              <button
+                type="button"
+                onClick={() => setSelectedModel("grok-4-1-fast-reasoning")}
+                className={`px-3 py-1 text-xs transition-colors cursor-pointer ${selectedModel === "grok-4-1-fast-reasoning" ? "bg-blue-600 text-white" : "bg-white/5 text-white/50 hover:bg-white/10"}`}
+              >
+                Reasoning
+              </button>
+              <button
+                type="button"
+                onClick={() => setSelectedModel("grok-4-1-fast-non-reasoning")}
+                className={`px-3 py-1 text-xs transition-colors cursor-pointer ${selectedModel === "grok-4-1-fast-non-reasoning" ? "bg-blue-600 text-white" : "bg-white/5 text-white/50 hover:bg-white/10"}`}
+              >
+                Non-Reasoning
+              </button>
+            </div>
+          </div>
           <div className="flex gap-2">
             <textarea
               ref={inputRef}
