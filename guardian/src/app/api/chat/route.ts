@@ -73,6 +73,25 @@ async function connectMCP(url: string, label: string, headers?: Record<string, s
   return entry;
 }
 
+async function connectMCPHttp(url: string, label: string, headers?: Record<string, string>): Promise<CachedMCP> {
+  const cleanUrl = ensureSsePath(url);
+  console.log(`[${label}] Connecting to MCP at ${cleanUrl} (HTTP only) …`);
+  const client = await withTimeout(
+    createMCPClient({ transport: { type: "http", url: cleanUrl, headers } }),
+    CONNECTION_TIMEOUT_MS,
+    `MCP HTTP connection to ${label}`,
+  );
+  const tools = await withTimeout(
+    client.tools(),
+    CONNECTION_TIMEOUT_MS,
+    `Tool discovery for ${label}`,
+  );
+  console.log(`[${label}] Connected (HTTP) — tools:`, Object.keys(tools));
+  const entry: CachedMCP = { client, tools, connectedAt: Date.now() };
+  mcpClients.set(cleanUrl, entry);
+  return entry;
+}
+
 async function evict(url: string) {
   const cleanUrl = ensureSsePath(url);
   const cached = mcpClients.get(cleanUrl);
@@ -82,7 +101,7 @@ async function evict(url: string) {
   }
 }
 
-async function getOrConnect(url: string, label: string, headers?: Record<string, string>): Promise<CachedMCP> {
+async function getOrConnect(url: string, label: string, headers?: Record<string, string>, forceHttp?: boolean): Promise<CachedMCP> {
   const cleanUrl = ensureSsePath(url);
   const cached = mcpClients.get(cleanUrl);
 
@@ -95,7 +114,7 @@ async function getOrConnect(url: string, label: string, headers?: Record<string,
     await evict(url);
   }
 
-  return connectMCP(url, label, headers);
+  return forceHttp ? connectMCPHttp(url, label, headers) : connectMCP(url, label, headers);
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -136,7 +155,7 @@ function wrapToolsWithRetry(tools: Record<string, any>, url: string, label: stri
 }
 
 export async function POST(req: Request) {
-  const { messages, figmaMcpUrl, figmaAccessToken, codeProjectPath } = await req.json();
+  const { messages, figmaMcpUrl, figmaAccessToken, codeProjectPath, figmaOAuth } = await req.json();
 
   let allTools: Record<string, unknown> = {};
   const mcpErrors: string[] = [];
@@ -146,18 +165,20 @@ export async function POST(req: Request) {
     const oauthToken = cookieStore.get("figma_access_token")?.value;
     const token = figmaAccessToken || oauthToken || process.env.FIGMA_ACCESS_TOKEN;
     const figmaHeaders = token ? { Authorization: `Bearer ${token}` } : undefined;
+    const useOAuthHttp = !!(figmaOAuth && oauthToken);
+    const effectiveUrl = useOAuthHttp ? "https://mcp.figma.com/mcp" : figmaMcpUrl;
     try {
-      const { tools } = await getOrConnect(figmaMcpUrl, "Figma", figmaHeaders);
+      const { tools } = await getOrConnect(effectiveUrl, "Figma", figmaHeaders, useOAuthHttp);
       const prefixedTools = Object.fromEntries(
         Object.entries(tools).map(([name, tool]) => [`figma_${name}`, tool])
       );
-      allTools = { ...allTools, ...wrapToolsWithRetry(prefixedTools, figmaMcpUrl, "Figma", figmaHeaders) };
+      allTools = { ...allTools, ...wrapToolsWithRetry(prefixedTools, effectiveUrl, "Figma", figmaHeaders) };
 
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
       console.error("[Figma] MCP connection failed:", msg);
-      await evict(figmaMcpUrl);
-      mcpErrors.push(`Figma MCP connection failed (${ensureSsePath(figmaMcpUrl)}): ${msg}`);
+      await evict(effectiveUrl);
+      mcpErrors.push(`Figma MCP connection failed (${ensureSsePath(effectiveUrl)}): ${msg}`);
     }
   }
 

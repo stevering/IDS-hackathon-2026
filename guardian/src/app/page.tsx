@@ -70,7 +70,7 @@ function parseTextWithImages(text: string, isStreaming: boolean): Segment[] {
 }
 
 export default function Home() {
-  const [figmaMcpUrl, setFigmaMcpUrl] = useState("https://mcp.figma.com/mcp");
+  const [figmaMcpUrl, setFigmaMcpUrl] = useState("http://127.0.0.1:3845/mcp");
   const [figmaAccessToken, setFigmaAccessToken] = useState("");
   const [codeProjectPath, setCodeProjectPath] = useState("http://127.0.0.1:64342/sse");//"http://[::1]:3846/sse");
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -85,12 +85,14 @@ export default function Home() {
   figmaAccessTokenRef.current = figmaAccessToken;
   const codeProjectPathRef = useRef(codeProjectPath);
   codeProjectPathRef.current = codeProjectPath;
+  const figmaOAuthRef = useRef(figmaOAuth);
+  figmaOAuthRef.current = figmaOAuth;
 
   const transport = useMemo(
     () =>
       new DefaultChatTransport({
         api: "/api/chat",
-        body: () => ({ figmaMcpUrl: figmaMcpUrlRef.current, figmaAccessToken: figmaAccessTokenRef.current, codeProjectPath: codeProjectPathRef.current }),
+        body: () => ({ figmaMcpUrl: figmaOAuthRef.current ? "https://mcp.figma.com/mcp" : figmaMcpUrlRef.current, figmaAccessToken: figmaAccessTokenRef.current, codeProjectPath: codeProjectPathRef.current, figmaOAuth: figmaOAuthRef.current }),
       }),
     [],
   );
@@ -151,7 +153,7 @@ export default function Home() {
                 type="url"
                 value={figmaMcpUrl}
                 onChange={(e) => setFigmaMcpUrl(e.target.value)}
-                placeholder="https://mcp.figma.com/mcp"
+                placeholder="http://127.0.0.1:3845/mcp"
                 className="w-full bg-white/5 border border-white/10 rounded-md px-3 py-2 text-sm text-white placeholder:text-white/20 focus:outline-none focus:border-white/30"
               />
               <div className="flex items-center gap-1.5 mt-1.5">
