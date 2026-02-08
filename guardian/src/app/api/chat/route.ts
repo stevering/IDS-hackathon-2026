@@ -155,7 +155,7 @@ function wrapToolsWithRetry(tools: Record<string, any>, url: string, label: stri
 }
 
 export async function POST(req: Request) {
-  const { messages, figmaMcpUrl, figmaAccessToken, codeProjectPath, figmaOAuth, model } = await req.json();
+  const { messages, figmaMcpUrl, figmaAccessToken, codeProjectPath, figmaOAuth, model, selectedNode } = await req.json();
 
   let allTools: Record<string, unknown> = {};
   const mcpErrors: string[] = [];
@@ -198,6 +198,15 @@ export async function POST(req: Request) {
   }
 
   let system = GUARDIAN_SYSTEM_PROMPT;
+  if (selectedNode) {
+    system += `\n\n### SELECTED FIGMA NODE (from host application — HIGHEST PRIORITY)
+The currently selected node in Figma has the following URL: ${selectedNode}
+CRITICAL RULES:
+- This URL is ALREADY the selected node. Do NOT call any Figma MCP tool to get or find the current selection (e.g. get_selection, get_current_selection, etc.). The selection is already known.
+- When the user refers to "this node", "the selection", "the selected element", "this component", or similar, they mean this URL.
+- You may use other Figma MCP tools (e.g. get_node_details, get_styles, etc.) to inspect the properties of this node using the URL above.
+- Always start from this URL when the user asks about the current selection.`;
+  }
   if (mcpErrors.length > 0) {
     system += `\n\n⚠️ MCP CONNECTION ERRORS:\n${mcpErrors.join("\n")}\nTell the user about these connection errors so they can fix them.`;
   }

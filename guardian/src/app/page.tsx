@@ -367,6 +367,7 @@ export default function Home() {
   const [figmaOAuth, setFigmaOAuth] = useState(false);
   const [input, setInput] = useState("");
   const [selectedModel, setSelectedModel] = useState<"grok-4-1-fast-reasoning" | "grok-4-1-fast-non-reasoning">("grok-4-1-fast-non-reasoning");
+  const [selectedNode, setSelectedNode] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
@@ -382,12 +383,27 @@ export default function Home() {
   figmaOAuthRef.current = figmaOAuth;
   const selectedModelRef = useRef(selectedModel);
   selectedModelRef.current = selectedModel;
+  const selectedNodeRef = useRef(selectedNode);
+  selectedNodeRef.current = selectedNode;
+
+  useEffect(() => {
+    const handleMessage = (event: MessageEvent) => {
+      if (event.data && typeof event.data === "object" && "selectedNode" in event.data) {
+        const url = event.data.selectedNode;
+        if (typeof url === "string" || url === null) {
+          setSelectedNode(url);
+        }
+      }
+    };
+    window.addEventListener("message", handleMessage);
+    return () => window.removeEventListener("message", handleMessage);
+  }, []);
 
   const transport = useMemo(
     () =>
       new DefaultChatTransport({
         api: "/api/chat",
-        body: () => ({ figmaMcpUrl: figmaOAuthRef.current ? "https://mcp.figma.com/mcp" : figmaMcpUrlRef.current, figmaAccessToken: figmaAccessTokenRef.current, codeProjectPath: codeProjectPathRef.current, figmaOAuth: figmaOAuthRef.current, model: selectedModelRef.current }),
+        body: () => ({ figmaMcpUrl: figmaOAuthRef.current ? "https://mcp.figma.com/mcp" : figmaMcpUrlRef.current, figmaAccessToken: figmaAccessTokenRef.current, codeProjectPath: codeProjectPathRef.current, figmaOAuth: figmaOAuthRef.current, model: selectedModelRef.current, selectedNode: selectedNodeRef.current }),
       }),
     [],
   );
@@ -719,6 +735,26 @@ export default function Home() {
           ))}
 
           {isLoading && <ThinkingIndicator />}
+
+          {selectedNode && (
+            <div className="mb-4 flex items-start gap-2 px-3 py-2.5 rounded-lg bg-purple-500/10 border border-purple-500/20 text-xs text-purple-300/80 italic">
+              <span className="shrink-0 mt-0.5">👁️</span>
+              <div>
+                <span>Selection changed in Figma — </span>
+                <span className="text-purple-200/90 font-medium not-italic break-all">{selectedNode}</span>
+                <div className="mt-1.5 flex gap-2">
+                  <button
+                    type="button"
+                    disabled={isLoading}
+                    onClick={() => { shouldAutoScroll.current = true; sendMessage({ text: `Analyse this Figma selection: ${selectedNode}` }); }}
+                    className="px-2.5 py-1 rounded bg-purple-500/20 hover:bg-purple-500/30 text-purple-200 not-italic transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    Analyze this selection
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
 
           {error && (
             <div className="mb-4 p-3 bg-red-500/10 border border-red-500/20 rounded-lg text-sm text-red-400 break-words">
