@@ -288,7 +288,12 @@ export default function Home() {
   const codeConnected = codeProjectPath.trim().length > 0;
 
   return (
-    <div className="flex h-screen bg-[#0a0a0a] text-white overflow-hidden">
+    <div className="relative flex h-screen bg-[#0a0a0a] text-white overflow-hidden">
+      <div className="absolute inset-0 overflow-hidden pointer-events-none z-0">
+        <div className="wave-bg-layer wave-bg-1" />
+        <div className="wave-bg-layer wave-bg-2" />
+        <div className="wave-bg-layer wave-bg-3" />
+      </div>
       {settingsOpen && (
         <div
           className="fixed inset-0 bg-black/50 z-40 md:hidden"
@@ -296,7 +301,7 @@ export default function Home() {
         />
       )}
       <div
-        className={`${settingsOpen ? "w-80 translate-x-0" : "w-0 -translate-x-full md:translate-x-0"} fixed md:relative z-50 md:z-auto h-full transition-all duration-200 overflow-hidden border-r border-white/10 bg-[#111]`}
+        className={`${settingsOpen ? "w-80 translate-x-0" : "w-0 -translate-x-full md:translate-x-0"} fixed md:relative z-50 md:z-auto h-full transition-all duration-200 overflow-hidden glass-sidebar`}
       >
         <div className="p-4 w-80">
           <h2 className="text-sm font-semibold text-white/60 uppercase tracking-wider mb-4">
@@ -401,8 +406,8 @@ export default function Home() {
         </div>
       </div>
 
-      <div className="flex-1 flex flex-col min-w-0">
-        <header className="flex items-center justify-between px-3 sm:px-4 py-3 border-b border-white/10">
+      <div className="flex-1 flex flex-col min-w-0 relative z-10">
+        <header className="flex items-center justify-between px-3 sm:px-4 py-3 glass-header">
           <div className="flex items-center gap-2 sm:gap-3 min-w-0">
             <button
               onClick={() => setSettingsOpen(!settingsOpen)}
@@ -479,8 +484,8 @@ export default function Home() {
               <div
                 className={`max-w-full sm:max-w-[80%] rounded-lg px-3 sm:px-4 py-2.5 sm:py-3 text-sm leading-relaxed ${
                   m.role === "user"
-                    ? "bg-blue-600/20 border border-blue-500/20"
-                    : "bg-white/5 border border-white/5"
+                    ? "glass-msg-user"
+                    : "glass-msg-ai"
                 }`}
               >
                 {m.parts?.map((part, i) => {
@@ -559,7 +564,7 @@ export default function Home() {
 
           {isLoading && (
             <div className="mb-4">
-              <div className="max-w-full sm:max-w-[80%] rounded-lg px-3 sm:px-4 py-3 bg-white/5 border border-white/5">
+              <div className="max-w-full sm:max-w-[80%] rounded-lg px-3 sm:px-4 py-3 glass-msg-ai">
                 <div className="flex items-center gap-2 text-sm text-white/40">
                   <div className="animate-pulse">●</div>
                   Thinking...
@@ -579,7 +584,7 @@ export default function Home() {
 
         <form
           onSubmit={onSubmit}
-          className="px-3 sm:px-4 py-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))] border-t border-white/10"
+          className="px-3 sm:px-4 py-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))] glass-input-bar"
         >
           <div className="flex gap-2">
             <input
