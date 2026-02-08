@@ -24,7 +24,7 @@ function ThinkingBlock({ text, isLast, isStreaming }: { text: string; isLast: bo
     <div className="my-2">
       <button
         onClick={() => setOpen(!open)}
-        className={`flex items-center gap-2 text-xs px-3 py-1.5 rounded-md transition-colors w-full text-left ${
+        className={`flex items-center gap-2 text-xs px-3 py-1.5 rounded-md transition-colors w-full text-left overflow-hidden min-w-0 ${
           isActive
             ? "bg-violet-500/10 border border-violet-500/20 text-violet-300"
             : "bg-white/5 border border-white/5 text-white/40 hover:bg-white/10"
@@ -40,8 +40,8 @@ function ThinkingBlock({ text, isLast, isStreaming }: { text: string; isLast: bo
             <path d="M8.59 16.59L13.17 12 8.59 7.41 10 6l6 6-6 6z" />
           </svg>
         )}
-        <span className="font-medium">{isActive ? "Thinking..." : "Thought"}</span>
-        {!isActive && !open && <span className="truncate opacity-60">{text.slice(0, 80)}{text.length > 80 ? "…" : ""}</span>}
+        <span className="font-medium shrink-0">{isActive ? "Thinking..." : "Thought"}</span>
+        {!isActive && !open && <span className="truncate opacity-60 min-w-0">{text.slice(0, 80)}{text.length > 80 ? "…" : ""}</span>}
       </button>
       {(open || isActive) && (
         <div className={`mt-1 ml-5 px-3 py-2 rounded text-xs leading-relaxed border-l-2 ${
