@@ -189,6 +189,8 @@ export default function Home() {
   const [input, setInput] = useState("");
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
+  const shouldAutoScroll = useRef(true);
 
   const figmaMcpUrlRef = useRef(figmaMcpUrl);
   figmaMcpUrlRef.current = figmaMcpUrl;
@@ -212,6 +214,13 @@ export default function Home() {
 
   const isLoading = status === "submitted" || status === "streaming";
 
+  const handleScroll = () => {
+    const el = scrollContainerRef.current;
+    if (!el) return;
+    const threshold = 40;
+    shouldAutoScroll.current = el.scrollHeight - el.scrollTop - el.clientHeight < threshold;
+  };
+
   useEffect(() => {
     fetch("/api/auth/figma/status")
       .then((r) => r.json())
@@ -220,7 +229,12 @@ export default function Home() {
   }, []);
 
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    if (shouldAutoScroll.current) {
+      const el = scrollContainerRef.current;
+      if (el) {
+        el.scrollTop = el.scrollHeight;
+      }
+    }
   }, [messages]);
 
   useEffect(() => {
@@ -232,6 +246,7 @@ export default function Home() {
   const onSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!input.trim() || isLoading) return;
+    shouldAutoScroll.current = true;
     sendMessage({ text: input });
     setInput("");
   };
@@ -394,7 +409,7 @@ export default function Home() {
           </div>
         </header>
 
-        <div className="flex-1 overflow-y-auto px-3 sm:px-4 py-4 sm:py-6">
+        <div ref={scrollContainerRef} onScroll={handleScroll} className="flex-1 overflow-y-auto px-3 sm:px-4 py-4 sm:py-6">
           {messages.length === 0 && (
             <div className="flex flex-col items-center justify-center h-full text-center px-4">
               <div className="text-4xl mb-4">🛡️</div>

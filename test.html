@@ -122,12 +122,37 @@
     checkStatus();
     setInterval(checkStatus, 30000);
 
+    function isAtBottom() {
+        // On considère qu'on est en bas si on est à moins de 15px du bord
+        return (chat.scrollHeight - chat.scrollTop - chat.clientHeight) <= 15;
+    }
+
+    function scrollToBottom() {
+        chat.scrollTo({
+            top: chat.scrollHeight,
+            behavior: 'auto'
+        });
+    }
+
     function addMessage(role, content) {
+        const wasAtBottom = isAtBottom();
         const msg = document.createElement('div');
         msg.className = `message ${role}`;
         msg.innerHTML = content;
         chat.appendChild(msg);
-        chat.scrollTop = chat.scrollHeight;
+        if (wasAtBottom) {
+            scrollToBottom();
+        }
+    }
+
+    function updateLastMessage(content) {
+        if (chat.lastElementChild) {
+            const wasAtBottom = isAtBottom();
+            chat.lastElementChild.innerHTML = content;
+            if (wasAtBottom) {
+                scrollToBottom();
+            }
+        }
     }
 
     function escapeHtml(s) {
@@ -151,9 +176,9 @@
         if (userPrompt.toLowerCase().trim() === 'list tools') {
             addMessage('assistant', '<span class="spinner">Listing tools...</span>');
             const tools = figmaTools.length ? figmaTools : await loadFigmaTools();
-            chat.lastElementChild.innerHTML = tools.length
+            updateLastMessage(tools.length
                 ? '<strong>Figma MCP Tools:</strong><pre style="white-space:pre-wrap;font-size:0.85em;">' + escapeHtml(JSON.stringify(tools, null, 2)) + '</pre>'
-                : 'Aucun tool disponible (Figma MCP offline?)';
+                : 'Aucun tool disponible (Figma MCP offline?)');
             return;
         }
 
@@ -162,7 +187,7 @@
         const { fileKey, nodeId } = parseFigmaUrl(userPrompt);
 
         if (!fileKey) {
-            chat.lastElementChild.innerHTML = `<strong>Pas de lien Figma détecté.</strong><br>Collez un lien du type:<br><code>https://www.figma.com/design/ABC123/Name?node-id=12:34</code>`;
+            updateLastMessage(`<strong>Pas de lien Figma détecté.</strong><br>Collez un lien du type:<br><code>https://www.figma.com/design/ABC123/Name?node-id=12:34</code>`);
             return;
         }
 
@@ -181,12 +206,12 @@
                 ? result.content.map(c => c.text || JSON.stringify(c)).join('\n')
                 : JSON.stringify(result, null, 2);
 
-            chat.lastElementChild.innerHTML = `
+            updateLastMessage(`
                 <strong>Figma Data (${fileKey}${nodeId ? ' / node ' + nodeId : ''}):</strong>
                 <pre style="white-space:pre-wrap;font-size:0.85em;max-height:400px;overflow:auto;">${escapeHtml(figmaText)}</pre>
-            `;
+            `);
         } catch (e) {
-            chat.lastElementChild.innerHTML = `<strong>Erreur Figma:</strong> ${escapeHtml(e.message)}`;
+            updateLastMessage(`<strong>Erreur Figma:</strong> ${escapeHtml(e.message)}`);
         }
     }
 
