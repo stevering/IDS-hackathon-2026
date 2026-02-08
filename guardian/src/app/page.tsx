@@ -74,6 +74,7 @@ export default function Home() {
   const [figmaAccessToken, setFigmaAccessToken] = useState("");
   const [codeProjectPath, setCodeProjectPath] = useState("http://127.0.0.1:64342/sse");//"http://[::1]:3846/sse");
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [figmaOAuth, setFigmaOAuth] = useState(false);
   const [input, setInput] = useState("");
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -99,6 +100,13 @@ export default function Home() {
   const isLoading = status === "submitted" || status === "streaming";
 
   useEffect(() => {
+    fetch("/api/auth/figma/status")
+      .then((r) => r.json())
+      .then((d) => setFigmaOAuth(d.connected))
+      .catch(() => {});
+  }, []);
+
+  useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
@@ -115,7 +123,7 @@ export default function Home() {
     setInput("");
   };
 
-  const figmaConnected = figmaMcpUrl.trim().length > 0;
+  const figmaConnected = figmaOAuth || figmaAccessToken.trim().length > 0 || figmaMcpUrl.trim().length > 0;
   const codeConnected = codeProjectPath.trim().length > 0;
 
   return (
@@ -158,7 +166,36 @@ export default function Home() {
 
             <div>
               <label className="block text-xs text-white/50 mb-1">
-                Figma Access Token
+                Figma Authentication
+              </label>
+              {figmaOAuth ? (
+                <div className="flex items-center gap-2">
+                  <div className="flex-1 flex items-center gap-1.5 bg-emerald-500/10 border border-emerald-500/20 rounded-md px-3 py-2">
+                    <div className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+                    <span className="text-xs text-emerald-300">Connected via OAuth</span>
+                  </div>
+                  <button
+                    onClick={() => {
+                      fetch("/api/auth/figma/status", { method: "DELETE" }).then(() => setFigmaOAuth(false));
+                    }}
+                    className="px-2 py-2 text-xs text-red-400 hover:bg-red-500/10 rounded-md transition-colors"
+                  >
+                    Disconnect
+                  </button>
+                </div>
+              ) : (
+                <a
+                  href="/api/auth/figma"
+                  className="block w-full text-center bg-[#a259ff]/20 border border-[#a259ff]/30 hover:bg-[#a259ff]/30 rounded-md px-3 py-2 text-sm text-[#a259ff] transition-colors"
+                >
+                  Sign in with Figma
+                </a>
+              )}
+            </div>
+
+            <div>
+              <label className="block text-xs text-white/50 mb-1">
+                Figma Access Token (legacy)
               </label>
               <input
                 type="password"
@@ -168,7 +205,7 @@ export default function Home() {
                 className="w-full bg-white/5 border border-white/10 rounded-md px-3 py-2 text-sm text-white placeholder:text-white/20 focus:outline-none focus:border-white/30"
               />
               <span className="text-xs text-white/30 mt-1 block">
-                Optional if FIGMA_ACCESS_TOKEN is set in .env.local
+                Fallback if OAuth not used. Also reads FIGMA_ACCESS_TOKEN from .env.local
               </span>
             </div>
 

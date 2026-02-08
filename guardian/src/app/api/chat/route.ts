@@ -2,6 +2,7 @@ import { xai } from "@ai-sdk/xai";
 import { streamText, stepCountIs, convertToModelMessages } from "ai";
 import { createMCPClient, type MCPClient } from "@ai-sdk/mcp";
 import { GUARDIAN_SYSTEM_PROMPT } from "@/lib/system-prompt";
+import { cookies } from "next/headers";
 
 export const maxDuration = 120;
 
@@ -141,7 +142,9 @@ export async function POST(req: Request) {
   const mcpErrors: string[] = [];
 
   if (figmaMcpUrl) {
-    const token = figmaAccessToken || process.env.FIGMA_ACCESS_TOKEN;
+    const cookieStore = await cookies();
+    const oauthToken = cookieStore.get("figma_access_token")?.value;
+    const token = figmaAccessToken || oauthToken || process.env.FIGMA_ACCESS_TOKEN;
     const figmaHeaders = token ? { Authorization: `Bearer ${token}` } : undefined;
     try {
       const { tools } = await getOrConnect(figmaMcpUrl, "Figma", figmaHeaders);
