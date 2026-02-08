@@ -14,7 +14,8 @@ type Segment = TextSegment | ImageSegment;
 type ThinkingSegment = { kind: "thinking"; text: string };
 type ContentSegment = { kind: "content"; text: string };
 type DetailsSegment = { kind: "details"; text: string; streaming: boolean };
-type StructuredSegment = ThinkingSegment | ContentSegment | DetailsSegment;
+type QCMSegment = { kind: "qcm"; choices: string[] };
+type StructuredSegment = ThinkingSegment | ContentSegment | DetailsSegment | QCMSegment;
 
 function ThinkingBlock({ text, isLast, isStreaming }: { text: string; isLast: boolean; isStreaming: boolean }) {
   const [open, setOpen] = useState(false);
@@ -24,7 +25,7 @@ function ThinkingBlock({ text, isLast, isStreaming }: { text: string; isLast: bo
     <div className="my-2">
       <button
         onClick={() => setOpen(!open)}
-        className={`flex items-center gap-2 text-xs px-3 py-1.5 rounded-md transition-colors w-full text-left overflow-hidden min-w-0 ${
+        className={`flex items-center gap-2 text-xs px-3 py-1.5 rounded-md transition-colors w-full text-left overflow-hidden min-w-0 cursor-pointer ${
           isActive
             ? "bg-violet-500/10 border border-violet-500/20 text-violet-300"
             : "bg-white/5 border border-white/5 text-white/40 hover:bg-white/10"
@@ -68,7 +69,7 @@ function DetailsBlock({ text, isStreaming }: { text: string; isStreaming: boolea
     <div className="mt-3">
       <button
         onClick={() => setOpen(!open)}
-        className="flex items-center gap-2 text-xs px-3 py-2 rounded-md bg-blue-500/10 border border-blue-500/20 text-blue-300 hover:bg-blue-500/20 transition-colors"
+        className="flex items-center gap-2 text-xs px-3 py-2 rounded-md bg-blue-500/10 border border-blue-500/20 text-blue-300 hover:bg-blue-500/20 transition-colors cursor-pointer"
       >
         {isStreaming && !open ? (
           <svg className="animate-spin h-3 w-3 shrink-0" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
@@ -93,6 +94,27 @@ function DetailsBlock({ text, isStreaming }: { text: string; isStreaming: boolea
   );
 }
 
+function QCMBlock({ choices, onSelect, disabled }: { choices: string[]; onSelect: (choice: string) => void; disabled: boolean }) {
+  return (
+    <div className="my-3 flex flex-wrap gap-2">
+      {choices.map((choice, i) => (
+        <button
+          key={i}
+          onClick={() => !disabled && onSelect(choice)}
+          disabled={disabled}
+          className={`px-4 py-2 rounded-lg text-sm font-medium border transition-colors ${
+            disabled
+              ? "bg-white/5 border-white/10 text-white/30 cursor-not-allowed"
+              : "bg-blue-600/20 border-blue-500/30 text-blue-300 hover:bg-blue-600/30 hover:border-blue-500/50 cursor-pointer"
+          }`}
+        >
+          {choice}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 function parseStructuredContent(text: string, isStreamingMsg: boolean = false): StructuredSegment[] {
   const segments: StructuredSegment[] = [];
   const thinkingRegex = /<thinking>([\s\S]*?)<\/thinking>/g;
@@ -100,6 +122,7 @@ function parseStructuredContent(text: string, isStreamingMsg: boolean = false): 
 
   const thinkingBlocks: { index: number; length: number; text: string }[] = [];
   const detailsBlocks: { index: number; length: number; text: string; streaming: boolean }[] = [];
+  const qcmBlocks: { index: number; length: number; choices: string[] }[] = [];
 
   let match;
   while ((match = thinkingRegex.exec(text)) !== null) {
@@ -107,6 +130,18 @@ function parseStructuredContent(text: string, isStreamingMsg: boolean = false): 
   }
   while ((match = detailsRegex.exec(text)) !== null) {
     detailsBlocks.push({ index: match.index, length: match[0].length, text: match[1].trim(), streaming: false });
+  }
+
+  const qcmRegex = /<!-- QCM_START -->([\s\S]*?)<!-- QCM_END -->/g;
+  while ((match = qcmRegex.exec(text)) !== null) {
+    const choices = match[1]
+      .split("\n")
+      .map(l => l.trim())
+      .filter(l => l.startsWith("- [CHOICE] "))
+      .map(l => l.replace("- [CHOICE] ", ""));
+    if (choices.length > 0) {
+      qcmBlocks.push({ index: match.index, length: match[0].length, choices });
+    }
   }
 
   if (isStreamingMsg) {
@@ -126,6 +161,7 @@ function parseStructuredContent(text: string, isStreamingMsg: boolean = false): 
   const allBlocks = [
     ...thinkingBlocks.map(b => ({ ...b, kind: "thinking" as const, streaming: false })),
     ...detailsBlocks.map(b => ({ ...b, kind: "details" as const })),
+    ...qcmBlocks.map(b => ({ ...b, kind: "qcm" as const, streaming: false })),
   ].sort((a, b) => a.index - b.index);
 
   if (allBlocks.length === 0) {
@@ -141,6 +177,8 @@ function parseStructuredContent(text: string, isStreamingMsg: boolean = false): 
     }
     if (block.kind === "details") {
       segments.push({ kind: "details", text: block.text, streaming: block.streaming });
+    } else if (block.kind === "qcm") {
+      segments.push({ kind: "qcm", choices: (block as typeof qcmBlocks[number] & { kind: "qcm" }).choices });
     } else {
       segments.push({ kind: block.kind, text: block.text });
     }
@@ -156,6 +194,8 @@ function parseStructuredContent(text: string, isStreamingMsg: boolean = false): 
 
 function ToolCallBlock({ toolName, input, output, isError }: { toolName: string; input?: Record<string, unknown>; output?: unknown; isError?: boolean }) {
   const [open, setOpen] = useState(false);
+  const [visibleLines, setVisibleLines] = useState(50);
+  const CHUNK = 50;
 
   const outputText = (() => {
     if (!output) return null;
@@ -167,11 +207,16 @@ function ToolCallBlock({ toolName, input, output, isError }: { toolName: string;
     return JSON.stringify(output, null, 2);
   })();
 
+  const outputLines = outputText ? outputText.split("\n") : [];
+  const totalLines = outputLines.length;
+  const hasMore = totalLines > visibleLines;
+  const displayedText = totalLines > CHUNK ? outputLines.slice(0, visibleLines).join("\n") : outputText;
+
   return (
     <div className="my-2">
       <button
         onClick={() => setOpen(!open)}
-        className={`flex items-center gap-2 text-xs px-3 py-1.5 rounded-md transition-colors w-full text-left ${
+        className={`flex items-center gap-2 text-xs px-3 py-1.5 rounded-md transition-colors w-full text-left overflow-hidden min-w-0 cursor-pointer ${
           isError
             ? "bg-red-500/5 border border-red-500/15 text-red-300/70 hover:bg-red-500/10"
             : "bg-white/5 border border-white/5 text-white/50 hover:bg-white/10"
@@ -188,8 +233,8 @@ function ToolCallBlock({ toolName, input, output, isError }: { toolName: string;
           <span className="text-emerald-400/70">✓</span>
         )}
         {!open && input && (
-          <span className="truncate opacity-50 font-mono text-[10px] ml-1">
-            {Object.entries(input).map(([k, v]) => `${k}=${JSON.stringify(v)}`).join(" ").slice(0, 60)}
+          <span className="truncate opacity-50 font-mono text-[10px] ml-1 min-w-0 flex-1">
+            {Object.entries(input).map(([k, v]) => `${k}=${JSON.stringify(v)}`).join(" ").slice(0, 40)}
           </span>
         )}
       </button>
@@ -204,7 +249,15 @@ function ToolCallBlock({ toolName, input, output, isError }: { toolName: string;
           {outputText && (
             <div className={`px-3 py-2 rounded text-xs leading-relaxed border-l-2 ${isError ? "border-red-500/20" : "border-emerald-500/20"}`}>
               <span className="text-white/30 font-medium block mb-1">Output{isError ? " (error)" : ""}:</span>
-              <pre className={`font-mono whitespace-pre-wrap break-all ${isError ? "text-red-300/50" : "text-emerald-200/50"}`}>{outputText}</pre>
+              <pre className={`font-mono whitespace-pre-wrap break-all ${isError ? "text-red-300/50" : "text-emerald-200/50"}`}>{displayedText}</pre>
+              {hasMore && (
+                <button
+                  onClick={() => setVisibleLines((v) => v + CHUNK)}
+                  className="mt-2 text-[11px] text-blue-400/80 hover:text-blue-300 transition-colors cursor-pointer"
+                >
+                  more ({visibleLines}/{totalLines} lines)
+                </button>
+              )}
             </div>
           )}
         </div>
@@ -244,6 +297,40 @@ function ToolCallProgress({ toolName }: { toolName: string }) {
       {toolName}
       {isStalled && <span className="text-amber-400/60 text-[10px]">slow response…</span>}
       <span className={`ml-auto tabular-nums ${isStalled ? "text-amber-400/50" : "text-white/30"}`}>{timeStr}</span>
+    </div>
+  );
+}
+
+function ThinkingIndicator() {
+  const [elapsed, setElapsed] = useState(0);
+
+  useEffect(() => {
+    const start = Date.now();
+    const interval = setInterval(() => {
+      setElapsed(Math.floor((Date.now() - start) / 1000));
+    }, 1000);
+    return () => clearInterval(interval);
+  }, []);
+
+  const minutes = Math.floor(elapsed / 60);
+  const seconds = elapsed % 60;
+  const timeStr = minutes > 0
+    ? `${minutes}m ${seconds.toString().padStart(2, "0")}s`
+    : `${seconds}s`;
+
+  return (
+    <div className="mb-4">
+      <div className="max-w-full sm:max-w-[80%] rounded-lg px-3 sm:px-4 py-3 glass-msg-ai">
+        <div className="flex items-center gap-3 text-sm text-white/50">
+          <div className="flex items-center gap-1.5">
+            <span className="thinking-dot" />
+            <span className="thinking-dot" />
+            <span className="thinking-dot" />
+          </div>
+          <span className="font-medium">Thinking</span>
+          <span className="ml-auto tabular-nums text-white/30 text-xs">{timeStr}</span>
+        </div>
+      </div>
     </div>
   );
 }
@@ -352,6 +439,7 @@ export default function Home() {
         <div className="wave-bg-layer wave-bg-1" />
         <div className="wave-bg-layer wave-bg-2" />
         <div className="wave-bg-layer wave-bg-3" />
+        <div className="wave-bg-noise" />
       </div>
       {settingsOpen && (
         <div
@@ -403,7 +491,7 @@ export default function Home() {
                     onClick={() => {
                       fetch("/api/auth/figma/status", { method: "DELETE" }).then(() => setFigmaOAuth(false));
                     }}
-                    className="px-2 py-2 text-xs text-red-400 hover:bg-red-500/10 rounded-md transition-colors"
+                    className="px-2 py-2 text-xs text-red-400 hover:bg-red-500/10 rounded-md transition-colors cursor-pointer"
                   >
                     Disconnect
                   </button>
@@ -411,7 +499,7 @@ export default function Home() {
               ) : (
                 <a
                   href="/api/auth/figma"
-                  className="block w-full text-center bg-[#a259ff]/20 border border-[#a259ff]/30 hover:bg-[#a259ff]/30 rounded-md px-3 py-2 text-sm text-[#a259ff] transition-colors"
+                  className="block w-full text-center bg-[#a259ff]/20 border border-[#a259ff]/30 hover:bg-[#a259ff]/30 rounded-md px-3 py-2 text-sm text-[#a259ff] transition-colors cursor-pointer"
                 >
                   Sign in with Figma
                 </a>
@@ -470,7 +558,7 @@ export default function Home() {
           <div className="flex items-center gap-2 sm:gap-3 min-w-0">
             <button
               onClick={() => setSettingsOpen(!settingsOpen)}
-              className="p-2 rounded-md hover:bg-white/5 transition-colors shrink-0"
+              className="p-2 rounded-md hover:bg-white/5 transition-colors shrink-0 cursor-pointer"
               title="Toggle settings"
             >
               <svg
@@ -521,13 +609,13 @@ export default function Home() {
                 <p>Try asking:</p>
                 <button
                   onClick={() => sendMessage({ text: "Check the Button component" })}
-                  className="block mx-auto px-3 py-1.5 rounded-md bg-white/5 hover:bg-white/10 transition-colors"
+                  className="block mx-auto px-3 py-1.5 rounded-md bg-white/5 hover:bg-white/10 transition-colors cursor-pointer"
                 >
                   &quot;Check the Button component&quot;
                 </button>
                 <button
                   onClick={() => sendMessage({ text: "List all components available in Figma" })}
-                  className="block mx-auto px-3 py-1.5 rounded-md bg-white/5 hover:bg-white/10 transition-colors"
+                  className="block mx-auto px-3 py-1.5 rounded-md bg-white/5 hover:bg-white/10 transition-colors cursor-pointer"
                 >
                   &quot;List all components available in Figma&quot;
                 </button>
@@ -560,6 +648,9 @@ export default function Home() {
                           }
                           if (structSeg.kind === "details") {
                             return <DetailsBlock key={sj} text={structSeg.text} isStreaming={structSeg.streaming} />;
+                          }
+                          if (structSeg.kind === "qcm") {
+                            return <QCMBlock key={sj} choices={structSeg.choices} onSelect={(choice) => { shouldAutoScroll.current = true; sendMessage({ text: choice }); }} disabled={isLoading} />;
                           }
                           
                           // content kind
@@ -621,16 +712,7 @@ export default function Home() {
             </div>
           ))}
 
-          {isLoading && (
-            <div className="mb-4">
-              <div className="max-w-full sm:max-w-[80%] rounded-lg px-3 sm:px-4 py-3 glass-msg-ai">
-                <div className="flex items-center gap-2 text-sm text-white/40">
-                  <div className="animate-pulse">●</div>
-                  Thinking...
-                </div>
-              </div>
-            </div>
-          )}
+          {isLoading && <ThinkingIndicator />}
 
           {error && (
             <div className="mb-4 p-3 bg-red-500/10 border border-red-500/20 rounded-lg text-sm text-red-400 break-words">
@@ -657,7 +739,7 @@ export default function Home() {
             <button
               type="submit"
               disabled={isLoading || !input.trim()}
-              className="px-3 sm:px-4 py-3 bg-blue-600 hover:bg-blue-500 disabled:bg-white/5 disabled:text-white/20 rounded-lg text-sm font-medium transition-colors shrink-0"
+              className="px-3 sm:px-4 py-3 bg-blue-600 hover:bg-blue-500 disabled:bg-white/5 disabled:text-white/20 disabled:cursor-not-allowed rounded-lg text-sm font-medium transition-colors shrink-0 cursor-pointer"
             >
               Send
             </button>
