@@ -52,7 +52,7 @@ The endpoint expects a JSON body with the following fields:
 3. **System prompt** — The base system prompt (`GUARDIAN_SYSTEM_PROMPT` defined in `src/lib/system-prompt.ts`) is augmented at runtime with:
    - Any MCP connection errors, so the model can inform the user.
    - The list of available MCP tool names.
-4. **Streaming response** — The request is forwarded to the `grok-4-fast-non-reasoning` model via `@ai-sdk/xai` using `streamText`. The model can invoke MCP tools autonomously up to 10 steps (`stopWhen: stepCountIs(10)`).
+4. **Streaming response** — The request is forwarded to the `grok-4-1-fast-reasoning` model via `@ai-sdk/xai` using `streamText`. The model can invoke MCP tools autonomously up to 10 steps (`stopWhen: stepCountIs(10)`).
 5. **Response format** — The streamed result is returned as a UI message stream (`toUIMessageStreamResponse()`), consumed on the client side by the `useChat` hook from `@ai-sdk/react`.
 
 ### Response

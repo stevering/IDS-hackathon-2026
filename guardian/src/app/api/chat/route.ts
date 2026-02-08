@@ -210,7 +210,7 @@ export async function POST(req: Request) {
   }
 
   const result = streamText({
-    model: xai("grok-4-fast-non-reasoning"),
+    model: xai("grok-4-1-fast-reasoning"),
     system,
     messages: await convertToModelMessages(messages),
     tools: allTools as Parameters<typeof streamText>[0]["tools"],

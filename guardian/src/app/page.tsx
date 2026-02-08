@@ -5,10 +5,121 @@ import { DefaultChatTransport } from "ai";
 import { useState, useRef, useEffect, useMemo } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import remarkBreaks from "remark-breaks";
 
 type TextSegment = { type: "text"; content: string };
 type ImageSegment = { type: "image"; src: string; complete: boolean };
 type Segment = TextSegment | ImageSegment;
+
+type ThinkingSegment = { kind: "thinking"; text: string };
+type ContentSegment = { kind: "content"; text: string };
+type DetailsSegment = { kind: "details"; text: string };
+type StructuredSegment = ThinkingSegment | ContentSegment | DetailsSegment;
+
+function ThinkingBlock({ text, isLast, isStreaming }: { text: string; isLast: boolean; isStreaming: boolean }) {
+  const [open, setOpen] = useState(false);
+  const isActive = isLast && isStreaming;
+
+  return (
+    <div className="my-2">
+      <button
+        onClick={() => setOpen(!open)}
+        className={`flex items-center gap-2 text-xs px-3 py-1.5 rounded-md transition-colors w-full text-left ${
+          isActive
+            ? "bg-violet-500/10 border border-violet-500/20 text-violet-300"
+            : "bg-white/5 border border-white/5 text-white/40 hover:bg-white/10"
+        }`}
+      >
+        {isActive ? (
+          <svg className="animate-spin h-3 w-3 shrink-0" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+          </svg>
+        ) : (
+          <svg className={`h-3 w-3 shrink-0 transition-transform ${open ? "rotate-90" : ""}`} viewBox="0 0 24 24" fill="currentColor">
+            <path d="M8.59 16.59L13.17 12 8.59 7.41 10 6l6 6-6 6z" />
+          </svg>
+        )}
+        <span className="font-medium">{isActive ? "Thinking..." : "Thought"}</span>
+        {!isActive && !open && <span className="truncate opacity-60">{text.slice(0, 80)}{text.length > 80 ? "…" : ""}</span>}
+      </button>
+      {(open || isActive) && (
+        <div className={`mt-1 ml-5 px-3 py-2 rounded text-xs leading-relaxed border-l-2 ${
+          isActive ? "border-violet-500/30 text-violet-200/70" : "border-white/10 text-white/40"
+        }`}>
+          {text}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function DetailsBlock({ text }: { text: string }) {
+  const [open, setOpen] = useState(false);
+
+  return (
+    <div className="mt-3">
+      <button
+        onClick={() => setOpen(!open)}
+        className="flex items-center gap-2 text-xs px-3 py-2 rounded-md bg-blue-500/10 border border-blue-500/20 text-blue-300 hover:bg-blue-500/20 transition-colors"
+      >
+        <svg className={`h-3 w-3 shrink-0 transition-transform ${open ? "rotate-90" : ""}`} viewBox="0 0 24 24" fill="currentColor">
+          <path d="M8.59 16.59L13.17 12 8.59 7.41 10 6l6 6-6 6z" />
+        </svg>
+        <span className="font-medium">{open ? "Hide details" : "More details"}</span>
+      </button>
+      {open && (
+        <div className="mt-2 px-3 py-3 rounded-md bg-white/[0.03] border border-white/5 text-sm overflow-x-auto markdown-body">
+          <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]}>{text}</ReactMarkdown>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function parseStructuredContent(text: string): StructuredSegment[] {
+  const segments: StructuredSegment[] = [];
+  const thinkingRegex = /<thinking>([\s\S]*?)<\/thinking>/g;
+  const detailsRegex = /(?:```\s*)?<!-- DETAILS_START -->([\s\S]*?)<!-- DETAILS_END -->(?:\s*```)?/g;
+
+  let processed = text;
+  const thinkingBlocks: { index: number; length: number; text: string }[] = [];
+  const detailsBlocks: { index: number; length: number; text: string }[] = [];
+
+  let match;
+  while ((match = thinkingRegex.exec(text)) !== null) {
+    thinkingBlocks.push({ index: match.index, length: match[0].length, text: match[1].trim() });
+  }
+  while ((match = detailsRegex.exec(text)) !== null) {
+    detailsBlocks.push({ index: match.index, length: match[0].length, text: match[1].trim() });
+  }
+
+  const allBlocks = [
+    ...thinkingBlocks.map(b => ({ ...b, kind: "thinking" as const })),
+    ...detailsBlocks.map(b => ({ ...b, kind: "details" as const })),
+  ].sort((a, b) => a.index - b.index);
+
+  if (allBlocks.length === 0) {
+    if (text.trim()) segments.push({ kind: "content", text });
+    return segments;
+  }
+
+  let cursor = 0;
+  for (const block of allBlocks) {
+    if (block.index > cursor) {
+      const content = text.slice(cursor, block.index).trim();
+      if (content) segments.push({ kind: "content", text: content });
+    }
+    segments.push({ kind: block.kind, text: block.text });
+    cursor = block.index + block.length;
+  }
+  if (cursor < text.length) {
+    const remaining = text.slice(cursor).trim();
+    if (remaining) segments.push({ kind: "content", text: remaining });
+  }
+
+  return segments;
+}
 
 function ToolCallProgress({ toolName }: { toolName: string }) {
   const [elapsed, setElapsed] = useState(0);
@@ -213,7 +324,7 @@ export default function Home() {
 
             <div>
               <label className="block text-xs text-white/50 mb-1">
-                Code Project Path (local)
+                Code Editor MCP Url
               </label>
               <input
                 type="text"
@@ -235,9 +346,8 @@ export default function Home() {
 
           <div className="mt-6 p-3 bg-white/5 rounded-md">
             <p className="text-xs text-white/40 leading-relaxed">
-              Paste your Figma MCP SSE URL and set the local path to the code
-              project you want to inspect. Guardian will spawn a filesystem MCP
-              server automatically.
+              Paste your Figma MCP SSE/HTTP URL and set the Code MCP SSE/HTTP URL for the code
+              project you want to inspect.
             </p>
           </div>
         </div>
@@ -266,7 +376,7 @@ export default function Home() {
             <div className="min-w-0">
               <h1 className="text-sm font-semibold truncate">DS AI Guardian</h1>
               <p className="text-xs text-white/40 hidden sm:block">
-                Figma ↔ Code drift detector
+                [Figma ↔ Code] Design System drift detector
               </p>
             </div>
           </div>
@@ -328,35 +438,51 @@ export default function Home() {
                 {m.parts?.map((part, i) => {
                   if (part.type === "text") {
                     const isLastMsg = m === messages[messages.length - 1];
-                    const segments = parseTextWithImages(part.text, isLoading && isLastMsg);
+                    const structuredSegments = parseStructuredContent(part.text);
+                    
                     return (
-                      <div key={i} className="markdown-body overflow-x-auto">
-                        {segments.map((seg, j) => {
-                          if (seg.type === "image") {
-                            if (!seg.complete) {
-                              return (
-                                <div key={j} className="my-3 flex flex-col items-center justify-center w-full max-w-64 h-48 bg-white/5 border border-white/10 rounded-lg">
-                                  <svg className="animate-spin h-8 w-8 text-white/30 mb-2" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-                                  </svg>
-                                  <span className="text-xs text-white/30">Loading image…</span>
-                                </div>
-                              );
-                            }
-                            return (
-                              <img
-                                key={j}
-                                src={seg.src}
-                                alt="Generated image"
-                                className="my-3 max-w-full rounded-lg border border-white/10"
-                              />
-                            );
+                      <div key={i}>
+                        {structuredSegments.map((structSeg, sj) => {
+                          if (structSeg.kind === "thinking") {
+                            return <ThinkingBlock key={sj} text={structSeg.text} isLast={isLastMsg} isStreaming={isLoading} />;
                           }
+                          if (structSeg.kind === "details") {
+                            return <DetailsBlock key={sj} text={structSeg.text} />;
+                          }
+                          
+                          // content kind
+                          const imageSegments = parseTextWithImages(structSeg.text, isLoading && isLastMsg);
                           return (
-                            <ReactMarkdown key={j} remarkPlugins={[remarkGfm]}>
-                              {seg.content}
-                            </ReactMarkdown>
+                            <div key={sj} className="markdown-body overflow-x-auto">
+                              {imageSegments.map((seg, j) => {
+                                if (seg.type === "image") {
+                                  if (!seg.complete) {
+                                    return (
+                                      <div key={j} className="my-3 flex flex-col items-center justify-center w-full max-w-64 h-48 bg-white/5 border border-white/10 rounded-lg">
+                                        <svg className="animate-spin h-8 w-8 text-white/30 mb-2" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                                        </svg>
+                                        <span className="text-xs text-white/30">Loading image…</span>
+                                      </div>
+                                    );
+                                  }
+                                  return (
+                                    <img
+                                      key={j}
+                                      src={seg.src}
+                                      alt="Generated image"
+                                      className="my-3 max-w-full rounded-lg border border-white/10"
+                                    />
+                                  );
+                                }
+                                return (
+                                  <ReactMarkdown key={j} remarkPlugins={[remarkGfm, remarkBreaks]}>
+                                    {seg.content}
+                                  </ReactMarkdown>
+                                );
+                              })}
+                            </div>
                           );
                         })}
                       </div>
