@@ -14,7 +14,7 @@ This project was developed as part of the **IDS Hackathon 2026**, an event aimed
 
 🧩 Our project [on GitHub](https://github.com/stevering/IDS-hackathon-2026)
 
-🎥 Check out our [live demo](youtube.com/live/hOUN5crsNVI?si=nqKLkrbhMVOiYt9V&t=3433)
+🎥 Check out our [live demo](https://youtube.com/live/hOUN5crsNVI?si=nqKLkrbhMVOiYt9V&t=3433)
 
 🪧 Our [Slides presentation](https://www.figma.com/deck/AUexRJNYDfH8f36UTVjKdx)
 
