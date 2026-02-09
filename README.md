@@ -123,19 +123,6 @@ The endpoint expects a JSON body with the following fields:
 
 The endpoint returns a streaming response in the Vercel AI SDK UI message stream format. The client consumes it via `DefaultChatTransport` configured with the same `figmaMcpUrl` and `codeProjectPath` values passed in the request body.
 
-## Learn More
-
-🎥 Check out our [live demo](youtube.com/live/hOUN5crsNVI?si=nqKLkrbhMVOiYt9V&t=3433)
-
-🧩 Our project [on GitHub](https://github.com/stevering/IDS-hackathon-2026)
-
-
-💻 Hackathon [IDS page](https://www.intodesignsystems.com/hackathon)
-
-🗳️ Into Design Systems [Website](https://www.intodesignsystems.com/)
-
-
-Together, let's make design systems more reliable and maintainable! 💪
 
 
 ## Deploy on Vercel
