@@ -9,6 +9,7 @@ export async function GET(req: NextRequest) {
 
   const state = crypto.randomBytes(16).toString("hex");
   const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || "http://127.0.0.1:3000";
+  const isSecure = baseUrl.startsWith("https");
 
   const params = new URLSearchParams({
     client_id: clientId,
@@ -24,7 +25,7 @@ export async function GET(req: NextRequest) {
     status: 307,
     headers: {
       Location: url,
-      "Set-Cookie": `figma_oauth_state=${state}; HttpOnly; SameSite=Lax; Path=/; Max-Age=300`,
+      "Set-Cookie": `figma_oauth_state=${state}; HttpOnly; SameSite=Lax; Path=/; Max-Age=300${isSecure ? "; Secure" : ""}`,
     },
   });
 }

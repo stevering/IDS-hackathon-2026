@@ -17,6 +17,7 @@ export async function GET(req: NextRequest) {
   }
 
   const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || "http://127.0.0.1:3000";
+  const isSecure = baseUrl.startsWith("https");
   const credentials = Buffer.from(`${clientId}:${clientSecret}`).toString("base64");
 
   const tokenRes = await fetch("https://api.figma.com/v1/oauth/token", {
@@ -44,7 +45,7 @@ export async function GET(req: NextRequest) {
 
   response.cookies.set("figma_access_token", data.access_token, {
     httpOnly: true,
-    secure: false,
+    secure: isSecure,
     sameSite: "lax",
     maxAge: data.expires_in || 7776000,
     path: "/",
@@ -53,7 +54,7 @@ export async function GET(req: NextRequest) {
   if (data.refresh_token) {
     response.cookies.set("figma_refresh_token", data.refresh_token, {
       httpOnly: true,
-      secure: false,
+      secure: isSecure,
       sameSite: "lax",
       maxAge: 365 * 24 * 3600,
       path: "/",

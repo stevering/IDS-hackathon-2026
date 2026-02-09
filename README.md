@@ -64,6 +64,22 @@ The project uses an architecture based on the **Model Context Protocol (MCP)** t
 
 ## Prerequisites
 
+### Setup your xAI API KEY
+
+You have to create a file `.env.local` that is inspired by `.env.example`:
+```bash
+cp .env.example .env.local
+```
+
+Then change the values in the `.env.local` file as follows:
+```
+XAI_API_KEY=your_xai_api_key_here
+FIGMA_ACCESS_TOKEN=your_figma_personal_access_token_here
+FIGMA_CLIENT_ID=FIGMA_CLIENT_ID
+FIGMA_CLIENT_SECRET=FIGMA_CLIENT_SECRET
+NEXT_PUBLIC_BASE_URL=http://127.0.0.1:3000
+```
+
 ### MCP of code editor
 
 If you are running a development editor with an integrated MCP server like
