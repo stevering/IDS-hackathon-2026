@@ -3,7 +3,9 @@
 ## About the Hackathon
 
 This project was developed as part of the **IDS Hackathon 2026**, an event aimed at exploring the possibilities of artificial intelligence in the field of design systems and UI/UX consistency.
+
 💻 Hackathon [IDS page](https://www.intodesignsystems.com/hackathon)
+
 🗳️ Into Design Systems [Website](https://www.intodesignsystems.com/)
 
 ## The Project
@@ -11,13 +13,18 @@ This project was developed as part of the **IDS Hackathon 2026**, an event aimed
 **DS AI Guardian** is an intelligent AI assistant designed to ensure consistency between Figma designs and their code implementation. The tool automatically analyzes design files and source code to detect discrepancies, suggest corrections, and maintain design system integrity.
 
 🧩 Our project [on GitHub](https://github.com/stevering/IDS-hackathon-2026)
+
 🎥 Check out our [live demo](youtube.com/live/hOUN5crsNVI?si=nqKLkrbhMVOiYt9V&t=3433)
+
 🪧 Our [Slides presentation](https://www.figma.com/deck/AUexRJNYDfH8f36UTVjKdx)
+
 Our [FigJam Board](https://www.figma.com/board/86wDN58TgmzjgauRgptUp2/DS-AI-GUARDIAN?node-id=0-1&t=d4TWnW6sujrYmU3D-1)
 
 
 Prototype A of the [DS AI Guardian integration inside Figma](https://www.figma.com/make/0a4PRBZ2Ha7OXWvKCKCWaJ/02_07_Guardian_combined?t=67PyKxvrnULdKQ0y-20&fullscreen=1)
+
 Another [Prototype B integrated inside Figma](https://www.figma.com/make/YDX877Ofl0A4o7MBLf8Xdn/Design-Figma-UI-Layout?fullscreen=1&t=jXubMDqI7Afwcd1l-1)
+
 Prototype C of the [DS AI Guardian integration inside Figma](https://www.figma.com/make/VhgxNwY7IxiC5c0TYpyN4L/Guardian?fullscreen=1&t=gfqa36K6UW3bndlf-1)
 
 ## The Team
@@ -25,12 +32,19 @@ Prototype C of the [DS AI Guardian integration inside Figma](https://www.figma.c
 Thank you to the entire team, it was extraordinary : 🎉
 
 [Olusola Oduntan](https://www.linkedin.com/in/oduntan-olusola7)
+
 [Jinyu Li](https://www.linkedin.com/in/jinyu-li-978652b9)
+
 [Nina Berlič](https://www.linkedin.com/in/nina-berlic)
+
 [Konstantinos Dimitropoulos](https://www.linkedin.com/in/kondimitropoulos)
+
 [Elleta McDaniel](https://www.linkedin.com/in/elleta-mcdaniel)
+
 [Jun Taoka](https://www.linkedin.com/in/juntaoka)
+
 [Stéphane Chevreux](https://www.linkedin.com/in/stephane-chevreux)
+
 [Amanda Silva](https://www.linkedin.com/in/amanda-silva-creates)
 
 ## Application
@@ -112,10 +126,14 @@ The endpoint returns a streaming response in the Vercel AI SDK UI message stream
 ## Learn More
 
 🎥 Check out our [live demo](youtube.com/live/hOUN5crsNVI?si=nqKLkrbhMVOiYt9V&t=3433)
+
 🧩 Our project [on GitHub](https://github.com/stevering/IDS-hackathon-2026)
 
+
 💻 Hackathon [IDS page](https://www.intodesignsystems.com/hackathon)
+
 🗳️ Into Design Systems [Website](https://www.intodesignsystems.com/)
+
 
 Together, let's make design systems more reliable and maintainable! 💪
 
