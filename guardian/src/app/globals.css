@@ -32,6 +32,16 @@ a[href],
   60%, 100% { content: '...'; }
 }
 
+@keyframes teleportGlow {
+  0% { box-shadow: 0 0 20px 8px rgba(168, 85, 247, 0.7), 0 0 60px 20px rgba(168, 85, 247, 0.4), inset 0 0 20px rgba(168, 85, 247, 0.3); border-color: rgba(168, 85, 247, 0.8); background-color: rgba(168, 85, 247, 0.25); }
+  30% { box-shadow: 0 0 15px 6px rgba(168, 85, 247, 0.5), 0 0 40px 14px rgba(168, 85, 247, 0.25), inset 0 0 12px rgba(168, 85, 247, 0.2); border-color: rgba(168, 85, 247, 0.5); background-color: rgba(168, 85, 247, 0.18); }
+  100% { box-shadow: 0 0 0 0 transparent, 0 0 0 0 transparent, inset 0 0 0 transparent; border-color: rgba(168, 85, 247, 0.2); background-color: rgba(168, 85, 247, 0.1); }
+}
+
+.teleport-in {
+  animation: teleportGlow 2s ease-out forwards;
+}
+
 .thinking-dot {
   display: inline-block;
   width: 6px;

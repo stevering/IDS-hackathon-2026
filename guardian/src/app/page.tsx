@@ -368,6 +368,7 @@ export default function Home() {
   const [input, setInput] = useState("");
   const [selectedModel, setSelectedModel] = useState<"grok-4-1-fast-reasoning" | "grok-4-1-fast-non-reasoning">("grok-4-1-fast-non-reasoning");
   const [selectedNode, setSelectedNode] = useState<string | null>(null);
+  const [selectionGlow, setSelectionGlow] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
@@ -398,6 +399,14 @@ export default function Home() {
     window.addEventListener("message", handleMessage);
     return () => window.removeEventListener("message", handleMessage);
   }, []);
+
+  useEffect(() => {
+    if (selectedNode) {
+      setSelectionGlow(true);
+      const timer = setTimeout(() => setSelectionGlow(false), 2000);
+      return () => clearTimeout(timer);
+    }
+  }, [selectedNode]);
 
   const transport = useMemo(
     () =>
@@ -737,7 +746,7 @@ export default function Home() {
           {isLoading && <ThinkingIndicator />}
 
           {selectedNode && (
-            <div className="mb-4 flex items-start gap-2 px-3 py-2.5 rounded-lg bg-purple-500/10 border border-purple-500/20 text-xs text-purple-300/80 italic">
+            <div className={`mb-4 flex items-start gap-2 px-3 py-2.5 rounded-lg bg-purple-500/10 border border-purple-500/20 text-xs text-purple-300/80 italic${selectionGlow ? " teleport-in" : ""}`}>
               <span className="shrink-0 mt-0.5">👁️</span>
               <div>
                 <span>Selection changed in Figma — </span>
