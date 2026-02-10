@@ -360,9 +360,14 @@ function parseTextWithImages(text: string, isStreaming: boolean): Segment[] {
 }
 
 export default function Home() {
-  const [figmaMcpUrl, setFigmaMcpUrl] = useState("http://127.0.0.1:3845/mcp");
+  const isDev = process.env.NODE_ENV === 'development';
+  const [figmaMcpUrl, setFigmaMcpUrl] = useState(
+      isDev ? "http://localhost:3000/proxy-local/figma/mcp" : "http://127.0.0.1:3845/mcp"
+  );
+  const [codeProjectPath, setCodeProjectPath] = useState(
+      isDev ? "http://localhost:3000/proxy-local/code/sse" : "http://127.0.0.1:64342/sse"
+  );//"http://[::1]:3846/sse");
   const [figmaAccessToken, setFigmaAccessToken] = useState("");
-  const [codeProjectPath, setCodeProjectPath] = useState("http://127.0.0.1:64342/sse");//"http://[::1]:3846/sse");
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [figmaOAuth, setFigmaOAuth] = useState(false);
   const [input, setInput] = useState("");
@@ -429,7 +434,7 @@ export default function Home() {
   };
 
   useEffect(() => {
-    fetch("/api/auth/figma/status")
+    fetch("/api/auth/figma-mcp/status")
       .then((r) => r.json())
       .then((d) => setFigmaOAuth(d.connected))
       .catch(() => {});
@@ -520,7 +525,7 @@ export default function Home() {
                   </div>
                   <button
                     onClick={() => {
-                      fetch("/api/auth/figma/status", { method: "DELETE" }).then(() => setFigmaOAuth(false));
+                      fetch("/api/auth/figma-mcp/status", { method: "DELETE" }).then(() => setFigmaOAuth(false));
                     }}
                     className="px-2 py-2 text-xs text-red-400 hover:bg-red-500/10 rounded-md transition-colors cursor-pointer"
                   >
@@ -528,12 +533,26 @@ export default function Home() {
                   </button>
                 </div>
               ) : (
-                <a
-                  href="/api/auth/figma"
+                <button
+                  onClick={async () => {
+                    // Attempt Dynamic Client Registration first (required for mcp:connect scope)
+                    try {
+                      const res = await fetch("/api/auth/figma-mcp/register", { method: "POST" });
+                      if (res.ok) {
+                        console.log("[Figma] DCR successful, proceeding with MCP OAuth");
+                      } else {
+                        console.warn("[Figma] DCR failed (status", res.status, "), falling back to standard OAuth");
+                      }
+                    } catch (e) {
+                      console.warn("[Figma] DCR request failed, falling back to standard OAuth:", e);
+                    }
+                    // Redirect to the auth flow (will use DCR client if available, else fallback)
+                    window.location.href = "/api/auth/figma-mcp";
+                  }}
                   className="block w-full text-center bg-[#a259ff]/20 border border-[#a259ff]/30 hover:bg-[#a259ff]/30 rounded-md px-3 py-2 text-sm text-[#a259ff] transition-colors cursor-pointer"
                 >
                   Sign in with Figma
-                </a>
+                </button>
               )}
             </div>
 
