@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
-    "dev:proxy": "MCP_TUNNEL_SECRET=$(openssl rand -base64 32) PROXY_ONLY=true next dev",
+    "dev:proxy": "node scripts/dev-proxy.mjs",
     "build": "next build",
     "start": "next start",
     "lint": "eslint"
