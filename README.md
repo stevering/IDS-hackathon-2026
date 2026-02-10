@@ -69,7 +69,7 @@ npx cloudflared tunnel --url http://localhost:3000 --http-host-header "localhost
 
 ```
 - Copy the domain you receive from cloudflare (something like `https://wrap-leisure-contents-poster.trycloudflare.com`)
-- Paste it in the `figmaMcpUrl` field of the chat API parameters and add 'wrap-leisure-contents-poster.trycloudflare.com/proxy-local/figma/mcp'
+- Paste it in the `figmaMcpUrl` field of the chat API parameters and add `wrap-leisure-contents-poster.trycloudflare.com/proxy-local/figma/mcp`
 
 ## Development Testing
 

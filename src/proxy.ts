@@ -4,8 +4,13 @@ import type { NextRequest } from "next/server";
 const MCP_CODE_URL = "http://127.0.0.1:64342";
 const PROXY_PREFIX = "/proxy-local/code";
 
-export async function middleware(request: NextRequest) {
+export async function proxy(request: NextRequest) {
   const { pathname, search } = request.nextUrl;
+
+  // Désactiver le middleware en production
+  if (process.env.NODE_ENV === "production") {
+    return NextResponse.next();
+  }
 
   // Vérification du secret MCP_TUNNEL_SECRET pour toutes les requêtes
   const expectedSecret = process.env.MCP_TUNNEL_SECRET;
@@ -129,7 +134,9 @@ export async function middleware(request: NextRequest) {
 }
 
 export const config = {
-  matcher: [
+  matcher: process.env.NODE_ENV === "production" 
+    ? "/non-existent-path"
+    :[
     "/proxy-local/code/:path*",
     "/proxy-local/figma/:path*",
     "/api/:path*",
