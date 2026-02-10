@@ -7,6 +7,27 @@ const PROXY_PREFIX = "/proxy-local/code";
 export async function middleware(request: NextRequest) {
   const { pathname, search } = request.nextUrl;
 
+  // Vérification du secret MCP_TUNNEL_SECRET pour toutes les requêtes
+  const expectedSecret = process.env.MCP_TUNNEL_SECRET;
+  const providedSecret = request.headers.get("X-Auth-Token");
+
+  console.log("[Middleware] X-Auth-Token check");
+  if (!expectedSecret) {
+    console.error("[Middleware] MCP_TUNNEL_SECRET not configured");
+    return NextResponse.json(
+      { error: "Server configuration error" },
+      { status: 500 }
+    );
+  }
+
+  if (providedSecret !== expectedSecret) {
+    console.error("[Middleware] X-Auth-Token invalid or missing");
+    return NextResponse.json(
+      { error: "Unauthorized" },
+      { status: 401 }
+    );
+  }
+
   // Proxy pour le MCP Code
   if (pathname.startsWith(`${PROXY_PREFIX}/`)) {
     const targetPath = pathname.replace(`${PROXY_PREFIX}/`, "");
@@ -108,5 +129,9 @@ export async function middleware(request: NextRequest) {
 }
 
 export const config = {
-  matcher: "/proxy-local/code/:path*",
+  matcher: [
+    "/proxy-local/code/:path*",
+    "/proxy-local/figma/:path*",
+    "/api/:path*",
+  ],
 };

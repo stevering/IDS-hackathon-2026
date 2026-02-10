@@ -68,8 +68,8 @@ The project uses an architecture based on the **Model Context Protocol (MCP)** t
 npx cloudflared tunnel --url http://localhost:3000 --http-host-header "localhost:3000"
 
 ```
-- Copy the domain you receive from cloudflare (something like `https://melodie-flappier-janel.ngrok-free.dev/mcp`)
-- Paste it in the `figmaMcpUrl` field of the chat API request
+- Copy the domain you receive from cloudflare (something like `https://wrap-leisure-contents-poster.trycloudflare.com`)
+- Paste it in the `figmaMcpUrl` field of the chat API parameters and add 'wrap-leisure-contents-poster.trycloudflare.com/proxy-local/figma/mcp'
 
 ## Development Testing
 
