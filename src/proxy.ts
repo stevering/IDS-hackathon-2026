@@ -134,11 +134,9 @@ export async function proxy(request: NextRequest) {
 }
 
 export const config = {
-  matcher: process.env.NODE_ENV === "production" 
-    ? "/non-existent-path"
-    :[
+  matcher: [
     "/proxy-local/code/:path*",
     "/proxy-local/figma/:path*",
     "/api/:path*",
-  ],
+  ]
 };
