@@ -6,6 +6,7 @@ import {
   COOKIE_STATE,
   COOKIE_CODE_VERIFIER,
   COOKIE_CLIENT_INFO,
+  COOKIE_AUTH_TOKEN,
   getBaseUrl,
 } from "@/lib/figma-mcp-oauth";
 
@@ -105,6 +106,7 @@ export async function GET(request: NextRequest) {
 
     response.cookies.delete(COOKIE_STATE);
     response.cookies.delete(COOKIE_CODE_VERIFIER);
+    response.cookies.delete(COOKIE_AUTH_TOKEN);
 
     return response;
   } catch (error) {

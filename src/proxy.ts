@@ -4,11 +4,30 @@ import type { NextRequest } from "next/server";
 const MCP_CODE_URL = "http://127.0.0.1:64342";
 const PROXY_PREFIX = "/proxy-local/code";
 
+// Routes d'auth Figma MCP qui ne doivent pas être protégées par X-Auth-Token
+// car elles sont accédées via redirection navigateur
+const PUBLIC_AUTH_ROUTES = [
+  "/api/auth/figma-mcp",
+  "/api/auth/figma-mcp/callback",
+  "/api/auth/figma-mcp/register",
+  "/api/auth/figma-mcp/status",
+];
+
 export async function proxy(request: NextRequest) {
   const { pathname, search } = request.nextUrl;
 
   // Désactiver le middleware en production
   if (process.env.NODE_ENV === "production") {
+    return NextResponse.next();
+  }
+
+  // Skip auth check for public auth routes (browser redirects don't have custom headers)
+  const isPublicAuthRoute = PUBLIC_AUTH_ROUTES.some(route => 
+    pathname === route || pathname.startsWith(`${route}/`)
+  );
+  
+  if (isPublicAuthRoute) {
+    console.log("[Middleware] Skipping X-Auth-Token check for public auth route:", pathname);
     return NextResponse.next();
   }
 
@@ -51,7 +70,9 @@ export async function proxy(request: NextRequest) {
             try {
               const response = await fetch(targetUrl, {
                 method: "GET",
-                headers: { Accept: "text/event-stream" },
+                headers: {
+                  Accept: "text/event-stream",
+                },
               });
 
               if (!response.body) {
@@ -65,18 +86,14 @@ export async function proxy(request: NextRequest) {
                 const { done, value } = await reader.read();
                 if (done) break;
                 
-                // Décoder le chunk
+                // Décoder et modifier le contenu pour remapper les URLs
                 const text = decoder.decode(value, { stream: true });
-                
-                // Réécrire les URLs relatives dans le flux SSE
                 // Remplacer toute URL relative "/xxx" par "/proxy-local/code/xxx"
-                // Cela capture /message, /notifications, etc.
                 const modifiedText = text.replace(
-                  /data:\s*(\/[^\s\?]+)(\?|\s|$)/g,
-                  `data: ${PROXY_PREFIX}$1$2`
+                  /data:\s(\/[^\s\n\r]*)/g,
+                  `data: ${PROXY_PREFIX}$1`
                 );
                 
-                // Réencoder et envoyer
                 controller.enqueue(encoder.encode(modifiedText));
               }
               
@@ -85,47 +102,42 @@ export async function proxy(request: NextRequest) {
               console.error("[Proxy Middleware] SSE error:", e);
               controller.error(e);
             }
-          },
+          }
         });
 
         return new NextResponse(stream, {
           headers: {
             "Content-Type": "text/event-stream",
-            "Cache-Control": "no-cache, no-transform",
-            Connection: "keep-alive",
-            "X-Accel-Buffering": "no",
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
           },
         });
       }
 
-      // Pour les requêtes POST/GET sur message (et autres)
-      const body = request.method !== "GET" && request.method !== "HEAD"
-        ? await request.arrayBuffer()
-        : undefined;
-
+      // Pour les autres requêtes (messages, etc.)
       const response = await fetch(targetUrl, {
         method: request.method,
         headers: {
           "Content-Type": request.headers.get("Content-Type") || "application/json",
-          Accept: request.headers.get("Accept") || "*/*",
         },
-        body,
+        body: request.method !== "GET" && request.method !== "HEAD" 
+          ? await request.text() 
+          : undefined,
       });
 
-      const responseData = await response.arrayBuffer();
-
-      return new NextResponse(responseData, {
+      const data = await response.text();
+      
+      return new NextResponse(data, {
         status: response.status,
         headers: {
           "Content-Type": response.headers.get("Content-Type") || "application/json",
         },
       });
-
     } catch (error) {
       console.error("[Proxy Middleware] Error:", error);
       return NextResponse.json(
         { error: "Proxy error", details: String(error) },
-        { status: 502 }
+        { status: 500 }
       );
     }
   }

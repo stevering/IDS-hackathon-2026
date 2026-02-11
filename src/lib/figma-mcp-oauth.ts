@@ -10,6 +10,7 @@ const COOKIE_TOKENS = "figma_mcp_tokens";
 const COOKIE_CLIENT_INFO = "figma_mcp_client_info";
 const COOKIE_CODE_VERIFIER = "figma_mcp_code_verifier";
 const COOKIE_STATE = "figma_mcp_state";
+const COOKIE_AUTH_TOKEN = "mcp_auth_token";
 
 export function getBaseUrl(): string {
   return process.env.NEXT_PUBLIC_BASE_URL || "http://127.0.0.1:3000";
@@ -136,4 +137,4 @@ export function hasValidMcpTokens(cookieStore: ReadonlyRequestCookies): boolean 
   return !!cookieStore.get(COOKIE_TOKENS)?.value;
 }
 
-export { MCP_FIGMA_OAUTH_URL, MCP_FIGMA_SERVER_URL, COOKIE_TOKENS, COOKIE_CLIENT_INFO, COOKIE_CODE_VERIFIER, COOKIE_STATE };
+export { MCP_FIGMA_OAUTH_URL, MCP_FIGMA_SERVER_URL, COOKIE_TOKENS, COOKIE_CLIENT_INFO, COOKIE_CODE_VERIFIER, COOKIE_STATE, COOKIE_AUTH_TOKEN };

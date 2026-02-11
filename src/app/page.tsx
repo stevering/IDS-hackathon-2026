@@ -117,6 +117,13 @@ function QCMBlock({ choices, onSelect, disabled }: { choices: string[]; onSelect
 
 function parseStructuredContent(text: string, isStreamingMsg: boolean = false): StructuredSegment[] {
   const segments: StructuredSegment[] = [];
+
+  // Nettoyer les balises orphelines avant parsing (hors streaming)
+  let cleanedText = text;
+  if (!isStreamingMsg) {
+    cleanedText = cleanOrphanedTags(text);
+  }
+
   const thinkingRegex = /<thinking>([\s\S]*?)<\/thinking>/g;
   const detailsRegex = /(?:```\s*)?<!-- DETAILS_START -->([\s\S]*?)<!-- DETAILS_END -->(?:\s*```)?/g;
 
@@ -125,15 +132,15 @@ function parseStructuredContent(text: string, isStreamingMsg: boolean = false): 
   const qcmBlocks: { index: number; length: number; choices: string[] }[] = [];
 
   let match;
-  while ((match = thinkingRegex.exec(text)) !== null) {
+  while ((match = thinkingRegex.exec(cleanedText)) !== null) {
     thinkingBlocks.push({ index: match.index, length: match[0].length, text: match[1].trim() });
   }
-  while ((match = detailsRegex.exec(text)) !== null) {
+  while ((match = detailsRegex.exec(cleanedText)) !== null) {
     detailsBlocks.push({ index: match.index, length: match[0].length, text: match[1].trim(), streaming: false });
   }
 
   const qcmRegex = /<!-- QCM_START -->([\s\S]*?)<!-- QCM_END -->/g;
-  while ((match = qcmRegex.exec(text)) !== null) {
+  while ((match = qcmRegex.exec(cleanedText)) !== null) {
     const choices = match[1]
       .split("\n")
       .map(l => l.trim())
@@ -146,14 +153,14 @@ function parseStructuredContent(text: string, isStreamingMsg: boolean = false): 
 
   if (isStreamingMsg) {
     const openTag = "<!-- DETAILS_START -->";
-    const allCompleteEnds = [...text.matchAll(/<!-- DETAILS_END -->/g)].map(m => m.index!);
-    const lastOpenIdx = text.lastIndexOf(openTag);
+    const allCompleteEnds = [...cleanedText.matchAll(/<!-- DETAILS_END -->/g)].map(m => m.index!);
+    const lastOpenIdx = cleanedText.lastIndexOf(openTag);
     if (lastOpenIdx !== -1) {
       const hasMatchingClose = allCompleteEnds.some(endIdx => endIdx > lastOpenIdx);
       if (!hasMatchingClose) {
         const contentStart = lastOpenIdx + openTag.length;
-        const partialText = text.slice(contentStart).replace(/^```\s*/, "").trim();
-        detailsBlocks.push({ index: lastOpenIdx, length: text.length - lastOpenIdx, text: partialText, streaming: true });
+        const partialText = cleanedText.slice(contentStart).replace(/^```\s*/, "").trim();
+        detailsBlocks.push({ index: lastOpenIdx, length: cleanedText.length - lastOpenIdx, text: partialText, streaming: true });
       }
     }
   }
@@ -165,14 +172,14 @@ function parseStructuredContent(text: string, isStreamingMsg: boolean = false): 
   ].sort((a, b) => a.index - b.index);
 
   if (allBlocks.length === 0) {
-    if (text.trim()) segments.push({ kind: "content", text });
+    if (cleanedText.trim()) segments.push({ kind: "content", text: cleanedText });
     return segments;
   }
 
   let cursor = 0;
   for (const block of allBlocks) {
     if (block.index > cursor) {
-      const content = text.slice(cursor, block.index).trim();
+      const content = cleanedText.slice(cursor, block.index).trim();
       if (content) segments.push({ kind: "content", text: content });
     }
     if (block.kind === "details") {
@@ -184,12 +191,74 @@ function parseStructuredContent(text: string, isStreamingMsg: boolean = false): 
     }
     cursor = block.index + block.length;
   }
-  if (cursor < text.length) {
-    const remaining = text.slice(cursor).trim();
+  if (cursor < cleanedText.length) {
+    const remaining = cleanedText.slice(cursor).trim();
     if (remaining) segments.push({ kind: "content", text: remaining });
   }
 
   return segments;
+}
+
+/**
+ * Supprime les balises orphelines (ouvrantes sans fermante ou fermantes sans ouvrante)
+ * pour éviter qu'elles s'affichent dans le chat.
+ */
+function cleanOrphanedTags(text: string): string {
+  let cleaned = text;
+
+  // Détecter les balises DETAILS_START sans fermeture
+  const detailsOpens = [...cleaned.matchAll(/<!-- DETAILS_START -->/g)];
+  const detailsCloses = [...cleaned.matchAll(/<!-- DETAILS_END -->/g)].map(m => m.index!);
+
+  for (const match of detailsOpens) {
+    const openIdx = match.index!;
+    const hasMatchingClose = detailsCloses.some(closeIdx => closeIdx > openIdx);
+    if (!hasMatchingClose) {
+      // Supprimer la balise ouvrante orpheline
+      cleaned = cleaned.replace(/<!-- DETAILS_START -->/, "");
+    }
+  }
+
+  // Détecter les balises DETAILS_END sans ouverture
+  const detailsOpensAfterClean = [...cleaned.matchAll(/<!-- DETAILS_START -->/g)].map(m => m.index!);
+  const detailsClosesAfterClean = [...cleaned.matchAll(/<!-- DETAILS_END -->/g)];
+
+  for (const match of detailsClosesAfterClean) {
+    const closeIdx = match.index!;
+    const hasMatchingOpen = detailsOpensAfterClean.some(openIdx => openIdx < closeIdx);
+    if (!hasMatchingOpen) {
+      // Supprimer la balise fermante orpheline
+      cleaned = cleaned.replace(/<!-- DETAILS_END -->/, "");
+    }
+  }
+
+  // Détecter les balises QCM_START sans fermeture
+  const qcmOpens = [...cleaned.matchAll(/<!-- QCM_START -->/g)];
+  const qcmCloses = [...cleaned.matchAll(/<!-- QCM_END -->/g)].map(m => m.index!);
+
+  for (const match of qcmOpens) {
+    const openIdx = match.index!;
+    const hasMatchingClose = qcmCloses.some(closeIdx => closeIdx > openIdx);
+    if (!hasMatchingClose) {
+      // Supprimer la balise ouvrante orpheline et son contenu jusqu'à la fin
+      cleaned = cleaned.replace(/<!-- QCM_START -->[\s\S]*$/, "");
+    }
+  }
+
+  // Détecter les balises QCM_END sans ouverture
+  const qcmOpensAfterClean = [...cleaned.matchAll(/<!-- QCM_START -->/g)].map(m => m.index!);
+  const qcmClosesAfterClean = [...cleaned.matchAll(/<!-- QCM_END -->/g)];
+
+  for (const match of qcmClosesAfterClean) {
+    const closeIdx = match.index!;
+    const hasMatchingOpen = qcmOpensAfterClean.some(openIdx => openIdx < closeIdx);
+    if (!hasMatchingOpen) {
+      // Supprimer la balise fermante orpheline
+      cleaned = cleaned.replace(/<!-- QCM_END -->/, "");
+    }
+  }
+
+  return cleaned.trim();
 }
 
 function ToolCallBlock({ toolName, input, output, isError }: { toolName: string; input?: Record<string, unknown>; output?: unknown; isError?: boolean }) {
@@ -523,10 +592,11 @@ export default function Home() {
               </div>
               <input
                 type="url"
-                value={figmaMcpUrl}
+                value={figmaOAuth ? "https://mcp.figma.com/mcp" : figmaMcpUrl}
                 onChange={(e) => setFigmaMcpUrl(e.target.value)}
                 placeholder="http://127.0.0.1:3845/mcp"
-                className="w-full bg-white/5 border border-white/10 rounded-md px-3 py-2 text-sm text-white placeholder:text-white/20 focus:outline-none focus:border-white/30"
+                disabled={figmaOAuth}
+                className="w-full bg-white/5 border border-white/10 rounded-md px-3 py-2 text-sm text-white placeholder:text-white/20 focus:outline-none focus:border-white/30 disabled:opacity-50 disabled:cursor-not-allowed"
               />
               <div className="flex items-center gap-1.5 mt-1.5">
                 <div
@@ -565,6 +635,20 @@ export default function Home() {
               ) : (
                 <button
                   onClick={async () => {
+                    // Set auth token cookie before OAuth redirect
+                    if (tunnelSecret) {
+                      try {
+                        await fetch("/api/auth/set-token", {
+                          method: "POST",
+                          headers: { "Content-Type": "application/json" },
+                          body: JSON.stringify({ token: tunnelSecret }),
+                        });
+                      } catch (e) {
+                        console.error("[Figma] Failed to set auth cookie:", e);
+                        return;
+                      }
+                    }
+                    
                     // Attempt Dynamic Client Registration first (required for mcp:connect scope)
                     try {
                       const res = await fetch("/api/auth/figma-mcp/register", { method: "POST" });
