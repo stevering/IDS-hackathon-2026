@@ -374,6 +374,9 @@ export default function Home() {
   const [selectedModel, setSelectedModel] = useState<"grok-4-1-fast-reasoning" | "grok-4-1-fast-non-reasoning">("grok-4-1-fast-non-reasoning");
   const [selectedNode, setSelectedNode] = useState<string | null>(null);
   const [selectionGlow, setSelectionGlow] = useState(false);
+  const [proxyModalOpen, setProxyModalOpen] = useState(false);
+  const [tunnelUrl, setTunnelUrl] = useState("");
+  const [tunnelSecret, setTunnelSecret] = useState(process.env.NEXT_PUBLIC_MCP_TUNNEL_SECRET);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
@@ -391,6 +394,8 @@ export default function Home() {
   selectedModelRef.current = selectedModel;
   const selectedNodeRef = useRef(selectedNode);
   selectedNodeRef.current = selectedNode;
+  const tunnelSecretRef = useRef(tunnelSecret);
+  tunnelSecretRef.current = tunnelSecret;
 
   useEffect(() => {
     const handleMessage = (event: MessageEvent) => {
@@ -417,7 +422,14 @@ export default function Home() {
     () =>
       new DefaultChatTransport({
         api: "/api/chat",
-        body: () => ({ figmaMcpUrl: figmaOAuthRef.current ? "https://mcp.figma.com/mcp" : figmaMcpUrlRef.current, figmaAccessToken: figmaAccessTokenRef.current, codeProjectPath: codeProjectPathRef.current, figmaOAuth: figmaOAuthRef.current, model: selectedModelRef.current, selectedNode: selectedNodeRef.current }),
+        headers: () => {
+          const headers: Record<string, string> = {};
+          if (tunnelSecretRef.current) {
+            headers['X-Auth-Token'] = tunnelSecretRef.current;
+          }
+          return headers;
+        },
+        body: () => ({ figmaMcpUrl: figmaOAuthRef.current ? "https://mcp.figma.com/mcp" : figmaMcpUrlRef.current, figmaAccessToken: figmaAccessTokenRef.current, codeProjectPath: codeProjectPathRef.current, figmaOAuth: figmaOAuthRef.current, model: selectedModelRef.current, selectedNode: selectedNodeRef.current, tunnelSecret: tunnelSecretRef.current }),
       }),
     [],
   );
@@ -434,7 +446,11 @@ export default function Home() {
   };
 
   useEffect(() => {
-    fetch("/api/auth/figma-mcp/status")
+    fetch("/api/auth/figma-mcp/status", {
+      headers: {
+        "X-Auth-Token": tunnelSecret || "",
+      },
+    })
       .then((r) => r.json())
       .then((d) => setFigmaOAuth(d.connected))
       .catch(() => {});
@@ -493,9 +509,18 @@ export default function Home() {
 
           <div className="space-y-4">
             <div>
-              <label className="block text-xs text-white/50 mb-1">
-                Figma MCP URL
-              </label>
+              <div className="flex items-center justify-between mb-1">
+                <label className="block text-xs text-white/50">
+                  Figma MCP URL
+                </label>
+                <button
+                  onClick={() => setProxyModalOpen(true)}
+                  title="Configure a local proxy"
+                  className="text-[10px] px-2 py-0.5 bg-white/10 hover:bg-white/20 text-white/60 hover:text-white/80 rounded transition-colors cursor-pointer"
+                >
+                  Configure proxy
+                </button>
+              </div>
               <input
                 type="url"
                 value={figmaMcpUrl}
@@ -847,6 +872,63 @@ export default function Home() {
           </div>
         </form>
       </div>
+
+      {proxyModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
+          <div className="bg-[#1a1a2e] border border-white/10 rounded-lg p-5 w-full max-w-md mx-4 shadow-2xl">
+            <h3 className="text-sm font-semibold text-white mb-1">Configure Local Proxy</h3>
+            <p className="text-xs text-white/50 mb-4">
+              To set up a local proxy, copy and paste the tunnel info from your terminal (npm run dev:proxy)
+            </p>
+
+            <div className="space-y-3">
+              <div>
+                <label className="block text-xs text-white/60 mb-1">Tunnel URL</label>
+                <input
+                  type="url"
+                  value={tunnelUrl}
+                  onChange={(e) => setTunnelUrl(e.target.value)}
+                  placeholder="https://your-tunnel.trycloudflare.com"
+                  className="w-full bg-white/5 border border-white/10 rounded-md px-3 py-2 text-sm text-white placeholder:text-white/20 focus:outline-none focus:border-white/30"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs text-white/60 mb-1">Secret</label>
+                <input
+                  type="password"
+                  value={tunnelSecret}
+                  onChange={(e) => setTunnelSecret(e.target.value)}
+                  placeholder="your-secret-key"
+                  className="w-full bg-white/5 border border-white/10 rounded-md px-3 py-2 text-sm text-white placeholder:text-white/20 focus:outline-none focus:border-white/30"
+                />
+              </div>
+            </div>
+
+            <div className="flex gap-2 mt-5">
+              <button
+                onClick={() => setProxyModalOpen(false)}
+                className="flex-1 px-4 py-2 text-sm text-white/60 hover:text-white hover:bg-white/5 rounded-md transition-colors cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => {
+                  if (tunnelUrl.trim()) {
+                    const baseUrl = tunnelUrl.trim().replace(/\/$/, '');
+                    setFigmaMcpUrl(`${baseUrl}/proxy-local/figma/mcp`);
+                    setCodeProjectPath(`${baseUrl}/proxy-local/code/mcp`);
+                  }
+                  setProxyModalOpen(false);
+                }}
+                className="flex-1 px-4 py-2 text-sm bg-blue-600 hover:bg-blue-500 text-white rounded-md transition-colors cursor-pointer"
+              >
+                Save
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -161,7 +161,7 @@ function wrapToolsWithRetry(tools: Record<string, any>, url: string, label: stri
 }
 
 export async function POST(req: Request) {
-  const { messages, figmaMcpUrl, figmaAccessToken, codeProjectPath, figmaOAuth, model, selectedNode } = await req.json();
+  const { messages, figmaMcpUrl, figmaAccessToken, codeProjectPath, figmaOAuth, model, selectedNode, tunnelSecret } = await req.json();
 
   let allTools: Record<string, unknown> = {};
   const mcpErrors: string[] = [];
@@ -190,8 +190,8 @@ export async function POST(req: Request) {
       : (useOAuthHttp ? MCP_FIGMA_SERVER_URL : figmaMcpUrl);
 
     const figmaHeaders: Record<string, string> = {};
-    if (process.env.MCP_TUNNEL_SECRET && !effectiveUrl.includes('figma.com')) {
-      figmaHeaders['X-Auth-Token'] = process.env.MCP_TUNNEL_SECRET;
+    if (tunnelSecret && !effectiveUrl.includes('figma.com')) {
+      figmaHeaders['X-Auth-Token'] = tunnelSecret;
     }
     if (effectiveUrl.includes('trycloudflare.com')) {
       figmaHeaders.Host = 'localhost:3845';
@@ -236,11 +236,15 @@ export async function POST(req: Request) {
 
   if (codeProjectPath) {
     try {
-      const { tools } = await getOrConnect(codeProjectPath, "Code");
+      const codeHeaders: Record<string, string> = {};
+      if (tunnelSecret) {
+        codeHeaders['X-Auth-Token'] = tunnelSecret;
+      }
+      const { tools } = await getOrConnect(codeProjectPath, "Code", codeHeaders);
       const prefixedTools = Object.fromEntries(
         Object.entries(tools).map(([name, tool]) => [`code_${name}`, tool])
       );
-      allTools = { ...allTools, ...wrapToolsWithRetry(prefixedTools, codeProjectPath, "Code") };
+      allTools = { ...allTools, ...wrapToolsWithRetry(prefixedTools, codeProjectPath, "Code", codeHeaders) };
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
       console.error("[Code] MCP connection failed:", msg);

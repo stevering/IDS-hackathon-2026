@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev",
+    "dev": "export MCP_TUNNEL_SECRET=$(openssl rand -base64 32) && export NEXT_PUBLIC_MCP_TUNNEL_SECRET=$MCP_TUNNEL_SECRET && next dev",
     "dev:proxy": "node scripts/dev-proxy.mjs",
     "build": "next build",
     "start": "next start",

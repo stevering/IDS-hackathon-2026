@@ -12,13 +12,13 @@ export async function proxy(request: NextRequest) {
     return NextResponse.next();
   }
 
-  // Vérification du secret MCP_TUNNEL_SECRET pour toutes les requêtes
-  const expectedSecret = process.env.MCP_TUNNEL_SECRET;
+  // Vérification du secret NEXT_PUBLIC_MCP_TUNNEL_SECRET pour toutes les requêtes
+  const expectedSecret = process.env.NEXT_PUBLIC_MCP_TUNNEL_SECRET;
   const providedSecret = request.headers.get("X-Auth-Token");
 
   console.log("[Middleware] X-Auth-Token check");
   if (!expectedSecret) {
-    console.error("[Middleware] MCP_TUNNEL_SECRET not configured");
+    console.error("[Middleware] NEXT_PUBLIC_MCP_TUNNEL_SECRET not configured");
     return NextResponse.json(
       { error: "Server configuration error" },
       { status: 500 }
@@ -26,7 +26,7 @@ export async function proxy(request: NextRequest) {
   }
 
   if (providedSecret !== expectedSecret) {
-    console.error("[Middleware] X-Auth-Token invalid or missing");
+    console.error("[Middleware] X-Auth-Token invalid or missing", providedSecret, 'expectedSecret', expectedSecret);
     return NextResponse.json(
       { error: "Unauthorized" },
       { status: 401 }
