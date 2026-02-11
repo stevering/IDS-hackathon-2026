@@ -1,6 +1,7 @@
 import { xai } from "@ai-sdk/xai";
 import { streamText, stepCountIs, convertToModelMessages } from "ai";
 import { createMCPClient, type MCPClient } from "@ai-sdk/mcp";
+import { z } from "zod";
 import { GUARDIAN_SYSTEM_PROMPT } from "@/lib/system-prompt";
 import { cookies } from "next/headers";
 import {
@@ -339,12 +340,28 @@ Some features may be limited. Please check your MCP settings.`;
     } as typeof modelMessages[0]);
   }
 
+  // Utiliser le Responses API (Agent Tools API) pour avoir accès aux outils natifs xAI comme web_search
+  // Le Responses API ne supporte pas les client-side tools, donc on garde les MCP tools côté serveur uniquement
   const result = streamText({
-    model: xai(model === "grok-4-1-fast-non-reasoning" ? "grok-4-1-fast-non-reasoning" : "grok-4-1-fast-reasoning"),
+    model: xai.responses(model === "grok-4-1-fast-non-reasoning" ? "grok-4-1-fast-non-reasoning" : "grok-4-1-fast-reasoning"),
     system,
     messages: modelMessages,
-    tools: allTools as Parameters<typeof streamText>[0]["tools"],
+    tools: {
+      // Outils MCP (Figma/Code) - exécutés côté serveur
+      ...allTools,
+      // Outil de recherche web natif xAI
+      web_search: xai.tools.webSearch(),
+    } as Parameters<typeof streamText>[0]["tools"],
     stopWhen: stepCountIs(10),
+    onStepFinish: (step) => {
+      // Log tool calls pour debug
+      if (step.toolCalls.length > 0) {
+        console.log("[Chat] Tool calls:", step.toolCalls.map(t => ({ toolName: t.toolName, toolCallId: t.toolCallId })));
+      }
+      if (step.toolResults.length > 0) {
+        console.log("[Chat] Tool results:", step.toolResults.map(t => ({ toolName: t.toolName, toolCallId: t.toolCallId })));
+      }
+    },
   });
 
   // Si on a des erreurs critiques MCP, on veut les afficher immédiatement dans le chat

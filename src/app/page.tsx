@@ -929,20 +929,107 @@ export default function Home() {
                       </div>
                     );
                   }
+                  // Tool calls typés du Responses API (ex: tool-web_search)
+                  if (part.type?.startsWith("tool-")) {
+                    const toolName = part.type.replace("tool-", "");
+                    const p = part as { type: string; toolCallId: string; state: string; input?: Record<string, unknown>; output?: unknown; errorText?: string; providerExecuted?: boolean };
+
+                    // Si le provider a exécuté le tool mais qu'on n'a pas reçu output-available,
+                    // on considère que c'est terminé quand on reçoit du texte après
+                    const hasTextAfter = m.parts?.slice(i + 1).some((nextPart: { type?: string }) => nextPart.type === "text");
+                    const isProviderExecuted = (p as unknown as { providerExecuted?: boolean }).providerExecuted === true;
+
+                    // Si providerExecuted=true et qu'on a du texte après, le tool est terminé
+                    if ((isProviderExecuted && hasTextAfter) || p.state === "output-available") {
+                      return (
+                        <ToolCallBlock
+                          key={i}
+                          toolName={toolName}
+                          input={p.input}
+                          output={p.output || { content: [{ type: "text", text: "Result integrated in the response" }] }}
+                          isError={false}
+                        />
+                      );
+                    }
+
+                    switch (p.state) {
+                      case "input-streaming":
+                      case "input-available":
+                        return <ToolCallProgress key={i} toolName={toolName} />;
+                      case "output-available":
+                        return (
+                          <ToolCallBlock
+                            key={i}
+                            toolName={toolName}
+                            input={p.input}
+                            output={p.output}
+                            isError={false}
+                          />
+                        );
+                      case "output-error":
+                        return (
+                          <ToolCallBlock
+                            key={i}
+                            toolName={toolName}
+                            input={p.input}
+                            output={{ isError: true, content: [{ type: "text", text: p.errorText || "Unknown error" }] }}
+                            isError={true}
+                          />
+                        );
+                      default:
+                        return <ToolCallProgress key={i} toolName={toolName} />;
+                    }
+                  }
                   if (part.type === "dynamic-tool") {
-                    const p = part as { type: string; toolName: string; state: string; input?: Record<string, unknown>; output?: { content?: { type: string; text: string }[]; structuredContent?: unknown; isError?: boolean } };
-                    if (p.state === "output-available") {
+                    const p = part as { type: string; toolName: string; state: string; input?: Record<string, unknown>; output?: { content?: { type: string; text: string }[]; structuredContent?: unknown; isError?: boolean }; errorText?: string; providerExecuted?: boolean };
+
+                    // Si le provider a exécuté le tool mais qu'on n'a pas reçu output-available,
+                    // on considère que c'est terminé quand on reçoit du texte après
+                    const hasTextAfter = m.parts?.slice(i + 1).some((nextPart: { type?: string }) => nextPart.type === "text");
+                    const isProviderExecuted = p.providerExecuted === true;
+
+                    // Si providerExecuted=true et qu'on a du texte après, le tool est terminé
+                    if ((isProviderExecuted && hasTextAfter) || p.state === "output-available") {
                       return (
                         <ToolCallBlock
                           key={i}
                           toolName={p.toolName}
                           input={p.input}
-                          output={p.output}
+                          output={p.output || { content: [{ type: "text", text: "Résultat intégré dans la réponse" }] }}
                           isError={p.output?.isError}
                         />
                       );
                     }
-                    return <ToolCallProgress key={i} toolName={p.toolName} />;
+
+                    // Gérer tous les états possibles des tool calls
+                    switch (p.state) {
+                      case "input-streaming":
+                      case "input-available":
+                        // Tool call en cours d'exécution
+                        return <ToolCallProgress key={i} toolName={p.toolName} />;
+                      case "output-available":
+                        return (
+                          <ToolCallBlock
+                            key={i}
+                            toolName={p.toolName}
+                            input={p.input}
+                            output={p.output}
+                            isError={p.output?.isError}
+                          />
+                        );
+                      case "output-error":
+                        return (
+                          <ToolCallBlock
+                            key={i}
+                            toolName={p.toolName}
+                            input={p.input}
+                            output={{ isError: true, content: [{ type: "text", text: p.errorText || "Unknown error" }] }}
+                            isError={true}
+                          />
+                        );
+                      default:
+                        return <ToolCallProgress key={i} toolName={p.toolName} />;
+                    }
                   }
                   return null;
                 })}
