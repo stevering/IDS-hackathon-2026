@@ -63,13 +63,27 @@ The project uses an architecture based on the **Model Context Protocol (MCP)** t
 
 ## Online test of the application
 
+### Prerequisites
+
+- clone this repository with your favorite IDE
+- Install dependencies:
+```bash
+npm install
+```
+- Start your Figma Desktop and enable the MCP server in parameters
+
+### Getting Started
+
 - start the tunnel that redirects to your Figma Desktop MCP securely:
 ```bash
-npx cloudflared tunnel --url http://localhost:3000 --http-host-header "localhost:3000"
-
+npm run dev:proxy
 ```
-- Copy the domain you receive from cloudflare (something like `https://wrap-leisure-contents-poster.trycloudflare.com`)
-- Paste it in the `figmaMcpUrl` field of the chat API parameters and add `wrap-leisure-contents-poster.trycloudflare.com/proxy-local/figma/mcp`
+- Copy the domain/secret you received from cloudflare (something like `https://wrap-leisure-contents-poster.trycloudflare.com`)
+- go to the online demo page : https://ids-hackathon-2026-ds-ai-guardian.vercel.app/
+- Click on "Configure proxy" in the side "parameters" panel
+- Paste the domain in the `Tunnel URL` field
+- Paste the secret in the `Secret` field
+- Save the configuration and test the AI Agent
 
 ## Development Testing
 
