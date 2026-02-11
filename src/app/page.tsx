@@ -550,7 +550,12 @@ export default function Home() {
                   </div>
                   <button
                     onClick={() => {
-                      fetch("/api/auth/figma-mcp/status", { method: "DELETE" }).then(() => setFigmaOAuth(false));
+                      fetch("/api/auth/figma-mcp/status", {
+                        method: "DELETE",
+                        headers: {
+                          "X-Auth-Token": tunnelSecret || "",
+                        },
+                      }).then(() => setFigmaOAuth(false));
                     }}
                     className="px-2 py-2 text-xs text-red-400 hover:bg-red-500/10 rounded-md transition-colors cursor-pointer"
                   >
