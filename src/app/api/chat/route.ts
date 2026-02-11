@@ -356,10 +356,10 @@ Some features may be limited. Please check your MCP settings.`;
     onStepFinish: (step) => {
       // Log tool calls pour debug
       if (step.toolCalls.length > 0) {
-        console.log("[Chat] Tool calls:", step.toolCalls.map(t => ({ toolName: t.toolName, toolCallId: t.toolCallId })));
+        console.log("[Chat] Tool calls:", step.toolCalls.map(t => t));
       }
       if (step.toolResults.length > 0) {
-        console.log("[Chat] Tool results:", step.toolResults.map(t => ({ toolName: t.toolName, toolCallId: t.toolCallId })));
+        console.log("[Chat] Tool results:", step.toolResults.map(t => t));
       }
     },
   });

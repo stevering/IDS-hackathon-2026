@@ -61,16 +61,24 @@ Thank you to the entire team, it was extraordinary : 🎉
 
 The project uses an architecture based on the **Model Context Protocol (MCP)** to connect the AI to data sources (Figma and filesystem), enabling real-time analysis and contextual interactions.
 
-## Online test of the application
+## Demonstration of Concept
+
+You can test online the application
 
 ### Prerequisites
 
-- clone this repository with your favorite IDE
+- clone this repository with your favorite code editor (IDE)
+- If your code editor supports an integrated MCP server like Intellij Idea, enable it
+- If your code editor does not support an integrated MCP server, starts one like :
+```bash
+supergateway --sse --port 3846 --cors --stdio "mcp-server-filesystem $(pwd)"
+```
 - Install dependencies:
 ```bash
 npm install
 ```
 - Start your Figma Desktop and enable the MCP server in parameters
+
 
 ### Getting Started
 
@@ -87,9 +95,9 @@ npm run dev:proxy
 
 ## Development Testing
 
-## Prerequisites
+### Prerequisites
 
-### Setup your xAI API KEY
+#### Setup your xAI API KEY
 
 You have to create a file `.env.local` that is inspired by `.env.example`:
 ```bash
@@ -105,7 +113,7 @@ FIGMA_CLIENT_SECRET=FIGMA_CLIENT_SECRET
 NEXT_PUBLIC_BASE_URL=http://127.0.0.1:3000
 ```
 
-### MCP of code editor
+#### MCP of code editor
 
 If you are running a development editor with an integrated MCP server like
 Intellij idea:
@@ -118,11 +126,11 @@ Before starting the dev server project, launch the MCP filesystem gateway:
 supergateway --sse --port 3846 --cors --stdio "mcp-server-filesystem $(pwd)"
 ```
 
-### MCP of Figma Desktop
+#### MCP of Figma Desktop
 
 Be sure to enable the MCP integration in your Figma Desktop application on port 3845.
 
-## Getting Started
+### Getting Started
 
 First, run the development server:
 
@@ -172,30 +180,35 @@ The easiest way to deploy your Next.js app is to use the [Vercel Platform](https
 
 Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
 
+### Demo Deployment
+
+You can test a already deployed package on https://ids-hackathon-2026-ds-ai-guardian.vercel.app/.
+
+
 # troubleshoots
 
 ## MCP figma connections online
 
-### Diagnostic et corrections du flux OAuth Figma MCP
+### OAuth Flow Diagnostics and Fixes
 
-#### Cause racine de l'erreur 401
-Le serveur MCP de Figma (`mcp.figma.com/mcp`) **n'accepte que des tokens obtenus via le flow OAuth MCP natif avec le scope `mcp:connect`**. Les tokens standards (obtenus via `/oauth` avec des scopes comme `file_content:read`) et les Personal Access Tokens (PAT) sont systématiquement rejetés avec HTTP 401.
+#### Root Cause of the 401 Error
+The Figma MCP server (`mcp.figma.com/mcp`) **only accepts tokens obtained via the native MCP OAuth flow with the `mcp:connect` scope**. Standard tokens (obtained via `/oauth` with scopes like `file_content:read`) and Personal Access Tokens (PAT) are systematically rejected with HTTP 401.
 
-Le scope `mcp:connect` n'est accessible qu'aux clients enregistrés dynamiquement (Dynamic Client Registration / DCR). Le client statique (`FIGMA_CLIENT_ID` du portail développeur) ne peut pas utiliser ce scope. L'endpoint DCR (`api.figma.com/v1/oauth/mcp/register`) retourne actuellement **403 Forbidden**, probablement en raison d'une restriction côté Figma.
+The `mcp:connect` scope is only accessible to dynamically registered clients (Dynamic Client Registration / DCR). The static client (`FIGMA_CLIENT_ID` from the developer portal) cannot use this scope. The DCR endpoint (`api.figma.com/v1/oauth/mcp/register`) currently returns **403 Forbidden**, likely due to a restriction on Figma's side.
 
-#### Changements implémentés
+#### Implemented Changes
 
-1. **Route de Dynamic Client Registration** (`src/app/api/auth/figma-mcp/register/route.ts`) — Nouvelle route qui tente l'enregistrement dynamique auprès de Figma. Si le DCR réussit, le `client_id` dynamique est stocké en cookie et utilisé pour le flow MCP natif.
+1. **Dynamic Client Registration Route** (`src/app/api/auth/figma-mcp/register/route.ts`) — New route that attempts dynamic registration with Figma. If DCR succeeds, the dynamic `client_id` is stored in a cookie and used for the native MCP flow.
 
-2. **Double mode d'authentification** (`src/app/api/auth/figma-mcp/route.ts` et `callback/route.ts`) :
-   - **Mode MCP natif** : Si un client DCR est disponible, utilise `mcp.figma.com` comme issuer avec le scope `mcp:connect`. Le token obtenu fonctionnera avec le serveur MCP.
-   - **Mode standard (fallback)** : Si le DCR échoue, utilise les scopes standards et l'endpoint `/oauth`. L'authentification Figma fonctionne mais le token ne permet pas d'accéder au serveur MCP cloud.
+2. **Dual Authentication Mode** (`src/app/api/auth/figma-mcp/route.ts` and `callback/route.ts`):
+   - **Native MCP Mode**: If a DCR client is available, uses `mcp.figma.com` as the issuer with the `mcp:connect` scope. The obtained token will work with the MCP server.
+   - **Standard Mode (fallback)**: If DCR fails, uses standard scopes and the `/oauth` endpoint. Figma authentication works but the token cannot access the cloud MCP server.
 
-3. **Bouton "Sign in with Figma" amélioré** (`src/app/page.tsx`) — Le bouton tente d'abord le DCR en arrière-plan avant de rediriger vers le flow OAuth.
+3. **Enhanced "Sign in with Figma" Button** (`src/app/page.tsx`) — The button first attempts DCR in the background before redirecting to the OAuth flow.
 
-4. **Nettoyage du chat route** (`src/app/api/chat/route.ts`) — Suppression du code de debug, logique simplifiée utilisant `authProvider` via le SDK, headers nettoyés (pas de `X-Auth-Token` vers figma.com).
+4. **Chat Route Cleanup** (`src/app/api/chat/route.ts`) — Debug code removed, simplified logic using `authProvider` via the SDK, cleaned headers (no `X-Auth-Token` to figma.com).
 
-5. **Normalisation des tokens** (`src/lib/figma-mcp-oauth.ts`) — La méthode `tokens()` garantit la présence du champ `access_token` en snake_case pour le SDK.
+5. **Token Normalization** (`src/lib/figma-mcp-oauth.ts`) — The `tokens()` method ensures the `access_token` field is present in snake_case for the SDK.
 
-#### Limitation connue
-L'endpoint DCR de Figma retourne actuellement 403 Forbidden. Tant que Figma ne débloque pas cet endpoint, le flow MCP natif ne peut pas fonctionner pour les applications tierces. Les clients officiels (VS Code, Cursor, Claude Code) utilisent le même mécanisme DCR — c'est une restriction côté Figma.
+#### Known Limitation
+The Figma DCR endpoint currently returns 403 Forbidden. Until Figma unblocks this endpoint, the native MCP flow cannot work for third-party applications. Official clients (VS Code, Cursor, Claude Code) use the same DCR mechanism — this is a restriction on Figma's side.

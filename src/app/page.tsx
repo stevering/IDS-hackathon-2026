@@ -291,6 +291,10 @@ function ToolCallBlock({ toolName, input, output, isError }: { toolName: string;
   const hasMore = totalLines > visibleLines;
   const displayedText = totalLines > CHUNK ? outputLines.slice(0, visibleLines).join("\n") : outputText;
 
+  // Pour web_search, indiquer que la recherche est faite automatiquement par le modèle
+  const isWebSearch = toolName === "web_search";
+  const hasInput = input && Object.keys(input).length > 0;
+
   return (
     <div className="my-2">
       <button
@@ -311,15 +315,29 @@ function ToolCallBlock({ toolName, input, output, isError }: { toolName: string;
         ) : (
           <span className="text-emerald-400/70">✓</span>
         )}
-        {!open && input && (
+        {!open && hasInput && (
           <span className="truncate opacity-50 font-mono text-[10px] ml-1 min-w-0 flex-1">
             {Object.entries(input).map(([k, v]) => `${k}=${JSON.stringify(v)}`).join(" ").slice(0, 40)}
+          </span>
+        )}
+        {!open && isWebSearch && !hasInput && (
+          <span className="truncate opacity-40 text-[10px] ml-1 min-w-0 flex-1 italic">
+            Automatic web search
           </span>
         )}
       </button>
       {open && (
         <div className="mt-1 ml-5 space-y-2">
-          {input && (
+          {isWebSearch && !hasInput && (
+            <div className="px-3 py-2 rounded text-xs leading-relaxed border-l-2 border-blue-500/20">
+              <span className="text-white/30 font-medium block mb-1">Info:</span>
+              <p className="text-blue-200/50">
+                Web search is performed automatically by the AI model.
+                Search terms are not exposed by the API.
+              </p>
+            </div>
+          )}
+          {hasInput && (
             <div className="px-3 py-2 rounded text-xs leading-relaxed border-l-2 border-amber-500/20">
               <span className="text-white/30 font-medium block mb-1">Input:</span>
               <pre className="text-amber-200/50 font-mono whitespace-pre-wrap break-all">{JSON.stringify(input, null, 2)}</pre>
