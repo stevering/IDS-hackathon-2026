@@ -1247,6 +1247,10 @@ export default function Home() {
                     const baseUrl = tunnelUrl.trim().replace(/\/$/, '');
                     setFigmaMcpUrl(`${baseUrl}/proxy-local/figma/mcp`);
                     setCodeProjectPath(`${baseUrl}/proxy-local/code/mcp`);
+                    // Vider les URLs locales pour ne pas envoyer les headers X-MCP-*-URL
+                    // qui écraseraient l'URL du proxy côté serveur
+                    setLocalFigmaMcpUrl("");
+                    setLocalCodeMcpUrl("");
                   } else {
                     if (localFigmaMcpUrl.trim()) {
                       setFigmaMcpUrl(process.env.NEXT_PUBLIC_PROXY_LOCAL_FIGMA_MCP);
