@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 
-const MCP_CODE_URL = "http://127.0.0.1:64342";
 const PROXY_PREFIX = "/proxy-local/code";
 
 // Routes d'auth Figma MCP qui ne doivent pas être protégées par X-Auth-Token
@@ -13,8 +12,16 @@ const PUBLIC_AUTH_ROUTES = [
   "/api/auth/figma-mcp/status",
 ];
 
+function getMcpCodeUrl(request: NextRequest): string | undefined {
+  const headerUrl = request.headers.get("X-MCP-Code-URL");
+  const envUrl = process.env.NEXT_PUBLIC_LOCAL_MCP_CODE_URL;
+  const url = headerUrl || envUrl;
+  return url ? new URL(url).origin : undefined;
+}
+
 export async function proxy(request: NextRequest) {
   const { pathname, search } = request.nextUrl;
+  const MCP_CODE_URL = getMcpCodeUrl(request);
 
   // Désactiver le middleware en production
   if (process.env.NODE_ENV === "production") {

@@ -509,10 +509,10 @@ function parseTextWithImages(text: string, isStreaming: boolean): Segment[] {
 export default function Home() {
   const isDev = process.env.NODE_ENV === 'development';
   const [figmaMcpUrl, setFigmaMcpUrl] = useState(
-      isDev ? "http://localhost:3000/proxy-local/figma/mcp" : "http://127.0.0.1:3845/mcp"
+      isDev ? process.env.NEXT_PUBLIC_PROXY_LOCAL_FIGMA_MCP : process.env.NEXT_PUBLIC_LOCAL_MCP_FIGMA_URL
   );
   const [codeProjectPath, setCodeProjectPath] = useState(
-      isDev ? "http://localhost:3000/proxy-local/code/sse" : "http://127.0.0.1:64342/sse"
+      isDev ? process.env.NEXT_PUBLIC_PROXY_LOCAL_CODE_MCP : process.env.NEXT_PUBLIC_LOCAL_MCP_CODE_URL
   );//"http://[::1]:3846/sse");
   const [figmaAccessToken, setFigmaAccessToken] = useState("");
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -524,6 +524,8 @@ export default function Home() {
   const [proxyModalOpen, setProxyModalOpen] = useState(false);
   const [tunnelUrl, setTunnelUrl] = useState("");
   const [tunnelSecret, setTunnelSecret] = useState(process.env.NEXT_PUBLIC_MCP_TUNNEL_SECRET);
+  const [localFigmaMcpUrl, setLocalFigmaMcpUrl] = useState(process.env.NEXT_PUBLIC_LOCAL_MCP_FIGMA_URL || "");
+  const [localCodeMcpUrl, setLocalCodeMcpUrl] = useState(process.env.NEXT_PUBLIC_LOCAL_MCP_CODE_URL || "");
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
@@ -543,6 +545,10 @@ export default function Home() {
   selectedNodeRef.current = selectedNode;
   const tunnelSecretRef = useRef(tunnelSecret);
   tunnelSecretRef.current = tunnelSecret;
+  const localFigmaMcpUrlRef = useRef(localFigmaMcpUrl);
+  localFigmaMcpUrlRef.current = localFigmaMcpUrl;
+  const localCodeMcpUrlRef = useRef(localCodeMcpUrl);
+  localCodeMcpUrlRef.current = localCodeMcpUrl;
 
   useEffect(() => {
     const handleMessage = (event: MessageEvent) => {
@@ -573,6 +579,12 @@ export default function Home() {
           const headers: Record<string, string> = {};
           if (tunnelSecretRef.current) {
             headers['X-Auth-Token'] = tunnelSecretRef.current;
+          }
+          if (localFigmaMcpUrlRef.current) {
+            headers['X-MCP-Figma-URL'] = localFigmaMcpUrlRef.current;
+          }
+          if (localCodeMcpUrlRef.current) {
+            headers['X-MCP-Code-URL'] = localCodeMcpUrlRef.current;
           }
           return headers;
         },
@@ -1173,6 +1185,28 @@ export default function Home() {
                   className="w-full bg-white/5 border border-white/10 rounded-md px-3 py-2 text-sm text-white placeholder:text-white/20 focus:outline-none focus:border-white/30"
                 />
               </div>
+
+              <div>
+                <label className="block text-xs text-white/60 mb-1">Local Figma MCP URL</label>
+                <input
+                  type="url"
+                  value={localFigmaMcpUrl}
+                  onChange={(e) => setLocalFigmaMcpUrl(e.target.value)}
+                  placeholder={process.env.NEXT_PUBLIC_LOCAL_MCP_FIGMA_URL || ""}
+                  className="w-full bg-white/5 border border-white/10 rounded-md px-3 py-2 text-sm text-white placeholder:text-white/20 focus:outline-none focus:border-white/30"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs text-white/60 mb-1">Local Code MCP URL</label>
+                <input
+                  type="url"
+                  value={localCodeMcpUrl}
+                  onChange={(e) => setLocalCodeMcpUrl(e.target.value)}
+                  placeholder={process.env.NEXT_PUBLIC_LOCAL_MCP_CODE_URL || ""}
+                  className="w-full bg-white/5 border border-white/10 rounded-md px-3 py-2 text-sm text-white placeholder:text-white/20 focus:outline-none focus:border-white/30"
+                />
+              </div>
             </div>
 
             <div className="flex gap-2 mt-5">
@@ -1188,6 +1222,12 @@ export default function Home() {
                     const baseUrl = tunnelUrl.trim().replace(/\/$/, '');
                     setFigmaMcpUrl(`${baseUrl}/proxy-local/figma/mcp`);
                     setCodeProjectPath(`${baseUrl}/proxy-local/code/mcp`);
+                  }
+                  if (localFigmaMcpUrl.trim()) {
+                    setFigmaMcpUrl(process.env.NEXT_PUBLIC_PROXY_LOCAL_FIGMA_MCP);
+                  }
+                  if (localCodeMcpUrl.trim()) {
+                    setCodeProjectPath(process.env.NEXT_PUBLIC_PROXY_LOCAL_CODE_MCP);
                   }
                   setProxyModalOpen(false);
                 }}

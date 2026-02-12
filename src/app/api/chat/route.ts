@@ -183,6 +183,29 @@ function wrapToolsWithRetry(tools: Record<string, any>, url: string, label: stri
 export async function POST(req: Request) {
   const { messages, figmaMcpUrl, figmaAccessToken, codeProjectPath, figmaOAuth, model, selectedNode, tunnelSecret } = await req.json();
 
+  // Récupérer le header X-MCP-Code-URL pour résoudre les URLs relatives du proxy
+  console.log("[Header] X-MCP-Code-URL:", req.headers.get("X-MCP-Code-URL"));
+  console.log("[Code] codeProjectPath from body:", codeProjectPath);
+  const mcpCodeUrlHeader = req.headers.get("X-MCP-Code-URL");
+  let resolvedCodeProjectPath = codeProjectPath;
+  // Détecter si c'est une URL du proxy (relative ou absolue)
+  const isProxyUrl = codeProjectPath && (
+    codeProjectPath.startsWith("/proxy-local/code/") ||
+    codeProjectPath.includes("/proxy-local/code/")
+  );
+  console.log("[Code] isProxyUrl:", isProxyUrl);
+  if (isProxyUrl && mcpCodeUrlHeader) {
+    // Résoudre l'URL du proxy en URL absolue vers le serveur MCP
+    const baseUrl = new URL(mcpCodeUrlHeader).origin;
+    // Extraire le chemin après /proxy-local/code/
+    const match = codeProjectPath.match(/\/proxy-local\/code\/(.*)/);
+    const targetPath = match ? match[1] : "mcp";
+    resolvedCodeProjectPath = `${baseUrl}/${targetPath}`;
+    console.log("[Code] Resolved proxy URL:", resolvedCodeProjectPath);
+  } else {
+    console.log("[Code] Using original codeProjectPath:", resolvedCodeProjectPath);
+  }
+
   let allTools: Record<string, unknown> = {};
   const mcpErrors: string[] = [];
 
@@ -254,22 +277,27 @@ export async function POST(req: Request) {
     }
   }
 
-  if (codeProjectPath) {
+  if (resolvedCodeProjectPath) {
     try {
       const codeHeaders: Record<string, string> = {};
       if (tunnelSecret) {
         codeHeaders['X-Auth-Token'] = tunnelSecret;
       }
-      const { tools } = await getOrConnect(codeProjectPath, "Code", codeHeaders);
+      // Passer X-MCP-Code-URL si on utilise une URL du proxy
+      if (isProxyUrl && mcpCodeUrlHeader) {
+        codeHeaders['X-MCP-Code-URL'] = mcpCodeUrlHeader;
+      }
+      console.log("[Code] Connecting with headers:", codeHeaders);
+      const { tools } = await getOrConnect(resolvedCodeProjectPath, "Code", codeHeaders);
       const prefixedTools = Object.fromEntries(
         Object.entries(tools).map(([name, tool]) => [`code_${name}`, tool])
       );
-      allTools = { ...allTools, ...wrapToolsWithRetry(prefixedTools, codeProjectPath, "Code", codeHeaders) };
+      allTools = { ...allTools, ...wrapToolsWithRetry(prefixedTools, resolvedCodeProjectPath, "Code", codeHeaders) };
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
       console.error("[Code] MCP connection failed:", msg);
-      await evict(codeProjectPath);
-      mcpErrors.push(`Code MCP (filesystem) connection failed for "${codeProjectPath}": ${msg}`);
+      await evict(resolvedCodeProjectPath);
+      mcpErrors.push(`Code MCP (filesystem) connection failed for "${resolvedCodeProjectPath}": ${msg}`);
     }
   }
 
@@ -300,7 +328,7 @@ CRITICAL RULES:
   const figmaError = mcpErrors.find(e => e.includes("Figma MCP"));
 
   const criticalMcpErrors: string[] = [];
-  if (codeProjectPath && codeError) {
+  if (resolvedCodeProjectPath && codeError) {
     criticalMcpErrors.push(`Code MCP connection failed. ${codeError}`);
   }
   if ((figmaMcpUrl || figmaOAuth) && figmaError) {
