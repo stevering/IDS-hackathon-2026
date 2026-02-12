@@ -36,13 +36,14 @@ const Button: React.FC<ButtonProps> = ({
     if (state === 'Disabled') return 'text-[color:var(--sds-color-text-disabled-on-disabled,#b3b3b3)]';
     if (variant === 'Primary') return 'text-[color:var(--sds-color-text-brand-on-brand,#f5f5f5)]';
     if (variant === 'Subtle' && state === 'Default') return 'text-[color:var(--sds-color-text-neutral-default,#303030)]';
+    if (variant === 'Subtle' && state === 'Hover') return 'text-[color:var(--sds-color-text-default-default,#1e1e1e)]';
     return 'text-[color:var(--sds-color-text-default-default,#1e1e1e)]';
   })();
 
   const textClass = `font-[family-name:var(--sds-typography-body-font-family,'Inter:Regular',sans-serif)] font-[var(--sds-typography-body-font-weight-regular,400)] leading-none not-italic relative shrink-0 text-[length:var(--sds-typography-body-size-medium,16px)] ${textColorClass}`;
 
   const variantClass = (() => {
-    const base = `inline-flex items-center justify-center gap-[var(--sds-size-space-200,8px)] overflow-hidden relative rounded-[var(--sds-size-radius-200,8px)] border border-solid ${paddingClass}`;
+    const base = `inline-flex items-center justify-center gap-[var(--sds-size-space-200,8px)] overflow-hidden relative rounded-[var(--sds-size-radius-200,8px)] bg-transparent border-transparent border-solid ${paddingClass}`;
     
     const variants: Record<string, string> = {
       'Primary/Default': 'bg-[var(--sds-color-background-brand-default,#2c2c2c)] border-[var(--sds-color-border-brand-default,#2c2c2c)]',

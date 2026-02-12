@@ -25,5 +25,6 @@ module.exports = {
     'border-[var(--sds-color-border-neutral-secondary,#767676)]',
     'border-[var(--sds-color-border-disabled-default,#b3b3b3)]',
     'border-[var(--sds-color-border-default-default,#d9d9d9)]',
+    'bg-transparent',
   ],
 };
