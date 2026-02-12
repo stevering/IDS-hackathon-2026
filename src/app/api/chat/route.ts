@@ -151,8 +151,19 @@ function wrapToolsWithRetry(tools: Record<string, any>, url: string, label: stri
       ...tool,
       execute: async (...args: unknown[]) => {
         try {
+          // Inject default excludePatterns for directory tree tools
+          let finalArgs = args;
+          if ((name === 'code_directory_tree' || name === 'directory_tree') && args.length > 0) {
+            const arg0 = args[0] as Record<string, unknown>;
+            if (!arg0.excludePatterns) {
+              finalArgs = [{
+                ...arg0,
+                excludePatterns: [".git", ".idea", "node_modules", "__pycache__", ".venv", "venv", "dist", "build", ".next", "coverage", ".turbo"]
+              }];
+            }
+          }
           return await withTimeout(
-            tool.execute(...args),
+            tool.execute(...finalArgs),
             TOOL_TIMEOUT_MS,
             `Tool "${name}"`,
           );
@@ -165,8 +176,19 @@ function wrapToolsWithRetry(tools: Record<string, any>, url: string, label: stri
             if (!freshTool || typeof (freshTool as { execute?: unknown }).execute !== "function") {
               throw firstError;
             }
+            // Apply same exclusion logic on retry
+            let finalArgs = args;
+            if ((name === 'code_directory_tree' || name === 'directory_tree') && args.length > 0) {
+              const arg0 = args[0] as Record<string, unknown>;
+              if (!arg0.excludePatterns) {
+                finalArgs = [{
+                  ...arg0,
+                  excludePatterns: [".git", ".idea", "node_modules", "__pycache__", ".venv", "venv", "dist", "build", ".next", "coverage", ".turbo"]
+                }];
+              }
+            }
             return await withTimeout(
-              (freshTool as { execute: (...a: unknown[]) => Promise<unknown> }).execute(...args),
+              (freshTool as { execute: (...a: unknown[]) => Promise<unknown> }).execute(...finalArgs),
               TOOL_TIMEOUT_MS,
               `Tool "${name}" (retry)`,
             );

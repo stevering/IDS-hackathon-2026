@@ -82,7 +82,11 @@ npm install
 
 ### Getting Started
 
-- start the tunnel that redirects to your Figma Desktop MCP securely:
+- start the local code MCP server in a terminal:
+```bash
+supergateway --stdio "mcp-server-filesystem $(pwd)" --outputTransport streamableHttp --port 3846
+```
+- start the tunnel that redirects to your Figma/Code Desktop MCP securely in another terminal:
 ```bash
 npm run dev:proxy
 ```
@@ -123,7 +127,7 @@ If your code editor does not support an integrated MCP server :
 Before starting the dev server project, launch the MCP filesystem gateway:
 
 ```bash
-supergateway --sse --port 3846 --cors --stdio "mcp-server-filesystem $(pwd)"
+supergateway --stdio "mcp-server-filesystem $(pwd)" --outputTransport streamableHttp --port 3846
 ```
 
 #### MCP of Figma Desktop
