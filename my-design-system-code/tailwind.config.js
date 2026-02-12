@@ -1,0 +1,29 @@
+/** @type {import('tailwindcss').Config} */
+module.exports = {
+  content: ['./src/**/*.{js,ts,jsx,tsx,mdx}'],
+  theme: {
+    extend: {},
+  },
+  plugins: [],
+  safelist: [
+    'p-[var(--sds-size-space-200,8px)]',
+    'p-[var(--sds-size-space-300,12px)]',
+    'gap-[var(--sds-size-space-200,8px)]',
+    'rounded-[var(--sds-size-radius-200,8px)]',
+    'border-[length:var(--sds-size-stroke-border,1px)]',
+    'text-[length:var(--sds-typography-body-size-medium,16px)]',
+    'text-[color:var(--sds-color-text-brand-on-brand,#f5f5f5)]',
+    'text-[color:var(--sds-color-text-disabled-on-disabled,#b3b3b3)]',
+    'text-[color:var(--sds-color-text-default-default,#1e1e1e)]',
+    'text-[color:var(--sds-color-text-neutral-default,#303030)]',
+    'bg-[var(--sds-color-background-brand-default,#2c2c2c)]',
+    'bg-[var(--sds-color-background-brand-hover,#1e1e1e)]',
+    'bg-[var(--sds-color-background-neutral-tertiary,#e3e3e3)]',
+    'bg-[var(--sds-color-background-neutral-tertiary-hover,#cdcdcd)]',
+    'bg-[var(--sds-color-background-disabled-default,#d9d9d9)]',
+    'border-[var(--sds-color-border-brand-default,#2c2c2c)]',
+    'border-[var(--sds-color-border-neutral-secondary,#767676)]',
+    'border-[var(--sds-color-border-disabled-default,#b3b3b3)]',
+    'border-[var(--sds-color-border-default-default,#d9d9d9)]',
+  ],
+};

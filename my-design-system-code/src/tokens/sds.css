@@ -1,0 +1,31 @@
+:root {
+  /* Colors */
+  --sds-color-background-brand-default: #2c2c2c;
+  --sds-color-background-brand-hover: #1e1e1e;
+  --sds-color-border-brand-default: #2c2c2c;
+  --sds-color-text-brand-on-brand: #f5f5f5;
+  
+  --sds-color-background-neutral-tertiary: #e3e3e3;
+  --sds-color-background-neutral-tertiary-hover: #cdcdcd;
+  --sds-color-border-neutral-secondary: #767676;
+  --sds-color-text-default-default: #1e1e1e;
+  --sds-color-text-neutral-default: #303030;
+  
+  --sds-color-background-disabled-default: #d9d9d9;
+  --sds-color-border-disabled-default: #b3b3b3;
+  --sds-color-text-disabled-on-disabled: #b3b3b3;
+  --sds-color-border-default-default: #d9d9d9;
+  
+  /* Spacing */
+  --sds-size-space-200: 8px;
+  --sds-size-space-300: 12px;
+  
+  /* Border & Radius */
+  --sds-size-stroke-border: 1px;
+  --sds-size-radius-200: 8px;
+  
+  /* Typography */
+  --sds-typography-body-font-family: 'Inter', sans-serif;
+  --sds-typography-body-size-medium: 16px;
+  --sds-typography-body-font-weight-regular: 400;
+}

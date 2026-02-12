@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Button Test</title>
+  <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    :root {
+      --sds-color-background-brand-default: #2c2c2c;
+      --sds-color-background-brand-hover: #1e1e1e;
+      --sds-color-border-brand-default: #2c2c2c;
+      --sds-color-text-brand-on-brand: #f5f5f5;
+      --sds-color-background-neutral-tertiary: #e3e3e3;
+      --sds-color-background-neutral-tertiary-hover: #cdcdcd;
+      --sds-color-border-neutral-secondary: #767676;
+      --sds-color-text-default-default: #1e1e1e;
+      --sds-color-text-neutral-default: #303030;
+      --sds-color-background-disabled-default: #d9d9d9;
+      --sds-color-border-disabled-default: #b3b3b3;
+      --sds-color-text-disabled-on-disabled: #b3b3b3;
+      --sds-color-border-default-default: #d9d9d9;
+      --sds-size-space-200: 8px;
+      --sds-size-space-300: 12px;
+      --sds-size-radius-200: 8px;
+      --sds-size-stroke-border: 1px;
+      --sds-typography-body-font-family: 'Inter', sans-serif;
+      --sds-typography-body-size-medium: 16px;
+      --sds-typography-body-font-weight-regular: 400;
+    }
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400&display=swap');
+  </style>
+</head>
+<body>
+  <div id="root" class="p-8 space-y-4 min-h-screen bg-gray-50"></div>
+  
+  <script type="text/babel">
+    const { useState } = React;
+
+    function Button({ className, hasIconEnd = false, hasIconStart = false, iconEnd = null, iconStart = null, label = 'Button', size = 'Medium', state = 'Default', variant = 'Primary', onClick }) {
+      const isMedium = size === 'Medium';
+      const padding = isMedium ? 'p-[var(--sds-size-space-300,12px)]' : 'p-[var(--sds-size-space-200,8px)]';
+
+      const getVariantStyles = () => {
+        const base = `content-stretch flex gap-[var(--sds-size-space-200,8px)] items-center justify-center overflow-clip relative rounded-[var(--sds-size-radius-200,8px)] border-[length:var(--sds-size-stroke-border,1px)] border-solid ${padding}`;
+        const variants = {
+          'Primary/Default': `bg-[var(--sds-color-background-brand-default,#2c2c2c)] border-[var(--sds-color-border-brand-default,#2c2c2c)]`,
+          'Primary/Hover': `bg-[var(--sds-color-background-brand-hover,#1e1e1e)] border-[var(--sds-color-border-brand-default,#2c2c2c)]`,
+          'Primary/Disabled': `bg-[var(--sds-color-background-disabled-default,#d9d9d9)] border-[var(--sds-color-border-disabled-default,#b3b3b3)]`,
+          'Neutral/Default': `bg-[var(--sds-color-background-neutral-tertiary,#e3e3e3)] border-[var(--sds-color-border-neutral-secondary,#767676)]`,
+          'Neutral/Hover': `bg-[var(--sds-color-background-neutral-tertiary-hover,#cdcdcd)] border-[var(--sds-color-border-neutral-secondary,#767676)]`,
+          'Neutral/Disabled': `bg-[var(--sds-color-background-disabled-default,#d9d9d9)] border-[var(--sds-color-border-disabled-default,#b3b3b3)]`,
+          'Subtle/Default': `text-[color:var(--sds-color-text-neutral-default,#303030)]`,
+          'Subtle/Hover': `border-[var(--sds-color-border-default-default,#d9d9d9)] text-[color:var(--sds-color-text-default-default,#1e1e1e)]`,
+          'Subtle/Disabled': `bg-[var(--sds-color-background-disabled-default,#d9d9d9)] border-[var(--sds-color-border-disabled-default,#b3b3b3)]`,
+        };
+        const key = `${variant}/${state}`;
+        return variants[key] || variants['Primary/Default'];
+      };
+
+      const getTextColor = () => {
+        if (state === 'Disabled') return 'text-[color:var(--sds-color-text-disabled-on-disabled,#b3b3b3)]';
+        if (variant === 'Primary') return 'text-[color:var(--sds-color-text-brand-on-brand,#f5f5f5)]';
+        if (variant === 'Subtle' && state === 'Default') return 'text-[color:var(--sds-color-text-neutral-default,#303030)]';
+        return 'text-[color:var(--sds-color-text-default-default,#1e1e1e)]';
+      };
+
+      const textClass = `font-[family-name:var(--sds-typography-body-font-family,'Inter:Regular',sans-serif)] font-[var(--sds-typography-body-font-weight-regular,400)] leading-none not-italic relative shrink-0 text-[length:var(--sds-typography-body-size-medium,16px)] ${getTextColor()}`;
+
+      return React.createElement('button', {
+        className: `${getVariantStyles()} ${className || ''}`,
+        disabled: state === 'Disabled',
+        onClick,
+        style: { cursor: state === 'Disabled' ? 'not-allowed' : 'pointer' }
+      }, [
+        hasIconStart && (iconStart || React.createElement('span', { style: { fontSize: '16px' } }, '⭐')),
+        React.createElement('span', { className: textClass, key: 'label' }, label),
+        hasIconEnd && (iconEnd || React.createElement('span', { style: { fontSize: '16px' } }, '✕'))
+      ]);
+    }
+
+    function App() {
+      const [count, setCount] = useState(0);
+      return (
+        <div className="max-w-4xl mx-auto space-y-8">
+          <h1 className="text-3xl font-bold">Button Component Test</h1>
+          
+          <div className="grid grid-cols-3 gap-4">
+            <Button label="Primary Default" variant="Primary" />
+            <Button label="Primary Hover" variant="Primary" state="Hover" />
+            <Button label="Primary Disabled" variant="Primary" state="Disabled" />
+          </div>
+          
+          <div className="grid grid-cols-3 gap-4">
+            <Button label="Neutral Default" variant="Neutral" />
+            <Button label="Neutral Hover" variant="Neutral" state="Hover" />
+            <Button label="Neutral Disabled" variant="Neutral" state="Disabled" />
+          </div>
+          
+          <div className="grid grid-cols-3 gap-4">
+            <Button label="Subtle Default" variant="Subtle" />
+            <Button label="Subtle Hover" variant="Subtle" state="Hover" />
+            <Button label="Subtle Disabled" variant="Subtle" state="Disabled" />
+          </div>
+          
+          <div className="grid grid-cols-2 gap-4">
+            <Button size="Small" label="Small Primary" variant="Primary" onClick={() => alert('Clicked!')} />
+            <Button size="Small" label="With Icons" variant="Primary" hasIconStart hasIconEnd onClick={() => setCount(c => c + 1)} />
+          </div>
+          
+          <p>Cliqué {count} fois</p>
+        </div>
+      );
+    }
+
+    const root = ReactDOM.createRoot(document.getElementById('root'));
+    root.render(React.createElement(App));
+  </script>
+</body>
+</html>

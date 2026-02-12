@@ -1,0 +1,10 @@
+@import './tokens/sds.css';
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+body {
+  margin: 0;
+  font-family: var(--sds-typography-body-font-family);
+}
