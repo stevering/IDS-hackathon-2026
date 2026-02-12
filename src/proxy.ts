@@ -126,9 +126,10 @@ export async function proxy(request: NextRequest) {
         method: request.method,
         headers: {
           "Content-Type": request.headers.get("Content-Type") || "application/json",
+          "Accept": request.headers.get("Accept") || "application/json, text/event-stream",
         },
-        body: request.method !== "GET" && request.method !== "HEAD" 
-          ? await request.text() 
+        body: request.method !== "GET" && request.method !== "HEAD"
+          ? await request.text()
           : undefined,
       });
 
