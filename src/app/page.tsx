@@ -641,8 +641,8 @@ export default function Home() {
     }
   };
 
-  const figmaConnected = figmaOAuth || figmaAccessToken.trim().length > 0 || figmaMcpUrl.trim().length > 0;
-  const codeConnected = codeProjectPath.trim().length > 0;
+  const figmaConnected = figmaOAuth || figmaAccessToken.trim().length > 0 || (figmaMcpUrl?.trim().length ?? 0) > 0;
+  const codeConnected = (codeProjectPath?.trim().length ?? 0) > 0;
 
   return (
     <div className="relative flex h-screen bg-[#0a0a0a] text-white overflow-hidden">
