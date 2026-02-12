@@ -957,8 +957,9 @@ export default function Home() {
                     const hasTextAfter = m.parts?.slice(i + 1).some((nextPart: { type?: string }) => nextPart.type === "text");
                     const isProviderExecuted = (p as unknown as { providerExecuted?: boolean }).providerExecuted === true;
 
-                    // Si providerExecuted=true et qu'on a du texte après, le tool est terminé
-                    if ((isProviderExecuted && hasTextAfter) || p.state === "output-available") {
+                    // Si providerExecuted=true, le tool est terminé (exécuté côté serveur par xAI)
+                    // On n'attend pas output-available qui n'arrive jamais pour les tools natifs xAI
+                    if (isProviderExecuted || p.state === "output-available") {
                       return (
                         <ToolCallBlock
                           key={i}
@@ -1006,8 +1007,9 @@ export default function Home() {
                     const hasTextAfter = m.parts?.slice(i + 1).some((nextPart: { type?: string }) => nextPart.type === "text");
                     const isProviderExecuted = p.providerExecuted === true;
 
-                    // Si providerExecuted=true et qu'on a du texte après, le tool est terminé
-                    if ((isProviderExecuted && hasTextAfter) || p.state === "output-available") {
+                    // Si providerExecuted=true, le tool est terminé (exécuté côté serveur par xAI)
+                    // On n'attend pas output-available qui n'arrive jamais pour les tools natifs xAI
+                    if (isProviderExecuted || p.state === "output-available") {
                       return (
                         <ToolCallBlock
                           key={i}

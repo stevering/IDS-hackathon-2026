@@ -7,6 +7,7 @@ import process from 'process';
 // Génère le secret
 const MCP_TUNNEL_SECRET = randomBytes(32).toString('base64');
 process.env.MCP_TUNNEL_SECRET = MCP_TUNNEL_SECRET;
+process.env.NEXT_PUBLIC_MCP_TUNNEL_SECRET = MCP_TUNNEL_SECRET;
 
 // Lance le tunnel cloudflared
 const tunnel = spawn('npx', [

@@ -1,7 +1,6 @@
 import { xai } from "@ai-sdk/xai";
 import { streamText, stepCountIs, convertToModelMessages } from "ai";
 import { createMCPClient, type MCPClient } from "@ai-sdk/mcp";
-import { z } from "zod";
 import { GUARDIAN_SYSTEM_PROMPT } from "@/lib/system-prompt";
 import { cookies } from "next/headers";
 import {
