@@ -10,6 +10,10 @@ import {
 } from "@/lib/figma-mcp-oauth";
 
 export const maxDuration = 120;
+export const dynamic = 'force-dynamic';
+
+// Augmenter la limite de taille du body pour l'API chat (20MB)
+export const fetchCache = 'force-no-store';
 
 const TOOL_TIMEOUT_MS = 30_000;
 const CONNECTION_TIMEOUT_MS = 10_000;
