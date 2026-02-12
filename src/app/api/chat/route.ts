@@ -188,20 +188,27 @@ export async function POST(req: Request) {
   console.log("[Code] codeProjectPath from body:", codeProjectPath);
   const mcpCodeUrlHeader = req.headers.get("X-MCP-Code-URL");
   let resolvedCodeProjectPath = codeProjectPath;
-  // Détecter si c'est une URL du proxy (relative ou absolue)
-  const isProxyUrl = codeProjectPath && (
-    codeProjectPath.startsWith("/proxy-local/code/") ||
-    codeProjectPath.includes("/proxy-local/code/")
-  );
-  console.log("[Code] isProxyUrl:", isProxyUrl);
-  if (isProxyUrl && mcpCodeUrlHeader) {
-    // Résoudre l'URL du proxy en URL absolue vers le serveur MCP
-    const baseUrl = new URL(mcpCodeUrlHeader).origin;
-    // Extraire le chemin après /proxy-local/code/
-    const match = codeProjectPath.match(/\/proxy-local\/code\/(.*)/);
-    const targetPath = match ? match[1] : "mcp";
-    resolvedCodeProjectPath = `${baseUrl}/${targetPath}`;
-    console.log("[Code] Resolved proxy URL:", resolvedCodeProjectPath);
+
+  // Si le header X-MCP-Code-URL est présent, l'utiliser comme URL de connexion
+  // (soit pour résoudre une URL proxy, soit comme URL directe)
+  if (mcpCodeUrlHeader) {
+    // Détecter si c'est une URL du proxy (relative ou absolue)
+    const isProxyUrl = codeProjectPath && (
+      codeProjectPath.startsWith("/proxy-local/code/") ||
+      codeProjectPath.includes("/proxy-local/code/")
+    );
+    console.log("[Code] isProxyUrl:", isProxyUrl);
+
+    if (isProxyUrl) {
+      // Utiliser directement l'URL du header comme URL de connexion MCP
+      // Le header contient déjà l'URL complète vers le serveur MCP
+      resolvedCodeProjectPath = mcpCodeUrlHeader;
+      console.log("[Code] Resolved proxy URL from header:", resolvedCodeProjectPath);
+    } else {
+      // Utiliser directement l'URL du header comme URL de connexion MCP
+      resolvedCodeProjectPath = mcpCodeUrlHeader;
+      console.log("[Code] Using X-MCP-Code-URL header as connection URL:", resolvedCodeProjectPath);
+    }
   } else {
     console.log("[Code] Using original codeProjectPath:", resolvedCodeProjectPath);
   }
@@ -283,8 +290,8 @@ export async function POST(req: Request) {
       if (tunnelSecret) {
         codeHeaders['X-Auth-Token'] = tunnelSecret;
       }
-      // Passer X-MCP-Code-URL si on utilise une URL du proxy
-      if (isProxyUrl && mcpCodeUrlHeader) {
+      // Passer X-MCP-Code-URL si le header est présent (pour le proxy ou pour info)
+      if (mcpCodeUrlHeader) {
         codeHeaders['X-MCP-Code-URL'] = mcpCodeUrlHeader;
       }
       console.log("[Code] Connecting with headers:", codeHeaders);
