@@ -724,6 +724,8 @@ export default function Home() {
                 </div>
               ) : (
                 <button
+                  disabled={true}
+                  title="OAuth is currently disabled Due to limitation of Figma MCP server"
                   onClick={async () => {
                     // Set auth token cookie before OAuth redirect
                     if (tunnelSecret) {
@@ -760,7 +762,7 @@ export default function Home() {
               )}
             </div>
 
-            <div>
+           {/*  <div>
               <label className="block text-xs text-white/50 mb-1">
                 Figma Access Token (legacy)
               </label>
@@ -774,7 +776,7 @@ export default function Home() {
               <span className="text-xs text-white/30 mt-1 block">
                 Fallback if OAuth not used. Also reads FIGMA_ACCESS_TOKEN from .env.local
               </span>
-            </div>
+            </div> */}
 
             <div>
               <label className="block text-xs text-white/50 mb-1">
@@ -792,7 +794,7 @@ export default function Home() {
                   className={`w-1.5 h-1.5 rounded-full ${codeConnected ? "bg-emerald-400" : "bg-white/20"}`}
                 />
                 <span className="text-xs text-white/40">
-                  {codeConnected ? "Path configured" : "Not configured"}
+                  {codeConnected ? "URL configured" : "Not configured"}
                 </span>
               </div>
             </div>
@@ -800,8 +802,8 @@ export default function Home() {
 
           <div className="mt-6 p-3 bg-white/5 rounded-md">
             <p className="text-xs text-white/40 leading-relaxed">
-              Paste your Figma MCP SSE/HTTP URL and set the Code MCP SSE/HTTP URL for the code
-              project you want to inspect.
+              Set your online URLs for Figma MCCP and Code MCP,
+              or configure your local proxy.
             </p>
           </div>
         </div>
@@ -1221,7 +1223,7 @@ export default function Home() {
               </div>
 
               <div>
-                <label className="block text-xs text-white/60 mb-1">Local Code MCP URL</label>
+                <label className="block text-xs text-white/60 mb-1">Local Code MCP URL (JetBrains port 64342, 3846 for others)</label>
                 <input
                   type="url"
                   value={localCodeMcpUrl}

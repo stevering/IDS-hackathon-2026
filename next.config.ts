@@ -3,6 +3,9 @@ import type { NextConfig } from "next";
 const isDev = process.env.NODE_ENV === 'development';
 
 const nextConfig: NextConfig = {
+    // Augmenter la limite de taille du body pour l'API chat (50MB)
+    middlewareClientMaxBodySize: '20mb',
+
     async rewrites() {
         if (!isDev) {
             return []; // Retourne une liste vide en production
