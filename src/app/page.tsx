@@ -786,7 +786,7 @@ export default function Home() {
                 type="text"
                 value={codeProjectPath}
                 onChange={(e) => setCodeProjectPath(e.target.value)}
-                placeholder="http://127.0.0.1:64342/sse"
+                placeholder="http://127.0.0.1:3846/sse"
                 className="w-full bg-white/5 border border-white/10 rounded-md px-3 py-2 text-sm text-white placeholder:text-white/20 focus:outline-none focus:border-white/30"
               />
               <div className="flex items-center gap-1.5 mt-1.5">
@@ -1247,12 +1247,13 @@ export default function Home() {
                     const baseUrl = tunnelUrl.trim().replace(/\/$/, '');
                     setFigmaMcpUrl(`${baseUrl}/proxy-local/figma/mcp`);
                     setCodeProjectPath(`${baseUrl}/proxy-local/code/mcp`);
-                  }
-                  if (localFigmaMcpUrl.trim()) {
-                    setFigmaMcpUrl(process.env.NEXT_PUBLIC_PROXY_LOCAL_FIGMA_MCP);
-                  }
-                  if (localCodeMcpUrl.trim()) {
-                    setCodeProjectPath(process.env.NEXT_PUBLIC_PROXY_LOCAL_CODE_MCP);
+                  } else {
+                    if (localFigmaMcpUrl.trim()) {
+                      setFigmaMcpUrl(process.env.NEXT_PUBLIC_PROXY_LOCAL_FIGMA_MCP);
+                    }
+                    if (localCodeMcpUrl.trim()) {
+                      setCodeProjectPath(process.env.NEXT_PUBLIC_PROXY_LOCAL_CODE_MCP);
+                    }
                   }
                   setProxyModalOpen(false);
                 }}
