@@ -700,6 +700,24 @@ export default function Home() {
   const figmaConnected = figmaOAuth || figmaAccessToken.trim().length > 0 || (figmaMcpUrl?.trim().length ?? 0) > 0;
   const codeConnected = (codeProjectPath?.trim().length ?? 0) > 0;
 
+  // Fonction pour détecter le mode de connexion MCP
+  const getMcpConnectionMode = (url: string): { mode: 'direct' | 'proxy-local' | 'proxy-online'; label: string; color: string } => {
+    if (!url) return { mode: 'direct', label: 'Not configured', color: 'text-white/40' };
+
+    if (url.includes('trycloudflare.com') || url.includes('ngrok') || (url.startsWith('https://') && !url.includes('localhost'))) {
+      return { mode: 'proxy-online', label: '🔵 Proxy Online', color: 'text-blue-400' };
+    }
+
+    if (url.includes('/proxy-local/') || url.includes('localhost:3000/proxy-local')) {
+      return { mode: 'proxy-local', label: '🟢 Proxy Local', color: 'text-amber-400' };
+    }
+
+    return { mode: 'direct', label: '⚪ Direct', color: 'text-white/60' };
+  };
+
+  const figmaMode = getMcpConnectionMode(figmaOAuth ? "https://mcp.figma.com/mcp" : (figmaMcpUrl || ""));
+  const codeMode = getMcpConnectionMode(codeProjectPath || "");
+
   return (
     <div className="relative flex h-screen bg-[#0a0a0a] text-white overflow-hidden">
       <div className="absolute inset-0 overflow-hidden pointer-events-none z-0">
@@ -748,8 +766,8 @@ export default function Home() {
                 <div
                   className={`w-1.5 h-1.5 rounded-full ${figmaConnected ? "bg-emerald-400" : "bg-white/20"}`}
                 />
-                <span className="text-xs text-white/40">
-                  {figmaConnected ? "URL configured" : "Not configured"}
+                <span className={`text-xs ${figmaMode.color}`}>
+                  {figmaConnected ? figmaMode.label : "Not configured"}
                 </span>
               </div>
             </div>
@@ -849,8 +867,8 @@ export default function Home() {
                 <div
                   className={`w-1.5 h-1.5 rounded-full ${codeConnected ? "bg-emerald-400" : "bg-white/20"}`}
                 />
-                <span className="text-xs text-white/40">
-                  {codeConnected ? "URL configured" : "Not configured"}
+                <span className={`text-xs ${codeMode.color}`}>
+                  {codeConnected ? codeMode.label : "Not configured"}
                 </span>
               </div>
             </div>
@@ -1242,13 +1260,23 @@ export default function Home() {
       {proxyModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
           <div className="bg-[#1a1a2e] border border-white/10 rounded-lg p-5 w-full max-w-md mx-4 shadow-2xl">
-            <h3 className="text-sm font-semibold text-white mb-1">Configure Local Proxy</h3>
+            <h3 className="text-sm font-semibold text-white mb-1">Configure Proxy</h3>
             <p className="text-xs text-white/50 mb-4">
-              To set up a local proxy, copy and paste the tunnel info from your terminal (npm run dev:proxy)
+              Choose between Proxy Online (tunnel) or Proxy Local mode
             </p>
 
             <div className="space-y-3">
-              <div>
+              {/* Section Proxy Online */}
+              <div className={`p-3 rounded-md border ${tunnelUrl.trim() ? 'bg-blue-500/10 border-blue-500/30' : 'bg-white/5 border-white/10'}`}>
+                <div className="flex items-center gap-2 mb-2">
+                  <span className="text-sm">🔵</span>
+                  <span className={`text-xs font-medium ${tunnelUrl.trim() ? 'text-blue-400' : 'text-white/60'}`}>
+                    Proxy Online (Tunnel)
+                  </span>
+                  {tunnelUrl.trim() && (
+                    <span className="text-[10px] px-1.5 py-0.5 bg-blue-500/20 text-blue-300 rounded">Active</span>
+                  )}
+                </div>
                 <label className="block text-xs text-white/60 mb-1">Tunnel URL</label>
                 <input
                   type="url"
@@ -1257,6 +1285,47 @@ export default function Home() {
                   placeholder="https://your-tunnel.trycloudflare.com"
                   className="w-full bg-white/5 border border-white/10 rounded-md px-3 py-2 text-sm text-white placeholder:text-white/20 focus:outline-none focus:border-white/30"
                 />
+                <p className="text-[10px] text-white/40 mt-1">
+                  Will use: {tunnelUrl.trim() ? `${tunnelUrl.replace(/\/$/, '')}/proxy-local/{service}/mcp` : '{tunnel}/proxy-local/{service}/mcp'}
+                </p>
+              </div>
+
+              {/* Section Proxy Local */}
+              <div className={`p-3 rounded-md border ${(localFigmaMcpUrl.trim() || localCodeMcpUrl.trim()) ? 'bg-amber-500/10 border-amber-500/30' : 'bg-white/5 border-white/10'}`}>
+                <div className="flex items-center gap-2 mb-2">
+                  <span className="text-sm">🟢</span>
+                  <span className={`text-xs font-medium ${(localFigmaMcpUrl.trim() || localCodeMcpUrl.trim()) ? 'text-amber-400' : 'text-white/60'}`}>
+                    Proxy Local
+                  </span>
+                  {(localFigmaMcpUrl.trim() || localCodeMcpUrl.trim()) && (
+                    <span className="text-[10px] px-1.5 py-0.5 bg-amber-500/20 text-amber-300 rounded">Active</span>
+                  )}
+                </div>
+                <div className="space-y-2">
+                  <div>
+                    <label className="block text-xs text-white/60 mb-1">Local Figma MCP URL</label>
+                    <input
+                      type="url"
+                      value={localFigmaMcpUrl}
+                      onChange={(e) => setLocalFigmaMcpUrl(e.target.value)}
+                      placeholder={process.env.NEXT_PUBLIC_LOCAL_MCP_FIGMA_URL || ""}
+                      className="w-full bg-white/5 border border-white/10 rounded-md px-3 py-2 text-sm text-white placeholder:text-white/20 focus:outline-none focus:border-white/30"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs text-white/60 mb-1">Local Code MCP URL</label>
+                    <input
+                      type="url"
+                      value={localCodeMcpUrl}
+                      onChange={(e) => setLocalCodeMcpUrl(e.target.value)}
+                      placeholder={process.env.NEXT_PUBLIC_LOCAL_MCP_CODE_URL || ""}
+                      className="w-full bg-white/5 border border-white/10 rounded-md px-3 py-2 text-sm text-white placeholder:text-white/20 focus:outline-none focus:border-white/30"
+                    />
+                  </div>
+                </div>
+                <p className="text-[10px] text-white/40 mt-2">
+                  Will use: {process.env.NEXT_PUBLIC_PROXY_LOCAL_FIGMA_MCP?.replace('/figma/mcp', '/{service}/mcp') || 'http://localhost:3000/proxy-local/{service}/mcp'}
+                </p>
               </div>
 
               <div>
@@ -1266,28 +1335,6 @@ export default function Home() {
                   value={tunnelSecret}
                   onChange={(e) => setTunnelSecret(e.target.value)}
                   placeholder="your-secret-key"
-                  className="w-full bg-white/5 border border-white/10 rounded-md px-3 py-2 text-sm text-white placeholder:text-white/20 focus:outline-none focus:border-white/30"
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs text-white/60 mb-1">Local Figma MCP URL</label>
-                <input
-                  type="url"
-                  value={localFigmaMcpUrl}
-                  onChange={(e) => setLocalFigmaMcpUrl(e.target.value)}
-                  placeholder={process.env.NEXT_PUBLIC_LOCAL_MCP_FIGMA_URL || ""}
-                  className="w-full bg-white/5 border border-white/10 rounded-md px-3 py-2 text-sm text-white placeholder:text-white/20 focus:outline-none focus:border-white/30"
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs text-white/60 mb-1">Local Code MCP URL (JetBrains port 64342, 3846 for others)</label>
-                <input
-                  type="url"
-                  value={localCodeMcpUrl}
-                  onChange={(e) => setLocalCodeMcpUrl(e.target.value)}
-                  placeholder={process.env.NEXT_PUBLIC_LOCAL_MCP_CODE_URL || ""}
                   className="w-full bg-white/5 border border-white/10 rounded-md px-3 py-2 text-sm text-white placeholder:text-white/20 focus:outline-none focus:border-white/30"
                 />
               </div>
@@ -1306,10 +1353,8 @@ export default function Home() {
                     const baseUrl = tunnelUrl.trim().replace(/\/$/, '');
                     setFigmaMcpUrl(`${baseUrl}/proxy-local/figma/mcp`);
                     setCodeProjectPath(`${baseUrl}/proxy-local/code/mcp`);
-                    // Vider les URLs locales pour ne pas envoyer les headers X-MCP-*-URL
-                    // qui écraseraient l'URL du proxy côté serveur
-                    setLocalFigmaMcpUrl("");
-                    setLocalCodeMcpUrl("");
+                    // Garder les URLs locales pour envoyer les headers X-MCP-*-URL
+                    // Le serveur utilisera ces headers pour forwarder vers les bonnes URLs
                   } else {
                     if (localFigmaMcpUrl.trim()) {
                       setFigmaMcpUrl(process.env.NEXT_PUBLIC_PROXY_LOCAL_FIGMA_MCP);

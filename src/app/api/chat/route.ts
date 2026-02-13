@@ -449,15 +449,17 @@ export async function POST(req: Request) {
   console.log("[Header] X-MCP-Code-URL:", req.headers.get("X-MCP-Code-URL"));
   console.log("[Code] codeProjectPath from body:", codeProjectPath);
   const mcpCodeUrlHeader = req.headers.get("X-MCP-Code-URL");
+  console.log("[POST] mcpCodeUrlHeader value:", mcpCodeUrlHeader);
   let resolvedCodeProjectPath = codeProjectPath;
 
-  // Utiliser l'URL du body directement (comme Figma), le header est optionnel
-  // Le header X-MCP-Code-URL peut être utilisé comme fallback si l'URL du body est vide
-  if (!resolvedCodeProjectPath && mcpCodeUrlHeader) {
+  // Le header X-MCP-Code-URL est utilisé par le proxy pour forwarder vers la bonne URL
+  // Mais la connexion se fait toujours via codeProjectPath (qui est l'URL du proxy)
+  if (resolvedCodeProjectPath) {
+    console.log("[Code] Using codeProjectPath from body:", resolvedCodeProjectPath);
+  } else if (mcpCodeUrlHeader) {
+    // Fallback: si pas de codeProjectPath, utiliser le header directement
     resolvedCodeProjectPath = mcpCodeUrlHeader;
     console.log("[Code] Using X-MCP-Code-URL header as fallback:", resolvedCodeProjectPath);
-  } else {
-    console.log("[Code] Using codeProjectPath from body:", resolvedCodeProjectPath);
   }
 
   // Préparer les messages pour le modèle

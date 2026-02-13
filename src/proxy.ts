@@ -15,8 +15,15 @@ const PUBLIC_AUTH_ROUTES = [
 function getMcpCodeUrl(request: NextRequest): string | undefined {
   const headerUrl = request.headers.get("X-MCP-Code-URL");
   const envUrl = process.env.NEXT_PUBLIC_LOCAL_MCP_CODE_URL;
+
+  console.log("[getMcpCodeUrl] headerUrl:", headerUrl);
+  console.log("[getMcpCodeUrl] envUrl:", envUrl);
+  console.log("[getMcpCodeUrl] headerUrl truthy?", !!headerUrl);
+
   const url = headerUrl || envUrl;
-  return url ? new URL(url).origin : undefined;
+  if (!url) return undefined;
+  // Retourne l'URL complète (avec le path) sans le trailing slash
+  return url.replace(/\/$/, '');
 }
 
 export async function proxy(request: NextRequest) {
@@ -61,10 +68,33 @@ export async function proxy(request: NextRequest) {
 
   // Proxy pour le MCP Code
   if (pathname.startsWith(`${PROXY_PREFIX}/`)) {
-    const targetPath = pathname.replace(`${PROXY_PREFIX}/`, "");
-    const targetUrl = `${MCP_CODE_URL}/${targetPath}${search}`;
+    if (!MCP_CODE_URL) {
+      console.error("[Proxy Middleware] MCP_CODE_URL not configured");
+      return NextResponse.json(
+        { error: "MCP Code URL not configured" },
+        { status: 500 }
+      );
+    }
 
-    console.log(`[Proxy Middleware] ${request.method} ${targetPath} -> ${targetUrl}`);
+    const targetPath = pathname.replace(`${PROXY_PREFIX}/`, "");
+
+    // Parser l'URL de base pour extraire origin et pathname
+    const baseUrlObj = new URL(MCP_CODE_URL);
+    const baseOrigin = baseUrlObj.origin;
+    const basePathname = baseUrlObj.pathname.replace(/\/$/, ''); // Enlever trailing slash
+
+    // Construire l'URL cible :
+    // - Si l'URL configurée se termine par /mcp ou /sse, on ajoute le targetPath
+    // - Sinon (URL custom comme /mcp3), on forward vers l'URL de base sans ajouter de path
+    const isStandardMcpPath = basePathname.endsWith('/mcp') || basePathname.endsWith('/sse');
+    const baseLastSegment = basePathname.split('/').pop();
+    const shouldAppendTargetPath = isStandardMcpPath && targetPath && targetPath !== baseLastSegment;
+
+    const targetUrl = shouldAppendTargetPath
+      ? `${baseOrigin}${basePathname}/${targetPath}${search}`
+      : `${baseOrigin}${basePathname}${search}`;
+
+    console.log(`[Proxy Middleware] ${request.method} ${targetPath || '(root)'} -> ${targetUrl}`);
 
     try {
       // Pour SSE (GET sur sse)
