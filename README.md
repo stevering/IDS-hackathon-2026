@@ -68,31 +68,41 @@ You can test online the application
 ### Prerequisites
 
 - clone this repository with your favorite code editor (IDE)
-- If your code editor supports an integrated MCP server like Intellij Idea, enable it
-- If your code editor does not support an integrated MCP server, starts one like :
-```bash
-supergateway --sse --port 3846 --cors --stdio "mcp-server-filesystem $(pwd)"
-```
 - Install dependencies:
 ```bash
 npm install
 ```
-- Start your Figma Desktop and enable the MCP server in parameters
+- If your code editor supports an integrated MCP server like Intellij Idea, enable it on port 3846
+- If your code editor does not support an integrated MCP server, starts one like :
+```bash
+sudo npm install -g supergateway @modelcontextprotocol/server-filesystem
+npx supergateway --stdio "mcp-server-filesystem $(pwd)" --outputTransport streamableHttp --port 3846
+```
+- Start your Figma Desktop and enable the MCP server in parameters (default on port 3845)
 
 
 ### Getting Started
 
-- start the local code MCP server in a terminal:
-```bash
-supergateway --stdio "mcp-server-filesystem $(pwd)" --outputTransport streamableHttp --port 3846
-```
 - start the tunnel that redirects to your Figma/Code Desktop MCP securely in another terminal:
 ```bash
 npm run dev:proxy
 ```
-- Copy the domain/secret you received from cloudflare (something like `https://wrap-leisure-contents-poster.trycloudflare.com`)
+- Copy the domain/secret you received from cloudflare, something like:
+```bash
+╔══════════════════════════════════════════════════════════════════════════════╗
+║                                                                              ║
+║   COPY your TUNEL_INFO and past it in parameters of:                         ║
+║   https://ids-hackathon-2026-ds-ai-guardian.vercel.app/                      ║
+║                                                                              ║
+╠══════════════════════════════════════════════════════════════════════════════╣
+║   TUNEL_INFO:                                                                ║
+║   https://teeth-sorts-thank-louisiana.trycloudflare.com                      ║
+║   OtzEHLz8eTZFn4h7fJaTh2/2QFws0gHpc/y7gbBctb0=                               ║
+║                                                                              ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+```
 - go to the online demo page : https://ids-hackathon-2026-ds-ai-guardian.vercel.app/
-- Click on "Configure proxy" in the side "parameters" panel
+- Click on `Configure proxy` in the side panel `parameters` panel
 - Paste the domain in the `Tunnel URL` field
 - Paste the secret in the `Secret` field
 - Save the configuration and test the AI Agent
@@ -101,33 +111,33 @@ npm run dev:proxy
 
 ### Prerequisites
 
-#### Setup your xAI API KEY
+#### Install
 
-You have to create a file `.env.local` that is inspired by `.env.example`:
+- clone this repository with your favorite code editor (IDE)
+- Install dependencies:
+```bash
+npm install
+```
+
+#### Setup your Keys and secret
+
+- You have to create a file `.env.local` that is inspired by `.env.example`:
 ```bash
 cp .env.example .env.local
 ```
-
-Then change the values in the `.env.local` file as follows:
-```
+- Then change the values in the `.env.local` file as follows:
+```bash
 XAI_API_KEY=your_xai_api_key_here
-FIGMA_ACCESS_TOKEN=your_figma_personal_access_token_here
-FIGMA_CLIENT_ID=FIGMA_CLIENT_ID
-FIGMA_CLIENT_SECRET=FIGMA_CLIENT_SECRET
-NEXT_PUBLIC_BASE_URL=http://127.0.0.1:3000
+MCP_TUNNEL_SECRET=YOUR_PRIVATE_SECRET
 ```
 
 #### MCP of code editor
 
-If you are running a development editor with an integrated MCP server like
-Intellij idea:
-- be sure the MCP server is enable on the good port (64342 by default)
-
-If your code editor does not support an integrated MCP server :
-Before starting the dev server project, launch the MCP filesystem gateway:
-
+- If your code editor supports an integrated MCP server like Intellij Idea, enable it on port 3846
+- If your code editor does not support an integrated MCP server, starts one like :
 ```bash
-supergateway --stdio "mcp-server-filesystem $(pwd)" --outputTransport streamableHttp --port 3846
+sudo npm install -g supergateway @modelcontextprotocol/server-filesystem
+npx supergateway --stdio "mcp-server-filesystem $(pwd)" --outputTransport streamableHttp --port 3846
 ```
 
 #### MCP of Figma Desktop
@@ -147,7 +157,6 @@ Open [http://localhost:3000](http://localhost:3000) with your browser to see the
 This is for now the standalone webapp.
 You can test everything in it.
 
-
 ## Chat API
 
 The application exposes a single endpoint at `POST /api/chat` that powers the conversational agent API.
@@ -159,23 +168,61 @@ The endpoint expects a JSON body with the following fields:
 | Field | Type | Description |
 |---|---|---|
 | `messages` | `array` | Conversation history in the AI SDK message format. |
-| `figmaMcpUrl` | `string` | SSE URL of the Figma MCP server (e.g. `http://127.0.0.1:3845/sse`). |
-| `codeProjectPath` | `string` | SSE URL of the filesystem MCP server pointing to the code project (e.g. `http://[::1]:3846/sse`). |
+| `figmaMcpUrl` | `string` | URL of the Figma MCP server (e.g., `http://127.0.0.1:3845/sse` or `https://mcp.figma.com/mcp`). |
+| `figmaAccessToken` | `string` | Optional Figma access token for authentication. |
+| `codeProjectPath` | `string` | URL of the filesystem MCP server pointing to the code project (e.g., `http://127.0.0.1:3846/sse`). |
+| `figmaOAuth` | `boolean` | Enable OAuth authentication for Figma MCP. |
+| `model` | `string` | Model to use: `grok-4-1-fast-reasoning` (default) or `grok-4-1-fast-non-reasoning`. |
+| `selectedNode` | `string` | URL of the currently selected Figma node (from host application). |
+| `tunnelSecret` | `string` | Optional secret token for tunnel authentication. |
+
+### Headers
+
+| Header | Description |
+|---|---|
+| `X-MCP-Code-URL` | Optional fallback URL for code MCP server (used if `codeProjectPath` is empty). |
 
 ### How it works
 
-1. **MCP connection** — For each provided URL (`figmaMcpUrl`, `codeProjectPath`), the server connects to the corresponding MCP server over SSE using `@ai-sdk/mcp`. Connections are cached globally so subsequent requests reuse the same client. If a URL does not end with `/sse`, the suffix is appended automatically.
-2. **Tool discovery** — Once connected, all available MCP tools are fetched from both servers and merged into a single tool map.
-3. **System prompt** — The base system prompt (`GUARDIAN_SYSTEM_PROMPT` defined in `src/lib/system-prompt.ts`) is augmented at runtime with:
+1. **MCP connection** — For each provided URL (`figmaMcpUrl`, `codeProjectPath`), the server connects to the corresponding MCP server. Supports both SSE and HTTP transports (auto-detected). Connections are cached globally with healthchecks and automatic reconnection. Cached connections expire after 2 minutes (`MAX_AGE_MS`).
+2. **Authentication** — Figma MCP supports multiple auth modes:
+   - OAuth via `figmaOAuth` flag using cookie-based tokens
+   - Bearer token via `figmaAccessToken` or environment variable
+   - Tunnel secret via `tunnelSecret` header
+3. **Tool discovery** — Once connected, all available MCP tools are fetched from both servers, prefixed (`figma_*`, `code_*`), and merged into a single tool map with retry logic.
+4. **System prompt** — The base system prompt (`GUARDIAN_SYSTEM_PROMPT` defined in `src/lib/system-prompt.ts`) is augmented at runtime with:
    - Any MCP connection errors, so the model can inform the user.
    - The list of available MCP tool names.
-4. **Streaming response** — The request is forwarded to the `grok-4-1-fast-reasoning` model via `@ai-sdk/xai` using `streamText`. The model can invoke MCP tools autonomously up to 10 steps (`stopWhen: stepCountIs(10)`).
-5. **Response format** — The streamed result is returned as a UI message stream (`toUIMessageStreamResponse()`), consumed on the client side by the `useChat` hook from `@ai-sdk/react`.
+   - Selected Figma node information (if provided).
+5. **Streaming with keepalive** — While MCP connections are being established, the server sends SSE keepalive pings every 5 seconds to prevent timeouts. MCP status updates (`[MCP_STATUS:connecting]`, `[MCP_STATUS:connected]`) are streamed to the client.
+6. **Streaming response** — The request is forwarded to the model via `@ai-sdk/xai` using `streamText`. The model can invoke MCP tools autonomously up to 10 steps (`stopWhen: stepCountIs(10)`). Additional built-in tool: `web_search`.
+7. **Response format** — The streamed result is returned as a UI message stream, consumed on the client side by the `useChat` hook from `@ai-sdk/react`.
 
 ### Response
 
-The endpoint returns a streaming response in the Vercel AI SDK UI message stream format. The client consumes it via `DefaultChatTransport` configured with the same `figmaMcpUrl` and `codeProjectPath` values passed in the request body.
+The endpoint returns a streaming SSE response with the following message types:
 
+| Type | Description |
+|---|---|
+| `start` | Stream initialization |
+| `text-start` | Beginning of a text message (includes `id`) |
+| `text-delta` | Text chunk (includes `id` and `delta`) |
+| `text-end` | End of a text message (includes `id`) |
+| `ping` | Keepalive ping during MCP connection (includes `timestamp`) |
+| `finish` | Stream completion (includes `finishReason`) |
+
+Special text blocks:
+- `[MCP_STATUS:connecting]` — MCP connection in progress
+- `[MCP_STATUS:connected]` — MCP connection successful
+- `[MCP_ERROR_BLOCK]...[/MCP_ERROR_BLOCK]` — MCP connection errors
+
+### Error Handling
+
+- If an MCP server connection fails, the error is captured and included in the system prompt. The model will inform the user about which MCP server is unavailable and continue operating with the available tools.
+- Tool execution failures trigger automatic reconnection and retry once before failing.
+- Global MCP connection timeout: 120 seconds.
+- Tool timeout: 60 seconds.
+- Connection timeout: 30 seconds.
 
 
 ## Deploy on Vercel
@@ -186,12 +233,12 @@ Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/bui
 
 ### Demo Deployment
 
-You can test a already deployed package on https://ids-hackathon-2026-ds-ai-guardian.vercel.app/.
+You can test an already deployed package on https://ids-hackathon-2026-ds-ai-guardian.vercel.app/.
 
 
 # troubleshoots
 
-## MCP figma connections online
+## MCP figma connections online with `mcp.figma.com/mcp`
 
 ### OAuth Flow Diagnostics and Fixes
 
