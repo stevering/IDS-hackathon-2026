@@ -16,7 +16,8 @@ type ContentSegment = { kind: "content"; text: string };
 type DetailsSegment = { kind: "details"; text: string; streaming: boolean };
 type QCMSegment = { kind: "qcm"; choices: string[] };
 type MCPErrorSegment = { kind: "mcp-error"; errorText: string };
-type StructuredSegment = ThinkingSegment | ContentSegment | DetailsSegment | QCMSegment | MCPErrorSegment;
+type MCPStatusSegment = { kind: "mcp-status"; status: "connecting" | "connected" | "error" };
+type StructuredSegment = ThinkingSegment | ContentSegment | DetailsSegment | QCMSegment | MCPErrorSegment | MCPStatusSegment;
 
 function ThinkingBlock({ text, isLast, isStreaming }: { text: string; isLast: boolean; isStreaming: boolean }) {
   const [open, setOpen] = useState(false);
@@ -132,6 +133,7 @@ function parseStructuredContent(text: string, isStreamingMsg: boolean = false): 
   const detailsBlocks: { index: number; length: number; text: string; streaming: boolean }[] = [];
   const qcmBlocks: { index: number; length: number; choices: string[] }[] = [];
   const mcpErrorBlocks: { index: number; length: number; errorText: string }[] = [];
+  const mcpStatusBlocks: { index: number; length: number; status: "connecting" | "connected" | "error" }[] = [];
 
   let match;
   while ((match = thinkingRegex.exec(cleanedText)) !== null) {
@@ -158,6 +160,22 @@ function parseStructuredContent(text: string, isStreamingMsg: boolean = false): 
     mcpErrorBlocks.push({ index: match.index, length: match[0].length, errorText: match[1].trim() });
   }
 
+  // Parser les statuts MCP - ne garder que le dernier
+  const mcpStatusRegex = /\[MCP_STATUS:(\w+)\]/g;
+  let lastMcpStatus: { index: number; length: number; status: "connecting" | "connected" | "error" } | null = null;
+  while ((match = mcpStatusRegex.exec(cleanedText)) !== null) {
+    const status = match[1] as "connecting" | "connected" | "error";
+    lastMcpStatus = { index: match.index, length: match[0].length, status };
+  }
+  if (lastMcpStatus) {
+    mcpStatusBlocks.push(lastMcpStatus);
+  }
+
+  // Retirer les balises MCP du texte pour ne pas les afficher
+  cleanedText = cleanedText
+    .replace(/\[MCP_STATUS:\w+\]/g, "")
+    .replace(/\[MCP_ERROR_BLOCK\][\s\S]*?\[\/MCP_ERROR_BLOCK\]/g, "");
+
   if (isStreamingMsg) {
     const openTag = "<!-- DETAILS_START -->";
     const allCompleteEnds = [...cleanedText.matchAll(/<!-- DETAILS_END -->/g)].map(m => m.index!);
@@ -177,6 +195,7 @@ function parseStructuredContent(text: string, isStreamingMsg: boolean = false): 
     ...detailsBlocks.map(b => ({ ...b, kind: "details" as const })),
     ...qcmBlocks.map(b => ({ ...b, kind: "qcm" as const, streaming: false })),
     ...mcpErrorBlocks.map(b => ({ ...b, kind: "mcp-error" as const, streaming: false })),
+    ...mcpStatusBlocks.map(b => ({ ...b, kind: "mcp-status" as const, streaming: false })),
   ].sort((a, b) => a.index - b.index);
 
   if (allBlocks.length === 0) {
@@ -196,6 +215,8 @@ function parseStructuredContent(text: string, isStreamingMsg: boolean = false): 
       segments.push({ kind: "qcm", choices: (block as typeof qcmBlocks[number] & { kind: "qcm" }).choices });
     } else if (block.kind === "mcp-error") {
       segments.push({ kind: "mcp-error", errorText: (block as typeof mcpErrorBlocks[number] & { kind: "mcp-error" }).errorText });
+    } else if (block.kind === "mcp-status") {
+      segments.push({ kind: "mcp-status", status: (block as typeof mcpStatusBlocks[number] & { kind: "mcp-status" }).status });
     } else {
       segments.push({ kind: block.kind, text: block.text });
     }
@@ -394,6 +415,41 @@ function ToolCallProgress({ toolName }: { toolName: string }) {
       {toolName}
       {isStalled && <span className="text-amber-400/60 text-[10px]">slow response…</span>}
       <span className={`ml-auto tabular-nums ${isStalled ? "text-amber-400/50" : "text-white/30"}`}>{timeStr}</span>
+    </div>
+  );
+}
+
+function MCPStatusBlock({ status }: { status: "connecting" | "connected" | "error" }) {
+  if (status === "connected") return null; // Ne rien afficher une fois connecté
+
+  const isError = status === "error";
+
+  return (
+    <div className={`my-3 p-3 rounded-lg border ${isError ? "bg-red-500/5 border-red-500/20" : "bg-blue-500/5 border-blue-500/20"}`}>
+      <div className="flex items-center gap-3">
+        {isError ? (
+          <svg className="h-5 w-5 text-red-400/70 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <circle cx="12" cy="12" r="10" />
+            <line x1="12" y1="8" x2="12" y2="12" />
+            <line x1="12" y1="16" x2="12.01" y2="16" />
+          </svg>
+        ) : (
+          <svg className="animate-spin h-5 w-5 text-blue-400/70 shrink-0" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+          </svg>
+        )}
+        <div className="flex-1">
+          <h4 className={`text-sm font-medium ${isError ? "text-red-300/90" : "text-blue-300/90"}`}>
+            {isError ? "MCP Connection Failed" : "Connecting to MCP servers..."}
+          </h4>
+          <p className="text-xs text-white/60">
+            {isError
+              ? "Unable to connect to MCP servers. Some features may be unavailable."
+              : "Please wait while we establish connection to Figma and Code MCP servers..."}
+          </p>
+        </div>
+      </div>
     </div>
   );
 }
@@ -944,6 +1000,9 @@ export default function Home() {
                                 }}
                               />
                             );
+                          }
+                          if (structSeg.kind === "mcp-status") {
+                            return <MCPStatusBlock key={sj} status={structSeg.status} />;
                           }
                           
                           // content kind
