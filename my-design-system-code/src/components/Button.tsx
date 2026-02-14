@@ -1,10 +1,15 @@
 import React from 'react';
 import type { ButtonHTMLAttributes } from 'react';
-import '../index.css'; // Import tokens
+import '../index.css'; // Tokens
 
-export type ButtonVariant = 'Primary' | 'Neutral' | 'Subtle';
+/**
+ * Figma Button 100% - https://figma.com/design/...node-id=2183-24086
+ * Variants: Brand/Gray/Danger/Subtle x L/S x Default/Hover/Disabled
+ */
+
+export type ButtonVariant = 'Brand' | 'Gray' | 'Danger' | 'Subtle';
 export type ButtonState = 'Default' | 'Hover' | 'Disabled';
-export type ButtonSize = 'Medium' | 'Small';
+export type ButtonSize = 'Large' | 'Small'; // Figma L/S
 
 interface ButtonProps extends Omit<ButtonHTMLAttributes<HTMLButtonElement>, 'className'> {
   className?: string;
@@ -21,9 +26,9 @@ interface ButtonProps extends Omit<ButtonHTMLAttributes<HTMLButtonElement>, 'cla
 const Button: React.FC<ButtonProps> = ({
   className = '',
   label = 'Button',
-  size = 'Medium',
+  size = 'Large',
   state = 'Default',
-  variant = 'secondary',
+  variant = 'Brand',
   hasIconStart = false,
   hasIconEnd = false,
   iconStart,
@@ -31,34 +36,41 @@ const Button: React.FC<ButtonProps> = ({
   disabled = state === 'Disabled',
   ...props
 }) => {
-  const paddingClass = size === 'Medium' ? 'p-[var(--sds-size-space-300,12px)]' : 'p-[var(--sds-size-space-200,8px)]';
+  const paddingClass = size === 'Large' 
+    ? 'pl-4 pr-4 pt-2 pb-2'  // 16/16/8/8px Figma L
+    : 'pl-3 pr-3 pt-1 pb-1'; // 12/12/4/4px S
+
   const textColorClass = (() => {
-    if (state === 'Disabled') return 'text-[color:var(--sds-color-text-disabled-on-disabled,#b3b3b3)]';
-    if (variant === 'Primary') return 'text-[color:var(--sds-color-text-brand-on-brand,#f5f5f5)]';
-    if (variant === 'Subtle' && state === 'Default') return 'text-[color:var(--sds-color-text-neutral-default,#303030)]';
-    if (variant === 'Subtle' && state === 'Hover') return 'text-[color:var(--sds-color-text-default-default,#1e1e1e)]';
-    return 'text-[color:var(--sds-color-text-default-default,#1e1e1e)]';
+    if (state === 'Disabled') return 'text-[#b3b3b3]';
+    if (['Brand', 'Danger'].includes(variant)) return 'text-white';
+    return 'text-[#1e1e1e]';
   })();
 
-  const textClass = `font-[family-name:var(--sds-typography-body-font-family,'Inter:Regular',sans-serif)] font-[var(--sds-typography-body-font-weight-regular,400)] leading-none not-italic relative shrink-0 text-[length:var(--sds-typography-body-size-medium,16px)] ${textColorClass}`;
+  const textClass = `font-['Inter'] font-semibold text-base leading-tight ${textColorClass}`;
 
   const variantClass = (() => {
-    const base = `inline-flex items-center justify-center gap-[var(--sds-size-space-200,8px)] overflow-hidden relative rounded-[var(--sds-size-radius-200,8px)] bg-transparent border-transparent border-solid ${paddingClass}`;
-    
-    const variants: Record<string, string> = {
-      'Primary/Default': 'bg-[var(--sds-color-background-brand-default,#2c2c2c)] border-[var(--sds-color-border-brand-default,#2c2c2c)]',
-      'Primary/Hover': 'bg-[var(--sds-color-background-brand-hover,#1e1e1e)] border-[var(--sds-color-border-brand-default,#2c2c2c)]',
-      'Primary/Disabled': 'bg-[var(--sds-color-background-disabled-default,#d9d9d9)] border-[var(--sds-color-border-disabled-default,#b3b3b3)]',
-      'Neutral/Default': 'bg-[var(--sds-color-background-neutral-tertiary,#000000)] border-[var(--sds-color-border-neutral-secondary,#767676)]',
-      'Neutral/Hover': 'bg-[var(--sds-color-background-neutral-tertiary-hover,#cdcdcd)] border-[var(--sds-color-border-neutral-secondary,#767676)]',
-      'Neutral/Disabled': 'bg-[var(--sds-color-background-disabled-default,#d9d9d9)] border-[var(--sds-color-border-disabled-default,#b3b3b3)]',
-      'Subtle/Default': '',
-      'Subtle/Hover': 'border-[var(--sds-color-border-default-default,#d9d9d9)]',
-      'Subtle/Disabled': 'bg-[var(--sds-color-background-disabled-default,#d9d9d9)] border-[var(--sds-color-border-disabled-default,#b3b3b3)]',
-    };
+    const base = `inline-flex items-center justify-center gap-2 rounded-lg border-solid ${paddingClass} transition-all duration-200 hover:shadow-md`;
 
+    const variants: Record<string, string> = {
+      // Brand (Figma blue)
+      'Brand/Default': 'bg-[#027be8] border-[#027be8]',
+      'Brand/Hover': 'bg-[#025ab2] border-[#027be8]',
+      'Brand/Disabled': 'bg-[#d9d9d9] border-[#b3b3b3]',
+      // Danger (Figma red)
+      'Danger/Default': 'bg-[#ef4444] border-[#ef4444]',
+      'Danger/Hover': 'bg-[#dc2626] border-[#ef4444]',
+      'Danger/Disabled': 'bg-[#d9d9d9] border-[#b3b3b3]',
+      // Gray (Figma neutral)
+      'Gray/Default': 'bg-transparent border-[#6b7280]',
+      'Gray/Hover': 'bg-[#9ca3af] border-[#6b7280]',
+      'Gray/Disabled': 'bg-[#d9d9d9] border-[#b3b3b3]',
+      // Subtle (ghost)
+      'Subtle/Default': 'bg-transparent border-transparent',
+      'Subtle/Hover': 'bg-[#f3f4f6] border-[#d1d5db]',
+      'Subtle/Disabled': 'bg-[#d9d9d9] border-[#b3b3b3]',
+    };
     const key = `${variant}/${state}`;
-    return `${base} ${variants[key] || variants['Primary/Default']}`;
+    return `${base} ${variants[key] || variants['Brand/Default']}`;
   })();
 
   return (
@@ -67,9 +79,9 @@ const Button: React.FC<ButtonProps> = ({
       disabled={disabled}
       {...props}
     >
-      {hasIconStart && (iconStart || <span className="shrink-0 w-4 h-4">⭐</span>)}
+      {hasIconStart && (iconStart || <span className="w-4 h-4">⭐</span>)}
       <span className={textClass}>{label}</span>
-      {hasIconEnd && (iconEnd || <span className="shrink-0 w-4 h-4">✕</span>)}
+      {hasIconEnd && (iconEnd || <span className="w-4 h-4">✕</span>)}
     </button>
   );
 };
