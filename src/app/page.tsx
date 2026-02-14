@@ -573,6 +573,7 @@ export default function Home() {
   const [figmaAccessToken, setFigmaAccessToken] = useState("");
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [figmaOAuth, setFigmaOAuth] = useState(false);
+  const [southleftOAuth, setSouthleftOAuth] = useState(false);
   const [input, setInput] = useState("");
   const [selectedModel, setSelectedModel] = useState<"grok-4-1-fast-reasoning" | "grok-4-1-fast-non-reasoning">("grok-4-1-fast-non-reasoning");
   const [selectedNode, setSelectedNode] = useState<string | null>(null);
@@ -644,7 +645,7 @@ export default function Home() {
           }
           return headers;
         },
-        body: () => ({ figmaMcpUrl: figmaOAuthRef.current ? "https://mcp.figma.com/mcp" : figmaMcpUrlRef.current, figmaAccessToken: figmaAccessTokenRef.current, codeProjectPath: codeProjectPathRef.current, figmaOAuth: figmaOAuthRef.current, model: selectedModelRef.current, selectedNode: selectedNodeRef.current, tunnelSecret: tunnelSecretRef.current }),
+        body: () => ({ figmaMcpUrl: figmaMcpUrlRef.current || (figmaOAuthRef.current ? "https://mcp.figma.com/mcp" : ""), figmaAccessToken: figmaAccessTokenRef.current, codeProjectPath: codeProjectPathRef.current, figmaOAuth: figmaOAuthRef.current, model: selectedModelRef.current, selectedNode: selectedNodeRef.current, tunnelSecret: tunnelSecretRef.current }),
       }),
     [],
   );
@@ -668,6 +669,14 @@ export default function Home() {
     })
       .then((r) => r.json())
       .then((d) => setFigmaOAuth(d.connected))
+      .catch(() => {});
+    fetch("/api/auth/southleft-mcp/status", {
+      headers: {
+        "X-Auth-Token": tunnelSecret || "",
+      },
+    })
+      .then((r) => r.json())
+      .then((d) => setSouthleftOAuth(d.connected))
       .catch(() => {});
   }, []);
 
@@ -715,7 +724,7 @@ export default function Home() {
     return { mode: 'direct', label: '⚪ Direct', color: 'text-white/60' };
   };
 
-  const figmaMode = getMcpConnectionMode(figmaOAuth ? "https://mcp.figma.com/mcp" : (figmaMcpUrl || ""));
+  const figmaMode = getMcpConnectionMode(figmaMcpUrl || (figmaOAuth ? "https://mcp.figma.com/mcp" : ""));
   const codeMode = getMcpConnectionMode(codeProjectPath || "");
 
   return (
@@ -756,10 +765,9 @@ export default function Home() {
               </div>
               <input
                 type="url"
-                value={figmaOAuth ? "https://mcp.figma.com/mcp" : figmaMcpUrl}
+                value={figmaMcpUrl}
                 onChange={(e) => setFigmaMcpUrl(e.target.value)}
                 placeholder="http://127.0.0.1:3845/mcp"
-                disabled={figmaOAuth}
                 className="w-full bg-white/5 border border-white/10 rounded-md px-3 py-2 text-sm text-white placeholder:text-white/20 focus:outline-none focus:border-white/30 disabled:opacity-50 disabled:cursor-not-allowed"
               />
               <div className="flex items-center gap-1.5 mt-1.5">
@@ -798,7 +806,6 @@ export default function Home() {
                 </div>
               ) : (
                 <button
-                  disabled={true}
                   title="OAuth is currently disabled Due to limitation of Figma MCP server"
                   onClick={async () => {
                     // Set auth token cookie before OAuth redirect
@@ -835,6 +842,49 @@ export default function Home() {
                 </button>
               )}
             </div>
+
+{/* Southleft Figma Console */}
+<div className="mt-4 pt-4 border-t border-white/5">
+  <label className="block text-xs text-white/50 mb-2 font-medium">Figma Console (Southleft)</label>
+  {southleftOAuth ? (
+    <div className="flex items-center gap-2">
+      <div className="flex-1 flex items-center gap-1.5 bg-emerald-500/10 border border-emerald-500/20 rounded-md px-3 py-2">
+        <div className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+        <span className="text-xs text-emerald-300">Connected via OAuth</span>
+      </div>
+      <button
+        onClick={() => {
+          fetch("/api/auth/southleft-mcp/status", {
+            method: "DELETE",
+            headers: {
+              "X-Auth-Token": tunnelSecret || "",
+            },
+          }).then(() => setSouthleftOAuth(false));
+        }}
+        className="px-2 py-2 text-xs text-red-400 hover:bg-red-500/10 rounded-md transition-colors cursor-pointer"
+      >
+        Disconnect
+      </button>
+    </div>
+  ) : (
+    <button
+      onClick={async () => {
+        if (tunnelSecret) {
+          await fetch("/api/auth/set-token", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ token: tunnelSecret }),
+          });
+        }
+        window.location.href = "/api/auth/southleft-mcp";
+      }}
+      className="w-full text-center bg-gradient-to-r from-purple-600/20 to-pink-600/20 border border-purple-500/30 hover:from-purple-600/30 hover:to-pink-600/30 rounded-md px-3 py-2.5 text-sm text-purple-300 font-medium transition-all hover:shadow-lg"
+    >
+      🎛️ Sign in with Figma Console
+    </button>
+  )}
+  <span className="text-xs text-white/30 mt-1 block">Alternative MCP server</span>
+</div>
 
            {/*  <div>
               <label className="block text-xs text-white/50 mb-1">

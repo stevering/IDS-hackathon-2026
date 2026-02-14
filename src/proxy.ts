@@ -10,6 +10,9 @@ const PUBLIC_AUTH_ROUTES = [
   "/api/auth/figma-mcp/callback",
   "/api/auth/figma-mcp/register",
   "/api/auth/figma-mcp/status",
+  "/api/auth/southleft-mcp",
+  "/api/auth/southleft-mcp/callback",
+  "/api/auth/southleft-mcp/status",
 ];
 
 function getMcpCodeUrl(request: NextRequest): string | undefined {

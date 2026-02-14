@@ -8,6 +8,11 @@ import {
   MCP_FIGMA_SERVER_URL,
   COOKIE_TOKENS,
 } from "@/lib/figma-mcp-oauth";
+import {
+  createSouthleftMcpOAuthProvider,
+  SOUTHLEFT_MCP_URL,
+  SOUTHLEFT_COOKIE_TOKENS,
+} from "@/lib/southleft-mcp-oauth";
 
 export const maxDuration = 300; // 5 minutes pour éviter timeout Cloudflare
 export const dynamic = 'force-dynamic';
@@ -411,6 +416,31 @@ async function connectMCPs(
       console.error("[Figma] MCP connection failed:", msg);
       mcpErrors.push(`Figma MCP connection failed: ${msg}`);
     }
+  }
+
+  // Connecter Figma Console MCP (southleft - version en ligne, nécessite OAuth)
+  const figmaConsoleMcpUrl = `${SOUTHLEFT_MCP_URL}/sse`;
+  try {
+    const cookieStoreForSouthleft = await cookies();
+    const southleftTokensRaw = cookieStoreForSouthleft.get(SOUTHLEFT_COOKIE_TOKENS)?.value;
+
+    if (southleftTokensRaw) {
+      console.log("[FigmaConsole] Connecting with OAuth to:", figmaConsoleMcpUrl);
+      const southleftProvider = createSouthleftMcpOAuthProvider(cookieStoreForSouthleft);
+      const { tools } = await getOrConnectWithAuth(figmaConsoleMcpUrl, "FigmaConsole", southleftProvider);
+      const prefixedTools = Object.fromEntries(
+        Object.entries(tools).map(([name, tool]) => [`figmaconsole_${name}`, tool])
+      );
+      Object.assign(allTools, wrapToolsWithRetry(prefixedTools, figmaConsoleMcpUrl, "FigmaConsole", {}));
+      console.log("[FigmaConsole] Connected successfully");
+    } else {
+      console.log("[FigmaConsole] No OAuth tokens found — skipping (user needs to sign in via Figma Console button)");
+      mcpErrors.push("Figma Console MCP: not authenticated. Click 'Sign in with Figma Console' in the settings panel.");
+    }
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
+    console.error("[FigmaConsole] MCP connection failed:", msg);
+    mcpErrors.push(`Figma Console MCP connection failed: ${msg}`);
   }
 
   // Connecter Code MCP si URL fournie

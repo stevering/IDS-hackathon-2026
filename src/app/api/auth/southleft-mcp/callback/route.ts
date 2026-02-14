@@ -1,0 +1,68 @@
+import { NextRequest, NextResponse } from "next/server";
+import { cookies } from "next/headers";
+import { auth } from "@ai-sdk/mcp";
+import {
+  createSouthleftMcpOAuthProvider,
+  SOUTHLEFT_COOKIE_STATE,
+  SOUTHLEFT_COOKIE_CODE_VERIFIER,
+  SOUTHLEFT_MCP_URL,
+} from "@/lib/southleft-mcp-oauth";
+import { getBaseUrl } from "@/lib/figma-mcp-oauth";
+
+export async function GET(request: NextRequest) {
+  const url = new URL(request.url);
+  const code = url.searchParams.get("code");
+  const state = url.searchParams.get("state");
+
+  if (!code || !state) {
+    return NextResponse.json({ error: "Missing code or state" }, { status: 400 });
+  }
+
+  const cookieStore = await cookies();
+  const savedState = cookieStore.get(SOUTHLEFT_COOKIE_STATE)?.value;
+
+  if (!savedState || savedState !== state) {
+    console.error("[Southleft MCP OAuth Callback] State mismatch:", {
+      savedState,
+      state,
+      host: request.headers.get("host"),
+    });
+    return NextResponse.json({
+      error: "Invalid state",
+      details: { savedState: savedState || "missing", receivedState: state || "missing" },
+    }, { status: 400 });
+  }
+
+  const pendingCookies: Array<{ name: string; value: string; options: Record<string, unknown> }> = [];
+
+  const provider = createSouthleftMcpOAuthProvider(
+    cookieStore,
+    (name, value, options) => {
+      pendingCookies.push({ name, value, options });
+    },
+  );
+
+  try {
+    await auth(provider, {
+      serverUrl: new URL(SOUTHLEFT_MCP_URL),
+      authorizationCode: code,
+      scope: "file_content:read,library_content:read,file_variables:read",
+    });
+
+    const baseUrl = getBaseUrl();
+    const response = NextResponse.redirect(new URL("/", baseUrl));
+
+    for (const c of pendingCookies) {
+      response.cookies.set(c.name, c.value, c.options as Parameters<typeof response.cookies.set>[2]);
+    }
+
+    response.cookies.delete(SOUTHLEFT_COOKIE_STATE);
+    response.cookies.delete(SOUTHLEFT_COOKIE_CODE_VERIFIER);
+
+    return response;
+  } catch (error) {
+    console.error("[Southleft MCP OAuth Callback] Error:", error);
+    const baseUrl = getBaseUrl();
+    return NextResponse.redirect(new URL("/?error=southleft_mcp_auth_failed", baseUrl));
+  }
+}
