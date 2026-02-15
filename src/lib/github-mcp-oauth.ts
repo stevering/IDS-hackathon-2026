@@ -30,9 +30,17 @@ export function createGithubMcpOAuthProvider(
   return {
     get redirectUrl() {
       return getGithubRedirectUrl();
+        },
+
+    get clientMetadata() {
+      return {
+        client_name: "DS AI Guardian",
+        redirect_uris: [getGithubRedirectUrl()],
+        grant_types: ["authorization_code", "refresh_token"],
+        response_types: ["code"],
+        token_endpoint_auth_method: "none",
+      };
     },
-
-
 
     async tokens(): Promise<OAuthTokens | undefined> {
       const raw = cookieStore.get(COOKIE_TOKENS)?.value;
