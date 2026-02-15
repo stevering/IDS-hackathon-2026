@@ -88,7 +88,7 @@ function DetailsBlock({ text, isStreaming }: { text: string; isStreaming: boolea
       </button>
       {open && (
         <div className="mt-2 px-3 py-3 rounded-md bg-white/[0.03] border border-white/5 text-sm overflow-x-auto markdown-body">
-          <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]}>{text}</ReactMarkdown>
+          <ReactMarkdown remarkPlugins={[remarkGfm/*, remarkBreaks*/]}>{text}</ReactMarkdown>
           <div ref={detailsEndRef} />
         </div>
       )}
@@ -1154,7 +1154,7 @@ export default function Home() {
                                   );
                                 }
                                 return (
-                                  <ReactMarkdown key={j} remarkPlugins={[remarkGfm, remarkBreaks]}>
+                                  <ReactMarkdown key={j} remarkPlugins={[remarkGfm/*, remarkBreaks*/]}>
                                     {seg.content}
                                   </ReactMarkdown>
                                 );
