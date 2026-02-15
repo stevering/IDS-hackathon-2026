@@ -14,6 +14,12 @@ import {
   SOUTHLEFT_COOKIE_TOKENS,
 } from "@/lib/southleft-mcp-oauth";
 
+import {
+  createGithubMcpOAuthProvider,
+  GITHUB_MCP_URL,
+  GITHUB_COOKIE_TOKENS,
+} from "@/lib/github-mcp-oauth";
+
 export const maxDuration = 300; // 5 minutes pour éviter timeout Cloudflare
 export const dynamic = 'force-dynamic';
 
@@ -443,6 +449,35 @@ async function connectMCPs(
     mcpErrors.push(`Figma Console MCP connection failed: ${msg}`);
   }
 
+  // Connecter GitHub MCP (online OAuth) — HTTP transport (no /sse)
+  const githubMcpUrl = GITHUB_MCP_URL;
+  try {
+    const cookieStoreForGithub = await cookies();
+    const githubTokensRaw = cookieStoreForGithub.get(GITHUB_COOKIE_TOKENS)?.value;
+
+    if (githubTokensRaw) {
+      console.log("[GitHub] Connecting with OAuth to:", githubMcpUrl);
+      const githubProvider = createGithubMcpOAuthProvider(cookieStoreForGithub);
+      const tokens = await githubProvider.tokens();
+      console.log("[GitHub DEBUG] tokens:", tokens);
+      const clientInfo = await githubProvider.clientInformation();
+      console.log("[GitHub DEBUG] clientInfo:", clientInfo);
+      const { tools } = await getOrConnectWithAuth(githubMcpUrl, "GitHub", githubProvider);
+      const prefixedTools = Object.fromEntries(
+        Object.entries(tools).map(([name, tool]) => [`github_${name}`, tool])
+      );
+      Object.assign(allTools, wrapToolsWithRetry(prefixedTools, githubMcpUrl, "GitHub", {}));
+      console.log("[GitHub] Connected successfully");
+    } else {
+      console.log("[GitHub] No OAuth tokens found — skipping (user needs to sign in via GitHub button)");
+      mcpErrors.push("GitHub MCP: not authenticated. Click 'Sign in with GitHub' in the settings panel.");
+    }
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
+    console.error("[GitHub] MCP connection failed:", msg);
+    mcpErrors.push(`GitHub MCP connection failed: ${msg}`);
+  }
+
   // Connecter Code MCP si URL fournie
   if (resolvedCodeProjectPath) {
     try {
@@ -507,24 +542,53 @@ CRITICAL RULES:
 - Always start from this URL when the user asks about the current selection.`;
   }
 
-  // Lancer la connexion MCP en arrière-plan (ne pas await)
-  const mcpConnectionPromise = connectMCPs(
-    figmaMcpUrl,
-    figmaAccessToken,
-    resolvedCodeProjectPath,
-    figmaOAuth,
-    tunnelSecret,
-    mcpCodeUrlHeader
-  );
+  // Await MCP connections synchronously (max 120s timeout)
+  const mcpResult = await Promise.race([
+    connectMCPs(
+      figmaMcpUrl,
+      figmaAccessToken,
+      resolvedCodeProjectPath,
+      figmaOAuth,
+      tunnelSecret,
+      mcpCodeUrlHeader
+    ),
+    new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error("MCP connection global timeout")), 120_000)
+    )
+  ]);
 
-  // Créer et retourner le stream avec keepalive
-  const stream = createKeepaliveStream(mcpConnectionPromise, modelMessages, system, model || "grok-4-1-fast-reasoning");
+  const { allTools, mcpErrors } = mcpResult;
 
-  return new Response(stream, {
-    headers: {
-      "Content-Type": "text/event-stream",
-      "Cache-Control": "no-cache",
-      "Connection": "keep-alive",
+  // Augment system prompt with MCP status (model will display it)
+  let augmentedSystem = system;
+  if (mcpErrors.length > 0) {
+    augmentedSystem += `\n\n[MCP_ERROR_BLOCK]\n${mcpErrors.join('\n')}\n[/MCP_ERROR_BLOCK]`;
+  }
+  augmentedSystem += `\n\n[MCP_STATUS:connected]`;
+  if (Object.keys(allTools).length > 0) {
+    augmentedSystem += `\n✅ Available MCP tools (${Object.keys(allTools).length}): ${Object.keys(allTools).join(', ')}`;
+  } else {
+    augmentedSystem += '\n⚠️ No MCP tools available';
+  }
+  console.log('[Chat] System augmented with', Object.keys(allTools).length, 'tools and', mcpErrors.length, 'errors');
+
+  // Standard AI SDK UI stream (compatible with useChat)
+  return streamText({
+    model: xai.responses(model === "grok-4-1-fast-non-reasoning" ? "grok-4-1-fast-non-reasoning" : "grok-4-1-fast-reasoning"),
+    system: augmentedSystem,
+    messages: modelMessages,
+    tools: {
+      ...allTools,
+      web_search: xai.tools.webSearch(),
+    } as Parameters<typeof streamText>[0]["tools"],
+    stopWhen: stepCountIs(10),
+    onStepFinish: (step) => {
+      if (step.toolCalls.length > 0) {
+        console.log("[Chat] Tool calls:", step.toolCalls.map(t => t));
+      }
+      if (step.toolResults.length > 0) {
+        console.log("[Chat] Tool results:", step.toolResults.map(t => t));
+      }
     },
-  });
+  }).toUIMessageStreamResponse();
 }

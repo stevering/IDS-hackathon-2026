@@ -13,6 +13,10 @@ const PUBLIC_AUTH_ROUTES = [
   "/api/auth/southleft-mcp",
   "/api/auth/southleft-mcp/callback",
   "/api/auth/southleft-mcp/status",
+  "/api/auth/github-mcp",
+  "/api/auth/github-mcp/callback",
+  "/api/auth/github-mcp/status",
+  "/api/auth/set-token",
 ];
 
 function getMcpCodeUrl(request: NextRequest): string | undefined {

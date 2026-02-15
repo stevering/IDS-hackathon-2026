@@ -574,6 +574,7 @@ export default function Home() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [figmaOAuth, setFigmaOAuth] = useState(false);
   const [southleftOAuth, setSouthleftOAuth] = useState(false);
+  const [githubOAuth, setGithubOAuth] = useState(false);
   const [input, setInput] = useState("");
   const [selectedModel, setSelectedModel] = useState<"grok-4-1-fast-reasoning" | "grok-4-1-fast-non-reasoning">("grok-4-1-fast-non-reasoning");
   const [selectedNode, setSelectedNode] = useState<string | null>(null);
@@ -678,7 +679,16 @@ export default function Home() {
       .then((r) => r.json())
       .then((d) => setSouthleftOAuth(d.connected))
       .catch(() => {});
-  }, []);
+
+    fetch("/api/auth/github-mcp/status", {
+      headers: {
+        "X-Auth-Token": tunnelSecret || "",
+      },
+    })
+      .then((r) => r.json())
+      .then((d) => setGithubOAuth(d.connected))
+      .catch(() => {});
+  }, [tunnelSecret]);
 
   useEffect(() => {
     if (shouldAutoScroll.current) {
@@ -922,6 +932,50 @@ export default function Home() {
                 </span>
               </div>
             </div>
+
+{/* GitHub MCP */}
+<div className="mt-4 pt-4 border-t border-white/5">
+  <label className="block text-xs text-white/50 mb-2 font-medium">GitHub MCP</label>
+  {githubOAuth ? (
+    <div className="flex items-center gap-2">
+      <div className="flex-1 flex items-center gap-1.5 bg-emerald-500/10 border border-emerald-500/20 rounded-md px-3 py-2">
+        <div className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+        <span className="text-xs text-emerald-300">Connected via OAuth</span>
+      </div>
+      <button
+        onClick={() => {
+          fetch("/api/auth/github-mcp/status", {
+            method: "DELETE",
+            headers: {
+              "X-Auth-Token": tunnelSecret || "",
+            },
+          }).then(() => setGithubOAuth(false));
+        }}
+        className="px-2 py-2 text-xs text-red-400 hover:bg-red-500/10 rounded-md transition-colors cursor-pointer"
+      >
+        Disconnect
+      </button>
+    </div>
+  ) : (
+    <button
+      onClick={async () => {
+        if (tunnelSecret) {
+          await fetch("/api/auth/set-token", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ token: tunnelSecret }),
+          });
+        }
+        window.location.href = "/api/auth/github-mcp";
+      }}
+      className="w-full text-center bg-gradient-to-r from-gray-600/20 to-black/20 border border-gray-500/30 hover:from-gray-600/30 hover:to-black/30 rounded-md px-3 py-2.5 text-sm text-gray-300 font-medium transition-all hover:shadow-lg"
+    >
+      🌐 Sign in with GitHub
+    </button>
+  )}
+  <span className="text-xs text-white/30 mt-1 block">GitHub repos MCP (online)</span>
+</div>
+
           </div>
 
           <div className="mt-6 p-3 bg-white/5 rounded-md">
