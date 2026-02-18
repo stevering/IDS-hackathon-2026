@@ -584,6 +584,33 @@ export default function Home() {
   const [tunnelSecret, setTunnelSecret] = useState(process.env.NEXT_PUBLIC_MCP_TUNNEL_SECRET);
   const [localFigmaMcpUrl, setLocalFigmaMcpUrl] = useState(process.env.NEXT_PUBLIC_LOCAL_MCP_FIGMA_URL || "");
   const [localCodeMcpUrl, setLocalCodeMcpUrl] = useState(process.env.NEXT_PUBLIC_LOCAL_MCP_CODE_URL || "");
+
+  // MCP Toggles - enabled/disabled state
+  const [enabledMcps, setEnabledMcps] = useState<Record<string, boolean>>({
+    figma: true,
+    figmaConsole: false,
+    github: false,
+    code: true,
+  });
+
+  // Load enabled MCPs from localStorage on mount
+  useEffect(() => {
+    const saved = localStorage.getItem('guardian-enabled-mcps');
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved);
+        setEnabledMcps(prev => ({ ...prev, ...parsed }));
+      } catch (e) {
+        console.error('Failed to parse enabled MCPs from localStorage:', e);
+      }
+    }
+  }, []);
+
+  // Save enabled MCPs to localStorage when changed
+  useEffect(() => {
+    localStorage.setItem('guardian-enabled-mcps', JSON.stringify(enabledMcps));
+  }, [enabledMcps]);
+
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
@@ -607,6 +634,8 @@ export default function Home() {
   localFigmaMcpUrlRef.current = localFigmaMcpUrl;
   const localCodeMcpUrlRef = useRef(localCodeMcpUrl);
   localCodeMcpUrlRef.current = localCodeMcpUrl;
+  const enabledMcpsRef = useRef(enabledMcps);
+  enabledMcpsRef.current = enabledMcps;
 
   useEffect(() => {
     const handleMessage = (event: MessageEvent) => {
@@ -646,7 +675,7 @@ export default function Home() {
           }
           return headers;
         },
-        body: () => ({ figmaMcpUrl: figmaMcpUrlRef.current || (figmaOAuthRef.current ? "https://mcp.figma.com/mcp" : ""), figmaAccessToken: figmaAccessTokenRef.current, codeProjectPath: codeProjectPathRef.current, figmaOAuth: figmaOAuthRef.current, model: selectedModelRef.current, selectedNode: selectedNodeRef.current, tunnelSecret: tunnelSecretRef.current }),
+        body: () => ({ figmaMcpUrl: figmaMcpUrlRef.current || (figmaOAuthRef.current ? "https://mcp.figma.com/mcp" : ""), figmaAccessToken: figmaAccessTokenRef.current, codeProjectPath: codeProjectPathRef.current, figmaOAuth: figmaOAuthRef.current, model: selectedModelRef.current, selectedNode: selectedNodeRef.current, tunnelSecret: tunnelSecretRef.current, enabledMcps: enabledMcpsRef.current }),
       }),
     [],
   );
@@ -758,6 +787,49 @@ export default function Home() {
           <h2 className="text-sm font-semibold text-white/60 uppercase tracking-wider mb-4">
             MCP Connections
           </h2>
+
+          {/* MCP Toggles */}
+          <div className="mb-4 p-3 bg-white/5 rounded-md border border-white/10">
+            <p className="text-xs text-white/50 mb-2 font-medium">Enable MCPs</p>
+            <div className="space-y-2">
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={enabledMcps.figma}
+                  onChange={() => setEnabledMcps(prev => ({ ...prev, figma: !prev.figma }))}
+                  className="w-4 h-4 rounded border-white/20 bg-white/5 text-violet-500 focus:ring-violet-500/50"
+                />
+                <span className="text-xs text-white/70">Figma MCP</span>
+              </label>
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={enabledMcps.figmaConsole}
+                  onChange={() => setEnabledMcps(prev => ({ ...prev, figmaConsole: !prev.figmaConsole }))}
+                  className="w-4 h-4 rounded border-white/20 bg-white/5 text-violet-500 focus:ring-violet-500/50"
+                />
+                <span className="text-xs text-white/70">Figma Console (Southleft)</span>
+              </label>
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={enabledMcps.github}
+                  onChange={() => setEnabledMcps(prev => ({ ...prev, github: !prev.github }))}
+                  className="w-4 h-4 rounded border-white/20 bg-white/5 text-violet-500 focus:ring-violet-500/50"
+                />
+                <span className="text-xs text-white/70">GitHub MCP</span>
+              </label>
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={enabledMcps.code}
+                  onChange={() => setEnabledMcps(prev => ({ ...prev, code: !prev.code }))}
+                  className="w-4 h-4 rounded border-white/20 bg-white/5 text-violet-500 focus:ring-violet-500/50"
+                />
+                <span className="text-xs text-white/70">Code MCP</span>
+              </label>
+            </div>
+          </div>
 
           <div className="space-y-4">
             <div>
@@ -1095,7 +1167,8 @@ export default function Home() {
                 {m.parts?.map((part, i) => {
                   if (part.type === "text") {
                     const isLastMsg = m === messages[messages.length - 1];
-                    const structuredSegments = parseStructuredContent(part.text, isLoading && isLastMsg);
+                    const cleanText = part.text.replace("[CONTINUATION_AVAILABLE]", "");
+                    const structuredSegments = parseStructuredContent(cleanText, isLoading && isLastMsg);
 
                     return (
                       <div key={i}>
@@ -1272,6 +1345,17 @@ export default function Home() {
                   return null;
                 })}
               </div>
+              {m === messages[messages.length - 1] && m.role === "assistant" && !isLoading && m.parts?.some(part => part.type === "text" && part.text.includes("[CONTINUATION_AVAILABLE]")) && (
+                <button
+                  onClick={() => {
+                    shouldAutoScroll.current = true;
+                    sendMessage({ text: "Continue your last truncated message" });
+                  }}
+                  className="mt-2 px-3 py-1.5 text-xs rounded-md bg-blue-600/20 hover:bg-blue-600/30 text-blue-300 hover:text-blue-200 transition-colors cursor-pointer"
+                >
+                  Continue the response
+                </button>
+              )}
             </div>
           ))}
 
