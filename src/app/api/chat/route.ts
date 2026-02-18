@@ -20,28 +20,29 @@ import {
   GITHUB_COOKIE_TOKENS,
 } from "@/lib/github-mcp-oauth";
 
-export const maxDuration = 300; // 5 minutes pour éviter timeout Cloudflare
+export const maxDuration = 300; // 5 minutes to avoid Cloudflare timeout
 export const dynamic = 'force-dynamic';
 
-// Augmenter la limite de taille du body pour l'API chat (20MB)
+// Increase the body size limit for the chat API (20MB)
 export const fetchCache = 'force-no-store';
 
 const TOOL_TIMEOUT_MS = 60_000;
 const CONNECTION_TIMEOUT_MS = 30_000;
 const MAX_AGE_MS = 2 * 60_000;
 const HEALTHCHECK_TIMEOUT_MS = 5_000;
-const STREAM_KEEPALIVE_MS = 5_000; // Envoyer un ping toutes les 5s pendant connexion MCP
+const STREAM_KEEPALIVE_MS = 5_000; // Send a ping every 5s during MCP connection
+const MAX_STEPS = 20; // Maximum number of steps for the stream (limit to prevent infinite loops)
 
 const encoder = new TextEncoder();
 
-// Fonction utilitaire pour encoder un message SSE au format AI SDK
+// Utility function to encode an SSE message in AI SDK format
 function encodeSSEMessage(type: string, data: Record<string, unknown>): string {
   return `data: ${JSON.stringify({ type, ...data })}
 
 `;
 }
 
-// Créer un stream de keepalive qui envoie des pings pendant la connexion MCP
+// Create a keepalive stream that sends pings during MCP connection
 function createKeepaliveStream(
   mcpConnectionPromise: Promise<{ allTools: Record<string, unknown>; mcpErrors: string[] }>,
   modelMessages: Awaited<ReturnType<typeof convertToModelMessages>>,
@@ -56,10 +57,10 @@ function createKeepaliveStream(
       let keepaliveInterval: NodeJS.Timeout | null = null;
       let isMcpReady = false;
 
-      // Démarrer le stream
+      // Start the stream
       controller.enqueue(encoder.encode(encodeSSEMessage("start", {})));
 
-      // Envoyer un message initial pour indiquer la connexion MCP
+      // Send an initial message to indicate MCP connection
       const statusId = `mcp-status-${Date.now()}`;
       controller.enqueue(encoder.encode(encodeSSEMessage("text-start", { id: statusId })));
       controller.enqueue(encoder.encode(encodeSSEMessage("text-delta", {
@@ -67,18 +68,18 @@ function createKeepaliveStream(
         delta: "[MCP_STATUS:connecting]"
       })));
 
-      // Fonction pour envoyer des pings de keepalive
+      // Function to send keepalive pings
       const sendKeepalive = () => {
         if (!isMcpReady && controller.desiredSize !== null) {
           controller.enqueue(encoder.encode(encodeSSEMessage("ping", { timestamp: Date.now() })));
         }
       };
 
-      // Démarrer les pings toutes les 5 secondes
+      // Start pings every 5 seconds
       keepaliveInterval = setInterval(sendKeepalive, STREAM_KEEPALIVE_MS);
 
       try {
-        // Attendre la connexion MCP avec un timeout global
+        // Wait for MCP connection with global timeout
         const mcpResult = await Promise.race([
           mcpConnectionPromise,
           new Promise<never>((_, reject) =>
@@ -91,15 +92,15 @@ function createKeepaliveStream(
 
         const { mcpErrors } = mcpResult;
 
-        // Mettre à jour le statut MCP
-        // Mettre à jour le statut MCP - faire disparaître le loader
+        // Update MCP status
+        // Update MCP status - hide the loader
         controller.enqueue(encoder.encode(encodeSSEMessage("text-delta", {
           id: statusId,
           delta: "[MCP_STATUS:connected]"
         })));
         controller.enqueue(encoder.encode(encodeSSEMessage("text-end", { id: statusId })));
 
-        // Si erreurs, les envoyer dans le format attendu par le client
+        // If errors, send them in the format expected by the client
         if (mcpErrors.length > 0) {
           console.log("[Chat] Sending MCP errors to client:", mcpErrors);
           const errorId = `mcp-error-${Date.now()}`;
@@ -112,7 +113,13 @@ function createKeepaliveStream(
           controller.enqueue(encoder.encode(encodeSSEMessage("text-end", { id: errorId })));
         }
 
-        // Maintenant démarrer streamText avec les outils MCP
+          // Promise to capture the exact stream result (finish reason and step count)
+          let streamFinishedResolve: (result: { finishReason: string; steps: { length: number } }) => void;
+          const streamFinishedPromise = new Promise<{ finishReason: string; steps: { length: number } }>((resolve) => {
+            streamFinishedResolve = resolve;
+          });
+
+          // Now start streamText with MCP tools
          const result = streamText({
            model: xai.responses(model === "grok-4-1-fast-non-reasoning" ? "grok-4-1-fast-non-reasoning" : "grok-4-1-fast-reasoning"),
            system,
@@ -121,47 +128,75 @@ function createKeepaliveStream(
              ...mcpResult.allTools,
              web_search: xai.tools.webSearch(),
            } as Parameters<typeof streamText>[0]["tools"],
-           stopWhen: stepCountIs(2),
+            stopWhen: stepCountIs(MAX_STEPS),
            onStepFinish: (step) => {
              if (step.toolCalls.length > 0) {
                console.log("[Chat] Tool calls:", step.toolCalls.map(t => t));
              }
              if (step.toolResults.length > 0) {
-               console.log("[Chat] Tool results:", step.toolResults.map(t => t));
+               console.log("[Chat] Tool results:", step.toolCalls.map(t => t));
              }
            },
            onFinish: (result) => {
-             console.log("[Chat] Keepalive stream finished with reason:", result.finishReason);
-             if (result.finishReason === 'stop' && result.steps.length >= 2) {
-               console.warn("[Chat] Keepalive stream stopped due to max steps (20) - response may be truncated");
-             }
+              console.log("[Chat] Keepalive stream finished with reason:", result.finishReason);
+              if (result.finishReason === 'stop' && result.steps.length >= MAX_STEPS) {
+                console.warn(`[Chat] Keepalive stream stopped due to max steps (${MAX_STEPS}) - response may be truncated`);
+              }
+             console.log("[Chat] Keepalive stream finished with reason:", result.finishReason, "steps:", result.steps.length);
+             streamFinishedResolve({ finishReason: result.finishReason, steps: result.steps });
            },
          });
 
-        // Pipe le stream de streamText vers notre controller
-        const aiStream = result.toUIMessageStreamResponse().body;
-        if (aiStream) {
-          const reader = aiStream.getReader();
-          try {
-            while (true) {
-              const { done, value } = await reader.read();
-              if (done) break;
-              controller.enqueue(value);
-            }
-          } finally {
-            reader.releaseLock();
-          }
-        }
+          // Pipe the streamText stream to our controller
+          const aiStream = result.toUIMessageStreamResponse().body;
+          if (aiStream) {
+            const reader = aiStream.getReader();
+            let lastTextDeltaId: string | null = null;
+            try {
+              while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+                const text = new TextDecoder().decode(value);
 
-      } catch (error) {
-        // Erreur de connexion MCP
+                // Track the last text-delta id to inject marker if needed
+                if (text.includes('"type":"text-delta"')) {
+                  const match = text.match(/"id":"([^"]+)"/);
+                  if (match) lastTextDeltaId = match[1];
+                }
+
+                controller.enqueue(value);
+              }
+            } finally {
+              reader.releaseLock();
+            }
+
+            // Wait for the exact stream result to detect step limit
+           const streamResult = await streamFinishedPromise;
+            const hitStepLimit = streamResult.finishReason === 'stop' && streamResult.steps.length >= MAX_STEPS;
+           
+           if (hitStepLimit && lastTextDeltaId) {
+             console.log("[Chat] Step limit reached (", streamResult.steps.length, "steps), adding continuation marker");
+             const contId = "continuation_3f77d6f2-09a6-bd03-7bc8-286d72bd0f9f";
+             const markerStart = encoder.encode(`data: ${JSON.stringify({ type: "text-start", id: contId })}\n\n`);
+             const markerDelta = encoder.encode(`data: ${JSON.stringify({ type: "text-delta", id: contId, delta: "[CONTINUATION_AVAILABLE]" })}\n\n`);
+             const markerEnd = encoder.encode(`data: ${JSON.stringify({ type: "text-end", id: contId })}\n\n`);
+             controller.enqueue(markerStart);
+             controller.enqueue(markerDelta);
+             controller.enqueue(markerEnd);
+             controller.enqueue(encoder.encode(`data: [DONE]\n\n`));
+             console.log("[Chat] Added CONTINUATION_AVAILABLE marker and [DONE]");
+           }
+          }
+
+       } catch (error) {
+        // MCP connection error
         if (keepaliveInterval) clearInterval(keepaliveInterval);
 
         const errorMsg = error instanceof Error ? error.message : String(error);
         console.error("[Chat] MCP connection failed:", errorMsg);
 
         controller.enqueue(encoder.encode(encodeSSEMessage("text", {
-          content: `❌ Erreur de connexion MCP: ${errorMsg}`
+          content: `❌ MCP connection error: ${errorMsg}`
         })));
         controller.enqueue(encoder.encode(encodeSSEMessage("finish", { finishReason: "error" })));
 
@@ -171,7 +206,7 @@ function createKeepaliveStream(
     },
 
     cancel() {
-      // Nettoyage si le client ferme la connexion
+      // Cleanup if the client closes the connection
       console.log("[Chat] Stream cancelled by client");
     }
   });
@@ -211,7 +246,7 @@ const mcpClients = globalCache.__mcpClients;
 
 async function healthcheckMCP(client: MCPClient, label: string): Promise<boolean> {
   try {
-    // Vérifier que le client peut lister les outils (ping léger)
+    // Check that the client can list tools (lightweight ping)
     await withTimeout(
       client.tools(),
       HEALTHCHECK_TIMEOUT_MS,
@@ -254,7 +289,7 @@ async function evict(url: string) {
 async function getOrConnect(url: string, label: string, headers?: Record<string, string>): Promise<CachedMCP> {
   const cached = mcpClients.get(url);
 
-  // Si on a un cache, vérifier qu'il est toujours valide avec un healthcheck
+  // If we have a cache, verify it's still valid with a healthcheck
   if (cached) {
     const isHealthy = await healthcheckMCP(cached.client, label);
     if (isHealthy && Date.now() - cached.connectedAt < MAX_AGE_MS) {
@@ -290,7 +325,7 @@ async function connectMCPWithAuth(url: string, label: string, authProvider: impo
 async function getOrConnectWithAuth(url: string, label: string, authProvider: import("@ai-sdk/mcp").OAuthClientProvider, headers?: Record<string, string>): Promise<CachedMCP> {
   const cached = mcpClients.get(url);
 
-  // Si on a un cache, vérifier qu'il est toujours valide avec un healthcheck
+  // If we have a cache, verify it's still valid with a healthcheck
   if (cached) {
     const isHealthy = await healthcheckMCP(cached.client, label);
     if (isHealthy && Date.now() - cached.connectedAt < MAX_AGE_MS) {
@@ -363,7 +398,7 @@ function wrapToolsWithRetry(tools: Record<string, any>, url: string, label: stri
   return wrapped;
 }
 
-// Fonction pour connecter les MCPs en parallèle et retourner les outils
+// Function to connect MCPs in parallel and return the tools
 async function connectMCPs(
   figmaMcpUrl: string | undefined,
   figmaAccessToken: string | undefined,
@@ -376,7 +411,7 @@ async function connectMCPs(
   const allTools: Record<string, unknown> = {};
   const mcpErrors: string[] = [];
 
-  // Connecter Figma MCP si activé et URL fournie
+  // Connect Figma MCP if enabled and URL provided
   if (enabledMcps.figma !== false && figmaMcpUrl) {
     try {
       const cookieStore = await cookies();
@@ -433,7 +468,7 @@ async function connectMCPs(
     }
   }
 
-  // Connecter Figma Console MCP (southleft - version en ligne, nécessite OAuth) si activé
+  // Connect Figma Console MCP (southleft - online version, requires OAuth) if enabled
   if (enabledMcps.figmaConsole) {
   const figmaConsoleMcpUrl = `${SOUTHLEFT_MCP_URL}/sse`;
   try {
@@ -458,9 +493,9 @@ async function connectMCPs(
     console.error("[FigmaConsole] MCP connection failed:", msg);
     mcpErrors.push(`Figma Console MCP connection failed: ${msg}`);
   }
-  } // Fin du if enabledMcps.figmaConsole
+  } // End of if enabledMcps.figmaConsole
 
-  // Connecter GitHub MCP (online OAuth) — HTTP transport (no /sse) si activé
+  // Connect GitHub MCP (online OAuth) — HTTP transport (no /sse) if enabled
   if (enabledMcps.github) {
   const githubMcpUrl = GITHUB_MCP_URL;
   try {
@@ -489,9 +524,9 @@ async function connectMCPs(
     console.error("[GitHub] MCP connection failed:", msg);
     mcpErrors.push(`GitHub MCP connection failed: ${msg}`);
   }
-  } // Fin du if enabledMcps.github
+  } // End of if enabledMcps.github
 
-  // Connecter Code MCP si activé et URL fournie
+  // Connect Code MCP if enabled and URL provided
   if (enabledMcps.code !== false && resolvedCodeProjectPath) {
     try {
       const codeHeaders: Record<string, string> = {};
@@ -523,27 +558,27 @@ async function connectMCPs(
 export async function POST(req: Request) {
   const { messages, figmaMcpUrl, figmaAccessToken, codeProjectPath, figmaOAuth, model, selectedNode, tunnelSecret, enabledMcps } = await req.json();
 
-  // Récupérer le header X-MCP-Code-URL pour résoudre les URLs relatives du proxy
+  // Get X-MCP-Code-URL header to resolve relative proxy URLs
   console.log("[Header] X-MCP-Code-URL:", req.headers.get("X-MCP-Code-URL"));
   console.log("[Code] codeProjectPath from body:", codeProjectPath);
   const mcpCodeUrlHeader = req.headers.get("X-MCP-Code-URL");
   console.log("[POST] mcpCodeUrlHeader value:", mcpCodeUrlHeader);
   let resolvedCodeProjectPath = codeProjectPath;
 
-  // Le header X-MCP-Code-URL est utilisé par le proxy pour forwarder vers la bonne URL
-  // Mais la connexion se fait toujours via codeProjectPath (qui est l'URL du proxy)
+  // The X-MCP-Code-URL header is used by the proxy to forward to the correct URL
+  // But the connection always happens via codeProjectPath (which is the proxy URL)
   if (resolvedCodeProjectPath) {
     console.log("[Code] Using codeProjectPath from body:", resolvedCodeProjectPath);
   } else if (mcpCodeUrlHeader) {
-    // Fallback: si pas de codeProjectPath, utiliser le header directement
+    // Fallback: if no codeProjectPath, use the header directly
     resolvedCodeProjectPath = mcpCodeUrlHeader;
     console.log("[Code] Using X-MCP-Code-URL header as fallback:", resolvedCodeProjectPath);
   }
 
-  // Préparer les messages pour le modèle
+  // Prepare messages for the model
   const modelMessages = await convertToModelMessages(messages);
 
-  // Construire le system prompt
+  // Build the system prompt
   let system = GUARDIAN_SYSTEM_PROMPT;
   if (selectedNode) {
     system += `\n\n### SELECTED FIGMA NODE (from host application — HIGHEST PRIORITY)
@@ -555,118 +590,27 @@ CRITICAL RULES:
 - Always start from this URL when the user asks about the current selection.`;
   }
 
-  // Await MCP connections synchronously (max 120s timeout)
-  const mcpResult = await Promise.race([
-    connectMCPs(
-      figmaMcpUrl,
-      figmaAccessToken,
-      resolvedCodeProjectPath,
-      figmaOAuth,
-      tunnelSecret,
-      mcpCodeUrlHeader,
-      enabledMcps || { figma: true, figmaConsole: false, github: false, code: true }
-    ),
-    new Promise<never>((_, reject) =>
-      setTimeout(() => reject(new Error("MCP connection global timeout")), 120_000)
-    )
-  ]);
+  // Create MCP connection promise (async - non blocking)
+  const mcpConnectionPromise = connectMCPs(
+    figmaMcpUrl,
+    figmaAccessToken,
+    resolvedCodeProjectPath,
+    figmaOAuth,
+    tunnelSecret,
+    mcpCodeUrlHeader,
+    enabledMcps || { figma: true, figmaConsole: false, github: false, code: true }
+  );
 
-  const { allTools, mcpErrors } = mcpResult;
-
-  // Augment system prompt with MCP status (model will display it)
-  let augmentedSystem = system;
-  if (mcpErrors.length > 0) {
-    augmentedSystem += `\n\n[MCP_ERROR_BLOCK]\n${mcpErrors.join('\n')}\n[/MCP_ERROR_BLOCK]`;
-  }
-  augmentedSystem += `\n\n[MCP_STATUS:connected]`;
-  if (Object.keys(allTools).length > 0) {
-    augmentedSystem += `\n✅ Available MCP tools (${Object.keys(allTools).length}): ${Object.keys(allTools).join(', ')}`;
-  } else {
-    augmentedSystem += '\n⚠️ No MCP tools available';
-  }
-  console.log('[Chat] System augmented with', Object.keys(allTools).length, 'tools and', mcpErrors.length, 'errors');
-
-  // Standard AI SDK UI stream (compatible with useChat)
-  let hitStepLimit = false;
-  const result = streamText({
-    model: xai.responses(model === "grok-4-1-fast-non-reasoning" ? "grok-4-1-fast-non-reasoning" : "grok-4-1-fast-reasoning"),
-    system: augmentedSystem,
-    messages: modelMessages,
-    tools: {
-      ...allTools,
-      web_search: xai.tools.webSearch(),
-    } as Parameters<typeof streamText>[0]["tools"],
-    stopWhen: stepCountIs(2),
-    onStepFinish: (step) => {
-      if (step.toolCalls.length > 0) {
-        console.log("[Chat] Tool calls:", step.toolCalls.map(t => t));
-      }
-      if (step.toolResults.length > 0) {
-        console.log("[Chat] Tool results:", step.toolCalls.map(t => t));
-      }
-    },
-    onFinish: (res) => {
-      console.log("[Chat] Stream finished with reason:", res.finishReason, "steps:", res.steps.length);
-      // If we stopped at exactly 2 steps, we likely hit the limit
-      if (res.finishReason === 'stop' && res.steps.length >= 2) {
-        hitStepLimit = true;
-        console.warn("[Chat] Stream stopped due to max steps (2) - response may be truncated");
-      }
-    },
-  });
-  const originalResponse = result.toUIMessageStreamResponse();
-  if (!originalResponse.body) throw new Error("No response body");
-  const newBody = new ReadableStream({
-    async start(controller) {
-      /*
-      // Envoyer les messages MCP au début du stream
-      const statusId = `mcp-status-${Date.now()}`;
-      controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: "text-start", id: statusId })}\n\n`));
-      controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: "text-delta", id: statusId, delta: "[MCP_STATUS:connected]" })}\n\n`));
-      controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: "text-end", id: statusId })}\n\n`));
-      
-      // Si erreurs MCP, les envoyer
-      if (mcpErrors.length > 0) {
-        const errorId = `mcp-error-${Date.now()}`;
-        const errorText = mcpErrors.join("\n");
-        controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: "text-start", id: errorId })}\n\n`));
-        controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: "text-delta", id: errorId, delta: `\n\n[MCP_ERROR_BLOCK]${errorText}[/MCP_ERROR_BLOCK]\n\n` })}\n\n`));
-        controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: "text-end", id: errorId })}\n\n`));
-      }
-      */
-      const reader = (originalResponse.body as ReadableStream).getReader();
-      let shouldAddMarker = false;
-      let lastTextDeltaId: string | null = null;
-      try {
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          const text = new TextDecoder().decode(value);
-          // Check if this chunk contains finish + stop
-          if (text.includes('data:') && text.includes('"finishReason":"stop"')) {
-            shouldAddMarker = true;
-          }
-          // Track last text-delta id
-          if (text.includes('"type":"text-delta"')) {
-            const match = text.match(/"id":"([^"]+)"/);
-            if (match) lastTextDeltaId = match[1];
-          }
-          // If this is [DONE] and we need marker, inject it before
-          if (text.trim() === 'data: [DONE]' && shouldAddMarker && lastTextDeltaId) {
-            const contId = "continuation_3f77d6f2-09a6-bd03-7bc8-286d72bd0f9f";
-            const start = "data: " + JSON.stringify({ type: "text-start", id: contId }) + "\n\n";
-            const marker = "data: " + JSON.stringify({ type: "text-delta", id: contId, delta: "[CONTINUATION_AVAILABLE]" }) + "\n\n";
-            const end = "data: " + JSON.stringify({ type: "text-end", id: contId }) + "\n\n";
-            controller.enqueue(encoder.encode(start + marker + end));
-          }
-          controller.enqueue(value);
-        }
-      } catch (e) {
-        controller.error(e);
-      } finally {
-        controller.close();
-      }
+  // Use keepalive stream for async MCP connection with live feedback
+  console.log('[Chat] Starting async keepalive stream for MCP connection');
+  return new Response(
+    createKeepaliveStream(mcpConnectionPromise, modelMessages, system, model || "grok-4-1-fast-non-reasoning"),
+    {
+      headers: {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache',
+        'Connection': 'keep-alive',
+      },
     }
-  });
-  return new Response(newBody, { headers: originalResponse.headers });
+  );
 }
