@@ -6,6 +6,10 @@
           {
             "key": "X-Frame-Options",
             "value": "ALLOW-FROM https://www.figma.com"
+          },
+          {
+            "key": "Content-Security-Policy",
+            "value": "frame-ancestors 'self' https://www.figma.com"
           }
         ]
       }
