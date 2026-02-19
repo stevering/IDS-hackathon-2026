@@ -420,30 +420,60 @@ function ToolCallProgress({ toolName }: { toolName: string }) {
 }
 
 function MCPStatusBlock({ status }: { status: "connecting" | "connected" | "error" }) {
-  if (status === "connected") return null; // Ne rien afficher une fois connecté
+  const [phase, setPhase] = useState<'mounting' | 'entering' | 'entered' | 'exiting' | 'unmounted'>('mounting');
+  const [localStatus, setLocalStatus] = useState<"connecting" | "error">(status as any);
+  const mountTimeRef = useRef(Date.now());
 
-  const isError = status === "error";
+  useEffect(() => {
+    if (status === "connected") {
+      const totalDisplayMin = 1500; // Min 1.5s visible
+      const elapsed = Date.now() - mountTimeRef.current;
+      const delayHide = Math.max(0, totalDisplayMin - elapsed);
+      const timer = setTimeout(() => {
+        setPhase('exiting');
+        const fadeTimer = setTimeout(() => setPhase('unmounted'), 400);
+        return () => clearTimeout(fadeTimer);
+      }, delayHide);
+      return () => clearTimeout(timer);
+    } else {
+      // Fade in sequence
+      setPhase('entering');
+      setTimeout(() => setPhase('entered'), 150); // Fade in 150ms
+      setLocalStatus(status);
+      mountTimeRef.current = Date.now();
+    }
+  }, [status]);
+
+  if (phase === 'unmounted' || phase === 'mounting') return null;
+
+  const isError = localStatus === "error";
+  const isEntering = phase === 'entering';
+  const isExiting = phase === 'exiting';
+
+  const transformClass = isEntering ? 'opacity-0 scale-95 translate-y-4' : 
+                          isExiting ? 'opacity-0 scale-95 translate-y-2' : 
+                          'opacity-100 scale-100 translate-y-0';
 
   return (
-    <div className={`my-3 p-3 rounded-lg border ${isError ? "bg-red-500/5 border-red-500/20" : "bg-blue-500/5 border-blue-500/20"}`}>
+    <div className={`my-3 p-3 rounded-lg border transition-all duration-400 ease-out ${transformClass} ${isError ? "bg-red-500/5 border-red-500/20" : "bg-blue-500/5 border-blue-500/20"}`}>
       <div className="flex items-center gap-3">
         {isError ? (
-          <svg className="h-5 w-5 text-red-400/70 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+          <svg className={`h-5 w-5 ${isEntering || isExiting ? 'opacity-70' : ''} text-red-400/70 shrink-0 transition-opacity`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
             <circle cx="12" cy="12" r="10" />
             <line x1="12" y1="8" x2="12" y2="12" />
             <line x1="12" y1="16" x2="12.01" y2="16" />
           </svg>
         ) : (
-          <svg className="animate-spin h-5 w-5 text-blue-400/70 shrink-0" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+          <svg className={`animate-spin h-5 w-5 text-blue-400/70 shrink-0 transition-opacity ${isExiting ? "opacity-50" : ""}`} xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
             <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
             <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
           </svg>
         )}
         <div className="flex-1">
-          <h4 className={`text-sm font-medium ${isError ? "text-red-300/90" : "text-blue-300/90"}`}>
+          <h4 className={`text-sm font-medium transition-all duration-300 ${isError ? "text-red-300/90" : "text-blue-300/90"} ${isEntering || isExiting ? "opacity-80" : "opacity-100"}`}>
             {isError ? "MCP Connection Failed" : "Connecting to MCP servers..."}
           </h4>
-          <p className="text-xs text-white/60">
+          <p className={`text-xs text-white/60 transition-all duration-300 ${isEntering || isExiting ? "opacity-70" : "opacity-100"}`}>
             {isError
               ? "Unable to connect to MCP servers. Some features may be unavailable."
               : "Please wait while we establish connection to Figma and Code MCP servers..."}
