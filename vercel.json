@@ -6,7 +6,7 @@
         "headers": [
           {
             "key": "Content-Security-Policy",
-            "value": "frame-ancestors *;"
+            "value": "frame-ancestors * https: http:;"
           },
           {
             "key": "X-Frame-Options",
