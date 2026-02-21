@@ -1,18 +1,3 @@
 {
-    "public": true,
-    "headers": [
-      {
-        "source": "/(.*)",
-        "headers": [
-          {
-            "key": "Content-Security-Policy",
-            "value": "frame-ancestors * https: http:;"
-          },
-          {
-            "key": "X-Frame-Options",
-            "value": "ALLOWALL"
-          }
-        ]
-      }
-    ]
+    "public": true
   }
