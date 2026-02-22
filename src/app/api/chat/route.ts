@@ -571,7 +571,7 @@ async function connectMCPs(
 }
 
 export async function POST(req: Request) {
-  const { messages, figmaMcpUrl, figmaAccessToken, codeProjectPath, figmaOAuth, model, selectedNode, tunnelSecret, enabledMcps } = await req.json();
+  const { messages, figmaMcpUrl, figmaAccessToken, codeProjectPath, figmaOAuth, model, selectedNode, tunnelSecret, enabledMcps, figmaPluginContext } = await req.json();
 
   // Get X-MCP-Code-URL header to resolve relative proxy URLs
   console.log("[Header] X-MCP-Code-URL:", req.headers.get("X-MCP-Code-URL"));
@@ -603,6 +603,28 @@ CRITICAL RULES:
 - When the user refers to "this node", "the selection", "the selected element", "this component", or similar, they mean this URL.
 - You may use other Figma MCP tools (e.g. get_node_details, get_styles, etc.) to inspect the properties of this node using the URL above.
 - Always start from this URL when the user asks about the current selection.`;
+  }
+
+  // Inject Figma plugin context (file currently open in Figma)
+  if (figmaPluginContext?.fileName) {
+    if (figmaPluginContext.fileKey) {
+      system += `\n\n### FIGMA PLUGIN CONTEXT (currently open file — HIGH PRIORITY)
+The user is working in the following Figma file:
+- **File Name:** ${figmaPluginContext.fileName}
+- **File Key:** ${figmaPluginContext.fileKey}
+- **File URL:** ${figmaPluginContext.fileUrl}
+RULES:
+- Use this URL as the default Figma file for any tool call that requires a file key or URL when none is explicitly provided.
+- When the user refers to "the current file", "this file", "my file", or similar, they mean this Figma file.
+- Do NOT ask the user for the Figma file URL if this context is present — you already have it.`;
+    } else {
+      system += `\n\n### FIGMA PLUGIN CONTEXT (currently open file — HIGH PRIORITY)
+The user is working in a Figma file named: **${figmaPluginContext.fileName}**
+Note: This is a Community or unsaved file — no direct file URL is available from the plugin API.
+RULES:
+- When the user refers to "the current file", "this file", or similar, they mean "${figmaPluginContext.fileName}".
+- If you need to access this file via MCP tools, ask the user to paste the Figma file URL from their browser address bar.`;
+    }
   }
 
   // Create MCP connection promise (async - non blocking)

@@ -608,6 +608,7 @@ export default function Home() {
   const [input, setInput] = useState("");
   const [selectedModel, setSelectedModel] = useState<"grok-4-1-fast-reasoning" | "grok-4-1-fast-non-reasoning">("grok-4-1-fast-non-reasoning");
   const [selectedNode, setSelectedNode] = useState<string | null>(null);
+  const [figmaPluginContext, setFigmaPluginContext] = useState<{ fileKey: string; fileName: string; fileUrl: string } | null>(null);
   const [selectionGlow, setSelectionGlow] = useState(false);
   const [proxyModalOpen, setProxyModalOpen] = useState(false);
   const [tunnelUrl, setTunnelUrl] = useState("");
@@ -659,6 +660,8 @@ export default function Home() {
   selectedModelRef.current = selectedModel;
   const selectedNodeRef = useRef(selectedNode);
   selectedNodeRef.current = selectedNode;
+  const figmaPluginContextRef = useRef(figmaPluginContext);
+  figmaPluginContextRef.current = figmaPluginContext;
   const tunnelSecretRef = useRef(tunnelSecret);
   tunnelSecretRef.current = tunnelSecret;
   const oauthSessionRef = useRef<string | null>(null);
@@ -670,6 +673,16 @@ export default function Home() {
   enabledMcpsRef.current = enabledMcps;
 
 
+
+  // Demander le contexte Figma au parent (ui.html) dès que React est monté
+  useEffect(() => {
+    if (typeof window !== 'undefined' && window.parent !== window) {
+      console.log('[IDS Webapp] React monté dans un iframe → envoi request-figma-context au parent');
+      window.parent.postMessage({ source: 'figpal-webapp', type: 'request-figma-context' }, '*');
+    } else {
+      console.log('[IDS Webapp] Pas dans un iframe, pas de request-figma-context');
+    }
+  }, []);
 
   useEffect(() => {
     const handleMessage = (event: MessageEvent) => {
@@ -684,6 +697,16 @@ export default function Home() {
         console.log('Received southleft-mcp-auth:', event.data.success);
         if (event.data.success) {
           setSouthleftOAuth(true);
+        }
+      }
+
+      // Figma plugin context (fileKey, fileName, fileUrl)
+      if (event.data && typeof event.data === "object" && event.data.type === "figma-context") {
+        const { fileKey, fileName, fileUrl } = event.data as { fileKey: string | null; fileName: string; fileUrl: string | null };
+        console.log('[IDS Webapp] figma-context reçu :', { fileKey, fileName, fileUrl });
+        if (fileName) {
+          setFigmaPluginContext({ fileKey: fileKey ?? '', fileName, fileUrl: fileUrl ?? '' });
+          console.log('[IDS Webapp] figmaPluginContext mis à jour ✓', { fileKey, fileName });
         }
       }
 
@@ -813,7 +836,7 @@ export default function Home() {
           }
           return headers;
         },
-        body: () => ({ figmaMcpUrl: figmaMcpUrlRef.current || (figmaOAuthRef.current ? "https://mcp.figma.com/mcp" : ""), figmaAccessToken: figmaAccessTokenRef.current, codeProjectPath: codeProjectPathRef.current, figmaOAuth: figmaOAuthRef.current, model: selectedModelRef.current, selectedNode: selectedNodeRef.current, tunnelSecret: tunnelSecretRef.current, enabledMcps: enabledMcpsRef.current }),
+        body: () => ({ figmaMcpUrl: figmaMcpUrlRef.current || (figmaOAuthRef.current ? "https://mcp.figma.com/mcp" : ""), figmaAccessToken: figmaAccessTokenRef.current, codeProjectPath: codeProjectPathRef.current, figmaOAuth: figmaOAuthRef.current, model: selectedModelRef.current, selectedNode: selectedNodeRef.current, tunnelSecret: tunnelSecretRef.current, enabledMcps: enabledMcpsRef.current, figmaPluginContext: figmaPluginContextRef.current }),
       }),
     [],
   );
@@ -895,12 +918,23 @@ export default function Home() {
         />
       )}
       <div
-        className={`${settingsOpen ? "w-80 translate-x-0" : "w-0 -translate-x-full md:translate-x-0"} fixed md:relative z-50 md:z-auto h-full transition-all duration-200 overflow-hidden glass-sidebar`}
+        className={`${settingsOpen ? "w-full sm:w-80 translate-x-0" : "w-0 -translate-x-full md:translate-x-0"} fixed top-0 left-0 md:relative md:top-auto md:left-auto z-50 md:z-auto h-full transition-all duration-200 overflow-hidden glass-sidebar`}
       >
-        <div className="p-4 w-80">
-          <h2 className="text-sm font-semibold text-white/60 uppercase tracking-wider mb-4">
-            MCP Connections
-          </h2>
+        <div className="p-4 w-full sm:w-80 h-full overflow-y-auto">
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="text-sm font-semibold text-white/60 uppercase tracking-wider">
+              MCP Connections
+            </h2>
+            <button
+              onClick={() => setSettingsOpen(false)}
+              className="p-1 rounded-md hover:bg-white/10 text-white/40 hover:text-white/80 transition-colors"
+              title="Close"
+            >
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M18 6L6 18M6 6l12 12"/>
+              </svg>
+            </button>
+          </div>
 
           {/* MCP Toggles */}
           <div className="mb-4 p-3 bg-white/5 rounded-md border border-white/10">

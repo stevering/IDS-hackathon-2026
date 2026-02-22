@@ -5,10 +5,21 @@
   --font-mono: var(--font-geist-mono);
 }
 
+:root {
+  color-scheme: dark;
+}
+
 body {
   background: #0a0a0a;
   color: #ededed;
   font-family: var(--font-sans), Arial, Helvetica, sans-serif;
+}
+
+input,
+textarea,
+select {
+  -webkit-text-fill-color: inherit;
+  color: inherit;
 }
 
 button:not(:disabled),
