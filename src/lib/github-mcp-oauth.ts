@@ -1,6 +1,7 @@
 import type { OAuthClientProvider, OAuthClientInformation, OAuthTokens } from "@ai-sdk/mcp";
 import type { ReadonlyRequestCookies } from "next/dist/server/web/spec-extension/adapters/request-cookies";
-import { RedirectError, getBaseUrl } from "./figma-mcp-oauth";
+import { RedirectError } from "./figma-mcp-oauth";
+import { getBaseUrl } from "./get-base-url";
 
 const GITHUB_MCP_URL = "https://api.githubcopilot.com/mcp";
 
@@ -9,16 +10,18 @@ const COOKIE_CLIENT_INFO = "github_mcp_client_info";
 const COOKIE_CODE_VERIFIER = "github_mcp_code_verifier";
 const COOKIE_STATE = "github_mcp_state";
 
-export function getGithubRedirectUrl(): string {
-  return `${getBaseUrl()}/api/auth/github-mcp/callback`;
+export async function getGithubRedirectUrl(): Promise<string> {
+  return `${await getBaseUrl()}/api/auth/github-mcp/callback`;
 }
 
-export function createGithubMcpOAuthProvider(
+export async function createGithubMcpOAuthProvider(
   cookieStore: ReadonlyRequestCookies,
   setCookies?: (name: string, value: string, options: Record<string, unknown>) => void,
   forceState?: string,
-): OAuthClientProvider {
-  const isSecure = getBaseUrl().startsWith("https");
+): Promise<OAuthClientProvider> {
+  const baseUrl = await getBaseUrl();
+  const isSecure = baseUrl.startsWith("https");
+  const redirectUrl = `${baseUrl}/api/auth/github-mcp/callback`;
 
   const cookieOptions = {
     httpOnly: true,
@@ -29,13 +32,13 @@ export function createGithubMcpOAuthProvider(
 
   return {
     get redirectUrl() {
-      return getGithubRedirectUrl();
-        },
+      return redirectUrl;
+    },
 
     get clientMetadata() {
       return {
         client_name: "DS AI Guardian",
-        redirect_uris: [getGithubRedirectUrl()],
+        redirect_uris: [redirectUrl],
         grant_types: ["authorization_code", "refresh_token"],
         response_types: ["code"],
         token_endpoint_auth_method: "none",

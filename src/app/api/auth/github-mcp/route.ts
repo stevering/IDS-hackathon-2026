@@ -11,7 +11,7 @@ import { RedirectError, getBaseUrl } from "@/lib/figma-mcp-oauth";
 
 export async function GET(request: NextRequest) {
   const cookieStore = await cookies();
-  const baseUrl = getBaseUrl();
+  const baseUrl = await getBaseUrl();
 
   // Enforce canonical domain
   const canonicalUrl = new URL(baseUrl);
@@ -26,7 +26,7 @@ export async function GET(request: NextRequest) {
   const state = crypto.randomBytes(16).toString("hex");
   const pendingCookies: Array<{ name: string; value: string; options: Record<string, unknown> }> = [];
 
-  const provider = createGithubMcpOAuthProvider(
+  const provider = await createGithubMcpOAuthProvider(
     cookieStore,
     (name, value, options) => {
       pendingCookies.push({ name, value, options });

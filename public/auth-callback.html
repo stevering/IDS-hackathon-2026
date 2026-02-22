@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Connexion Figma Console</title>
+  <style>
+    body {
+      font-family: system-ui, sans-serif;
+      background: #0a0a0a;
+      color: #fff;
+      margin: 0;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 1rem;
+      box-sizing: border-box;
+    }
+    .box {
+      text-align: center;
+      max-width: 320px;
+    }
+    .success { color: #34d399; }
+    .failed { color: #fbbf24; }
+    p { margin: 0.5rem 0; opacity: 0.85; font-size: 0.9rem; }
+    button {
+      margin-top: 1rem;
+      padding: 0.5rem 1rem;
+      border-radius: 6px;
+      border: none;
+      background: rgba(255,255,255,0.1);
+      color: #fff;
+      cursor: pointer;
+      font-size: 0.9rem;
+    }
+    button:hover { background: rgba(255,255,255,0.2); }
+  </style>
+</head>
+<body>
+  <div class="box">
+    <p id="msg" class="success">Connexion réussie. Fermeture…</p>
+    <button type="button" id="closeBtn" style="display:none;">Fermer la fenêtre</button>
+  </div>
+  <script>
+    (function() {
+      var params = new URLSearchParams(window.location.search);
+      var auth = params.get('auth');
+      var source = params.get('source');
+      var isSuccess = auth === 'success' && source === 'southleft-mcp';
+
+      var msgEl = document.getElementById('msg');
+      var closeBtn = document.getElementById('closeBtn');
+
+      if (auth === 'failed' && source === 'southleft-mcp') {
+        msgEl.textContent = 'Échec de la connexion. La fenêtre se fermera automatiquement.';
+        msgEl.className = 'failed';
+      }
+
+      function notifyAndClose() {
+        console.log('Auth callback: posting result to server for success:', isSuccess);
+        fetch('/api/set-oauth-result', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ type: 'southleft-mcp-auth', success: isSuccess })
+        }).then(() => {
+          console.log('Posted to server');
+        }).catch(e => {
+          console.log('Error posting to server:', e);
+        });
+        // Try to close after a delay
+        setTimeout(() => {
+          try {
+            window.close();
+          } catch (e) {}
+        }, 3000);
+      }
+
+      notifyAndClose();
+      // Try to close after a delay if opener didn't
+      setTimeout(() => {
+        try {
+          window.close();
+        } catch (e) {}
+      }, 3000);
+    })();
+  </script>
+</body>
+</html>

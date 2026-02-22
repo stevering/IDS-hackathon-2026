@@ -400,6 +400,7 @@ function wrapToolsWithRetry(tools: Record<string, any>, url: string, label: stri
 
 // Function to connect MCPs in parallel and return the tools
 async function connectMCPs(
+  req: Request,
   figmaMcpUrl: string | undefined,
   figmaAccessToken: string | undefined,
   resolvedCodeProjectPath: string | undefined,
@@ -444,7 +445,7 @@ async function connectMCPs(
 
       let mcpResult: CachedMCP;
       if (figmaOAuth) {
-        const provider = createFigmaMcpOAuthProvider(cookieStore);
+        const provider = await createFigmaMcpOAuthProvider(cookieStore);
         mcpResult = await getOrConnectWithAuth(effectiveUrl, "Figma", provider);
       } else {
         const token = figmaAccessToken || oauthToken || process.env.FIGMA_ACCESS_TOKEN;
@@ -475,9 +476,23 @@ async function connectMCPs(
     const cookieStoreForSouthleft = await cookies();
     const southleftTokensRaw = cookieStoreForSouthleft.get(SOUTHLEFT_COOKIE_TOKENS)?.value;
 
-    if (southleftTokensRaw) {
+    // Check for Bearer token in Authorization header
+    const authHeader = req.headers.get('authorization');
+    let bearerToken: string | undefined;
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+      bearerToken = authHeader.substring(7);
+    }
+
+    if (southleftTokensRaw || bearerToken) {
       console.log("[FigmaConsole] Connecting with OAuth to:", figmaConsoleMcpUrl);
-      const southleftProvider = createSouthleftMcpOAuthProvider(cookieStoreForSouthleft);
+      const southleftProvider = await createSouthleftMcpOAuthProvider(cookieStoreForSouthleft);
+      // If bearer token provided, override the provider's tokens method
+      if (bearerToken) {
+        const originalTokens = southleftProvider.tokens.bind(southleftProvider);
+        southleftProvider.tokens = async () => {
+          return { access_token: bearerToken, token_type: 'Bearer' };
+        };
+      }
       const { tools } = await getOrConnectWithAuth(figmaConsoleMcpUrl, "FigmaConsole", southleftProvider);
       const prefixedTools = Object.fromEntries(
         Object.entries(tools).map(([name, tool]) => [`figmaconsole_${name}`, tool])
@@ -504,7 +519,7 @@ async function connectMCPs(
 
     if (githubTokensRaw) {
       console.log("[GitHub] Connecting with OAuth to:", githubMcpUrl);
-      const githubProvider = createGithubMcpOAuthProvider(cookieStoreForGithub);
+      const githubProvider = await createGithubMcpOAuthProvider(cookieStoreForGithub);
       const tokens = await githubProvider.tokens();
       console.log("[GitHub DEBUG] tokens:", tokens);
       const clientInfo = await githubProvider.clientInformation();
@@ -592,6 +607,7 @@ CRITICAL RULES:
 
   // Create MCP connection promise (async - non blocking)
   const mcpConnectionPromise = connectMCPs(
+    req,
     figmaMcpUrl,
     figmaAccessToken,
     resolvedCodeProjectPath,

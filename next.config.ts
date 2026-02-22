@@ -3,6 +3,19 @@ import type { NextConfig } from "next";
 const isDev = process.env.NODE_ENV === 'development';
 
 const nextConfig: NextConfig = {
+    async headers() {
+        return [
+            {
+                source: "/:path*",
+                headers: [
+                    {
+                        key: "Cross-Origin-Opener-Policy",
+                        value: "same-origin-allow-popups",
+                    },
+                ],
+            },
+        ];
+    },
     async rewrites() {
         if (!isDev) {
             return []; // Retourne une liste vide en production

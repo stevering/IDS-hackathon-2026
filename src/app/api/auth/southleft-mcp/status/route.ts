@@ -8,6 +8,7 @@ import {
 
 export async function GET(req: NextRequest) {
   const token = req.cookies.get(SOUTHLEFT_COOKIE_TOKENS)?.value;
+  console.log('[Southleft Status] Token present:', !!token);
   return NextResponse.json({ connected: !!token });
 }
 

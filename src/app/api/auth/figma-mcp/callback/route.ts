@@ -6,9 +6,9 @@ import {
   COOKIE_STATE,
   COOKIE_CODE_VERIFIER,
   COOKIE_CLIENT_INFO,
-  COOKIE_AUTH_TOKEN,
-  getBaseUrl,
+  COOKIE_AUTH_TOKEN
 } from "@/lib/figma-mcp-oauth";
+import {getBaseUrl} from "@/lib/get-base-url";
 
 export async function GET(request: NextRequest) {
   const url = new URL(request.url);
@@ -38,7 +38,7 @@ export async function GET(request: NextRequest) {
 
   const pendingCookies: Array<{ name: string; value: string; options: Record<string, unknown> }> = [];
 
-  const provider = createFigmaMcpOAuthProvider(
+  const provider = await createFigmaMcpOAuthProvider(
     cookieStore,
     (name, value, options) => {
       pendingCookies.push({ name, value, options });
@@ -97,7 +97,7 @@ export async function GET(request: NextRequest) {
       });
     }
 
-    const baseUrl = getBaseUrl();
+    const baseUrl = await getBaseUrl();
     const response = NextResponse.redirect(new URL("/", baseUrl));
 
     for (const c of pendingCookies) {
@@ -111,7 +111,7 @@ export async function GET(request: NextRequest) {
     return response;
   } catch (error) {
     console.error("[Figma MCP OAuth Callback] Error:", error);
-    const baseUrl = getBaseUrl();
+    const baseUrl = await getBaseUrl();
     return NextResponse.redirect(new URL("/?error=figma_mcp_auth_failed", baseUrl));
   }
 }

@@ -35,7 +35,7 @@ export async function GET(request: NextRequest) {
 
   const pendingCookies: Array<{ name: string; value: string; options: Record<string, unknown> }> = [];
 
-  const provider = createGithubMcpOAuthProvider(
+  const provider = await createGithubMcpOAuthProvider(
     cookieStore,
     (name, value, options) => {
       pendingCookies.push({ name, value, options });
@@ -49,7 +49,7 @@ export async function GET(request: NextRequest) {
       scope: "repo:read,code:read",
     });
 
-    const baseUrl = getBaseUrl();
+    const baseUrl = await getBaseUrl();
     const response = NextResponse.redirect(new URL("/", baseUrl));
 
     for (const c of pendingCookies) {
@@ -62,7 +62,7 @@ export async function GET(request: NextRequest) {
     return response;
   } catch (error) {
     console.error("[GitHub MCP OAuth Callback] Error:", error);
-    const baseUrl = getBaseUrl();
+    const baseUrl = await getBaseUrl();
     return NextResponse.redirect(new URL("/?error=github_mcp_auth_failed", baseUrl));
   }
 }

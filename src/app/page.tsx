@@ -88,7 +88,7 @@ function DetailsBlock({ text, isStreaming }: { text: string; isStreaming: boolea
       </button>
       {open && (
         <div className="mt-2 px-3 py-3 rounded-md bg-white/[0.03] border border-white/5 text-sm overflow-x-auto markdown-body">
-          <ReactMarkdown remarkPlugins={[remarkGfm/*, remarkBreaks*/]}>{text}</ReactMarkdown>
+          <ReactMarkdown remarkPlugins={[remarkGfm]}>{text}</ReactMarkdown>
           <div ref={detailsEndRef} />
         </div>
       )}
@@ -614,6 +614,7 @@ export default function Home() {
   const [tunnelSecret, setTunnelSecret] = useState(process.env.NEXT_PUBLIC_MCP_TUNNEL_SECRET);
   const [localFigmaMcpUrl, setLocalFigmaMcpUrl] = useState(process.env.NEXT_PUBLIC_LOCAL_MCP_FIGMA_URL || "");
   const [localCodeMcpUrl, setLocalCodeMcpUrl] = useState(process.env.NEXT_PUBLIC_LOCAL_MCP_CODE_URL || "");
+  const [waitingForOAuth, setWaitingForOAuth] = useState(false);
 
   // MCP Toggles - enabled/disabled state
   const [enabledMcps, setEnabledMcps] = useState<Record<string, boolean>>({
@@ -660,6 +661,7 @@ export default function Home() {
   selectedNodeRef.current = selectedNode;
   const tunnelSecretRef = useRef(tunnelSecret);
   tunnelSecretRef.current = tunnelSecret;
+  const oauthSessionRef = useRef<string | null>(null);
   const localFigmaMcpUrlRef = useRef(localFigmaMcpUrl);
   localFigmaMcpUrlRef.current = localFigmaMcpUrl;
   const localCodeMcpUrlRef = useRef(localCodeMcpUrl);
@@ -667,18 +669,117 @@ export default function Home() {
   const enabledMcpsRef = useRef(enabledMcps);
   enabledMcpsRef.current = enabledMcps;
 
+
+
   useEffect(() => {
     const handleMessage = (event: MessageEvent) => {
+      console.log('Webapp received message:', event.data);
       if (event.data && typeof event.data === "object" && "selectedNode" in event.data) {
         const url = event.data.selectedNode;
         if (typeof url === "string" || url === null) {
           setSelectedNode(url);
         }
       }
+      if (event.data && typeof event.data === "object" && event.data.type === "southleft-mcp-auth") {
+        console.log('Received southleft-mcp-auth:', event.data.success);
+        if (event.data.success) {
+          setSouthleftOAuth(true);
+        }
+      }
+
+      // Token relay from OAuth popup via postMessage
+      if (event.data && typeof event.data === "object" && event.data.type === "southleft-oauth-complete") {
+        const accessToken = event.data.accessToken as string | undefined;
+        if (accessToken) {
+          localStorage.setItem('southleft_access_token', accessToken);
+          setSouthleftOAuth(true);
+          setWaitingForOAuth(false);
+        }
+      }
     };
     window.addEventListener("message", handleMessage);
     return () => window.removeEventListener("message", handleMessage);
+  }, [tunnelSecret]);
+
+  // Check localStorage for southleft access token to determine auth status
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      const token = localStorage.getItem('southleft_access_token');
+      setSouthleftOAuth(!!token);
+    }
   }, []);
+
+  // If this page is the popup landing after OAuth, relay token to opener then close
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const params = new URLSearchParams(window.location.search);
+    const isAuthSuccess = params.get('auth') === 'success';
+    const source = params.get('source');
+    const isPopup = params.get('popup') === 'true';
+
+    if (isAuthSuccess && isPopup && source === 'southleft-mcp') {
+      const accessToken = localStorage.getItem('southleft_access_token');
+      if (accessToken && window.opener) {
+        try {
+          window.opener.postMessage({ type: 'southleft-oauth-complete', accessToken }, '*');
+        } catch (e) {
+          console.warn('[southleft popup] postMessage to opener failed:', e);
+        }
+      }
+      // Give a short delay so the message is dispatched before close
+      setTimeout(() => { try { window.close(); } catch (_) {} }, 300);
+    }
+  }, []);
+
+  // Polling fallback: if postMessage to opener failed, retrieve token from server relay
+  useEffect(() => {
+    if (!waitingForOAuth) return;
+    let interval: NodeJS.Timeout;
+    let timeout: NodeJS.Timeout;
+
+    const poll = async () => {
+      try {
+        const res = await fetch('/api/set-oauth-result', {
+          headers: oauthSessionRef.current ? { 'X-Auth-Token': oauthSessionRef.current } : {},
+        });
+        const data = await res.json();
+        if (data?.type === 'southleft-mcp-auth' && data.success && data.access_token) {
+          localStorage.setItem('southleft_access_token', data.access_token as string);
+          setSouthleftOAuth(true);
+          setWaitingForOAuth(false);
+        }
+      } catch {
+        // ignore transient errors
+      }
+    };
+
+    interval = setInterval(poll, 2000);
+    timeout = setTimeout(() => {
+      setWaitingForOAuth(false);
+      clearInterval(interval);
+    }, 60000);
+
+    return () => {
+      clearInterval(interval);
+      clearTimeout(timeout);
+    };
+  }, [waitingForOAuth]);
+
+  // Restore GitHub and Figma MCP auth status from server cookies on mount
+  useEffect(() => {
+    fetch("/api/auth/figma-mcp/status", {
+      headers: { "X-Auth-Token": tunnelSecret || "" },
+    })
+      .then((r) => r.json())
+      .then((d) => setFigmaOAuth(d.connected))
+      .catch(() => {});
+    fetch("/api/auth/github-mcp/status", {
+      headers: { "X-Auth-Token": tunnelSecret || "" },
+    })
+      .then((r) => r.json())
+      .then((d) => setGithubOAuth(d.connected))
+      .catch(() => {});
+  }, [tunnelSecret]);
 
   useEffect(() => {
     if (selectedNode) {
@@ -703,6 +804,13 @@ export default function Home() {
           if (localCodeMcpUrlRef.current) {
             headers['X-MCP-Code-URL'] = localCodeMcpUrlRef.current;
           }
+          // Add Bearer token from localStorage if available
+          if (typeof window !== 'undefined') {
+            const southleftToken = localStorage.getItem('southleft_access_token');
+            if (southleftToken) {
+              headers['Authorization'] = `Bearer ${southleftToken}`;
+            }
+          }
           return headers;
         },
         body: () => ({ figmaMcpUrl: figmaMcpUrlRef.current || (figmaOAuthRef.current ? "https://mcp.figma.com/mcp" : ""), figmaAccessToken: figmaAccessTokenRef.current, codeProjectPath: codeProjectPathRef.current, figmaOAuth: figmaOAuthRef.current, model: selectedModelRef.current, selectedNode: selectedNodeRef.current, tunnelSecret: tunnelSecretRef.current, enabledMcps: enabledMcpsRef.current }),
@@ -721,33 +829,9 @@ export default function Home() {
     shouldAutoScroll.current = el.scrollHeight - el.scrollTop - el.clientHeight < threshold;
   };
 
-  useEffect(() => {
-    fetch("/api/auth/figma-mcp/status", {
-      headers: {
-        "X-Auth-Token": tunnelSecret || "",
-      },
-    })
-      .then((r) => r.json())
-      .then((d) => setFigmaOAuth(d.connected))
-      .catch(() => {});
-    fetch("/api/auth/southleft-mcp/status", {
-      headers: {
-        "X-Auth-Token": tunnelSecret || "",
-      },
-    })
-      .then((r) => r.json())
-      .then((d) => setSouthleftOAuth(d.connected))
-      .catch(() => {});
 
-    fetch("/api/auth/github-mcp/status", {
-      headers: {
-        "X-Auth-Token": tunnelSecret || "",
-      },
-    })
-      .then((r) => r.json())
-      .then((d) => setGithubOAuth(d.connected))
-      .catch(() => {});
-  }, [tunnelSecret]);
+
+
 
   useEffect(() => {
     if (shouldAutoScroll.current) {
@@ -965,13 +1049,10 @@ export default function Home() {
         <span className="text-xs text-emerald-300">Connected via OAuth</span>
       </div>
       <button
-        onClick={() => {
-          fetch("/api/auth/southleft-mcp/status", {
-            method: "DELETE",
-            headers: {
-              "X-Auth-Token": tunnelSecret || "",
-            },
-          }).then(() => setSouthleftOAuth(false));
+        onClick={async () => {
+          await fetch('/api/auth/southleft-mcp/disconnect', { method: 'POST' });
+          localStorage.removeItem('southleft_access_token');
+          setSouthleftOAuth(false);
         }}
         className="px-2 py-2 text-xs text-red-400 hover:bg-red-500/10 rounded-md transition-colors cursor-pointer"
       >
@@ -980,15 +1061,11 @@ export default function Home() {
     </div>
   ) : (
     <button
-      onClick={async () => {
-        if (tunnelSecret) {
-          await fetch("/api/auth/set-token", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ token: tunnelSecret }),
-          });
-        }
-        window.location.href = "/api/auth/southleft-mcp";
+      onClick={() => {
+        const session = Math.random().toString(36).slice(2) + Date.now().toString(36);
+        oauthSessionRef.current = session;
+        window.open(`/api/auth/southleft-mcp?session=${session}`, 'southleft-oauth', 'width=600,height=700,scrollbars=yes,resizable=yes');
+        setWaitingForOAuth(true);
       }}
       className="w-full text-center bg-gradient-to-r from-purple-600/20 to-pink-600/20 border border-purple-500/30 hover:from-purple-600/30 hover:to-pink-600/30 rounded-md px-3 py-2.5 text-sm text-purple-300 font-medium transition-all hover:shadow-lg"
     >
@@ -1060,14 +1137,8 @@ export default function Home() {
     </div>
   ) : (
     <button
-      onClick={async () => {
-        if (tunnelSecret) {
-          await fetch("/api/auth/set-token", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ token: tunnelSecret }),
-          });
-        }
+      onClick={() => {
+        // Full-page navigation: cookies are set in the current context (works in both standalone and plugin iframe)
         window.location.href = "/api/auth/github-mcp";
       }}
       className="w-full text-center bg-gradient-to-r from-gray-600/20 to-black/20 border border-gray-500/30 hover:from-gray-600/30 hover:to-black/30 rounded-md px-3 py-2.5 text-sm text-gray-300 font-medium transition-all hover:shadow-lg"
@@ -1234,34 +1305,30 @@ export default function Home() {
                           const imageSegments = parseTextWithImages(structSeg.text, isLoading && isLastMsg);
                           return (
                             <div key={sj} className="markdown-body overflow-x-auto">
-                              {imageSegments.map((seg, j) => {
-                                if (seg.type === "image") {
-                                  if (!seg.complete) {
-                                    return (
-                                      <div key={j} className="my-3 flex flex-col items-center justify-center w-full max-w-64 h-48 bg-white/5 border border-white/10 rounded-lg">
-                                        <svg className="animate-spin h-8 w-8 text-white/30 mb-2" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-                                        </svg>
-                                        <span className="text-xs text-white/30">Loading image…</span>
-                                      </div>
-                                    );
-                                  }
-                                  return (
+                              {imageSegments.map((seg, j) =>
+                                seg.type === "image" ? (
+                                  !seg.complete ? (
+                                    <div key={j} className="my-3 flex flex-col items-center justify-center w-full max-w-64 h-48 bg-white/5 border border-white/10 rounded-lg">
+                                      <svg className="animate-spin h-8 w-8 text-white/30 mb-2" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                                      </svg>
+                                      <span className="text-xs text-white/30">Loading image…</span>
+                                    </div>
+                                  ) : (
                                     <img
                                       key={j}
                                       src={seg.src}
                                       alt="Generated image"
                                       className="my-3 max-w-full rounded-lg border border-white/10"
                                     />
-                                  );
-                                }
-                                return (
-                                  <ReactMarkdown key={j} remarkPlugins={[remarkGfm/*, remarkBreaks*/]}>
+                                  )
+                                ) : (
+                                  <ReactMarkdown key={j} remarkPlugins={[remarkGfm]}>
                                     {seg.content}
                                   </ReactMarkdown>
-                                );
-                              })}
+                                )
+                              )}
                             </div>
                           );
                         })}
@@ -1413,7 +1480,7 @@ export default function Home() {
 
           {error && (
             <div className="mb-4 p-3 bg-red-500/10 border border-red-500/20 rounded-lg text-sm text-red-400 break-words">
-              Error: {error.message}
+              Error: {error?.message ?? "Unknown error"}
             </div>
           )}
 

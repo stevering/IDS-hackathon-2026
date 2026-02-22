@@ -14,7 +14,7 @@ export async function GET(request: NextRequest) {
   const cookieStore = await cookies();
 
   // Enforce canonical domain to avoid cookie loss between localhost and 127.0.0.1
-  const baseUrl = getBaseUrl();
+  const baseUrl = await getBaseUrl();
   const canonicalUrl = new URL(baseUrl);
   const currentHost = request.headers.get("host");
 
@@ -50,7 +50,7 @@ export async function GET(request: NextRequest) {
   const useMcpMode = hasDcrClient || request.nextUrl.searchParams.get("mode") === "mcp";
   console.log("[Figma MCP OAuth] Mode:", useMcpMode ? "MCP (mcp:connect)" : "Standard (fallback)");
 
-  const provider = createFigmaMcpOAuthProvider(
+  const provider = await createFigmaMcpOAuthProvider(
     cookieStore,
     (name, value, options) => {
       pendingCookies.push({ name, value, options });

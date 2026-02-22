@@ -32,7 +32,7 @@ export async function POST(req: NextRequest) {
     // Attempt Dynamic Client Registration
     const clientMetadata = {
       client_name: "DS AI Guardian",
-      redirect_uris: [getRedirectUrl()],
+      redirect_uris: [await getRedirectUrl()],
       grant_types: ["authorization_code", "refresh_token"],
       response_types: ["code"],
       token_endpoint_auth_method: "none",
@@ -58,7 +58,7 @@ export async function POST(req: NextRequest) {
     console.log("[Figma MCP DCR] Registration successful, client_id:", clientInfo.client_id);
 
     // Store in cookie for the auth flow
-    const baseUrl = getBaseUrl();
+    const baseUrl = await getBaseUrl();
     const isSecure = baseUrl.startsWith("https");
 
     const response = NextResponse.json({ ok: true, client_id: clientInfo.client_id });

@@ -1,5 +1,8 @@
 import type { OAuthClientProvider, OAuthClientInformation, OAuthTokens } from "@ai-sdk/mcp";
 import type { ReadonlyRequestCookies } from "next/dist/server/web/spec-extension/adapters/request-cookies";
+import { getBaseUrl } from "./get-base-url";
+
+export { getBaseUrl } from "./get-base-url";
 
 // Pour la découverte OAuth (sans /mcp)
 const MCP_FIGMA_OAUTH_URL = "https://mcp.figma.com";
@@ -12,20 +15,18 @@ const COOKIE_CODE_VERIFIER = "figma_mcp_code_verifier";
 const COOKIE_STATE = "figma_mcp_state";
 const COOKIE_AUTH_TOKEN = "mcp_auth_token";
 
-export function getBaseUrl(): string {
-  return process.env.NEXT_PUBLIC_BASE_URL || "http://127.0.0.1:3000";
+export async function getRedirectUrl(): Promise<string> {
+  return `${await getBaseUrl()}/api/auth/figma-mcp/callback`;
 }
 
-export function getRedirectUrl(): string {
-  return `${getBaseUrl()}/api/auth/figma-mcp/callback`;
-}
-
-export function createFigmaMcpOAuthProvider(
+export async function createFigmaMcpOAuthProvider(
   cookieStore: ReadonlyRequestCookies,
   setCookies?: (name: string, value: string, options: Record<string, unknown>) => void,
   forceState?: string,
-): OAuthClientProvider {
-  const isSecure = getBaseUrl().startsWith("https");
+): Promise<OAuthClientProvider> {
+  const baseUrl = await getBaseUrl();
+  const isSecure = baseUrl.startsWith("https");
+  const redirectUrl = `${baseUrl}/api/auth/figma-mcp/callback`;
 
   const cookieOptions = {
     httpOnly: true,
@@ -36,13 +37,13 @@ export function createFigmaMcpOAuthProvider(
 
   return {
     get redirectUrl() {
-      return getRedirectUrl();
+      return redirectUrl;
     },
 
     get clientMetadata() {
       return {
         client_name: "DS AI Guardian",
-        redirect_uris: [getRedirectUrl()],
+        redirect_uris: [redirectUrl],
         grant_types: ["authorization_code", "refresh_token"],
         response_types: ["code"],
         token_endpoint_auth_method: "none",

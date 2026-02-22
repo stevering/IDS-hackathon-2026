@@ -1,6 +1,7 @@
 import type { OAuthClientProvider, OAuthClientInformation, OAuthTokens } from "@ai-sdk/mcp";
 import type { ReadonlyRequestCookies } from "next/dist/server/web/spec-extension/adapters/request-cookies";
-import { RedirectError, getBaseUrl } from "./figma-mcp-oauth";
+import { RedirectError } from "./figma-mcp-oauth";
+import { getBaseUrl } from "./get-base-url";
 
 const SOUTHLEFT_MCP_URL = "https://figma-console-mcp.southleft.com";
 
@@ -9,16 +10,18 @@ const COOKIE_CLIENT_INFO = "southleft_mcp_client_info";
 const COOKIE_CODE_VERIFIER = "southleft_mcp_code_verifier";
 const COOKIE_STATE = "southleft_mcp_state";
 
-export function getSouthleftRedirectUrl(): string {
-  return `${getBaseUrl()}/api/auth/southleft-mcp/callback`;
+export async function getSouthleftRedirectUrl(): Promise<string> {
+  return `${await getBaseUrl()}/api/auth/southleft-mcp/callback`;
 }
 
-export function createSouthleftMcpOAuthProvider(
+export async function createSouthleftMcpOAuthProvider(
   cookieStore: ReadonlyRequestCookies,
   setCookies?: (name: string, value: string, options: Record<string, unknown>) => void,
   forceState?: string,
-): OAuthClientProvider {
-  const isSecure = getBaseUrl().startsWith("https");
+): Promise<OAuthClientProvider> {
+  const baseUrl = await getBaseUrl();
+  const isSecure = baseUrl.startsWith("https");
+  const redirectUrl = `${baseUrl}/api/auth/southleft-mcp/callback`;
 
   const cookieOptions = {
     httpOnly: true,
@@ -29,13 +32,13 @@ export function createSouthleftMcpOAuthProvider(
 
   return {
     get redirectUrl() {
-      return getSouthleftRedirectUrl();
+      return redirectUrl;
     },
 
     get clientMetadata() {
       return {
         client_name: "DS AI Guardian",
-        redirect_uris: [getSouthleftRedirectUrl()],
+        redirect_uris: [redirectUrl],
         grant_types: ["authorization_code", "refresh_token"],
         response_types: ["code"],
         token_endpoint_auth_method: "none",
@@ -94,7 +97,14 @@ export function createSouthleftMcpOAuthProvider(
     },
 
     async state(): Promise<string> {
-      if (forceState) return forceState;
+      if (forceState) {
+        // Store the full encoded state in cookie for verification
+        setCookies?.(COOKIE_STATE, forceState, {
+          ...cookieOptions,
+          maxAge: 600,
+        });
+        return forceState;
+      }
       const raw = cookieStore.get(COOKIE_STATE)?.value;
       return raw || "";
     },

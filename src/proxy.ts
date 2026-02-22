@@ -17,6 +17,7 @@ const PUBLIC_AUTH_ROUTES = [
   "/api/auth/github-mcp/callback",
   "/api/auth/github-mcp/status",
   "/api/auth/set-token",
+  "/api/set-oauth-result", // Allow POST without token for callback
 ];
 
 function getMcpCodeUrl(request: NextRequest): string | undefined {
