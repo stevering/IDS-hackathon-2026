@@ -20,6 +20,14 @@ type MCPStatusSegment = { kind: "mcp-status"; status: "connecting" | "connected"
 type AnalyzeBtnSegment = { kind: "analyze-btn" };
 type StructuredSegment = ThinkingSegment | ContentSegment | DetailsSegment | QCMSegment | MCPErrorSegment | MCPStatusSegment | AnalyzeBtnSegment;
 
+const markdownComponents = {
+  a: ({ href, children, ...props }: React.AnchorHTMLAttributes<HTMLAnchorElement>) => (
+    <a href={href} target="_blank" rel="noopener noreferrer" {...props}>
+      {children}
+    </a>
+  ),
+};
+
 function ThinkingBlock({ text, isLast, isStreaming }: { text: string; isLast: boolean; isStreaming: boolean }) {
   const [open, setOpen] = useState(false);
   const isActive = isLast && isStreaming;
@@ -89,7 +97,7 @@ function DetailsBlock({ text, isStreaming }: { text: string; isStreaming: boolea
       </button>
       {open && (
         <div className="mt-2 px-3 py-3 rounded-md bg-white/[0.03] border border-white/5 text-sm overflow-x-auto markdown-body">
-          <ReactMarkdown remarkPlugins={[remarkGfm]}>{text}</ReactMarkdown>
+          <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>{text}</ReactMarkdown>
           <div ref={detailsEndRef} />
         </div>
       )}
@@ -875,6 +883,11 @@ export default function Home() {
 
   const { messages, sendMessage, status, error, setMessages } = useChat({ transport });
 
+  const [errorVisible, setErrorVisible] = useState(false);
+  useEffect(() => {
+    if (error) setErrorVisible(true);
+  }, [error]);
+
   // Keep a ref to messages to avoid stale closures in effects
   const messagesRef = useRef(messages);
   messagesRef.current = messages;
@@ -1278,7 +1291,7 @@ export default function Home() {
           <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
             {messages.length > 0 && (
               <button
-                onClick={() => setMessages([])}
+                onClick={() => { setMessages([]); setErrorVisible(false); }}
                 title="Clear conversation"
                 className="p-1.5 rounded-md text-white/40 hover:text-white/70 hover:bg-white/10 transition-colors cursor-pointer mr-1"
               >
@@ -1428,7 +1441,7 @@ export default function Home() {
                                     />
                                   )
                                 ) : (
-                                  <ReactMarkdown key={j} remarkPlugins={[remarkGfm]}>
+                                  <ReactMarkdown key={j} remarkPlugins={[remarkGfm]} components={markdownComponents}>
                                     {seg.content}
                                   </ReactMarkdown>
                                 )
@@ -1582,7 +1595,7 @@ export default function Home() {
             </div>
           )}
 
-          {error && (
+          {error && errorVisible && (
             <div className="mb-4 p-3 bg-red-500/10 border border-red-500/20 rounded-lg text-sm text-red-400 break-words">
               Error: {error?.message ?? "Unknown error"}
             </div>
