@@ -17,7 +17,8 @@ type DetailsSegment = { kind: "details"; text: string; streaming: boolean };
 type QCMSegment = { kind: "qcm"; choices: string[] };
 type MCPErrorSegment = { kind: "mcp-error"; errorText: string };
 type MCPStatusSegment = { kind: "mcp-status"; status: "connecting" | "connected" | "error" };
-type StructuredSegment = ThinkingSegment | ContentSegment | DetailsSegment | QCMSegment | MCPErrorSegment | MCPStatusSegment;
+type AnalyzeBtnSegment = { kind: "analyze-btn" };
+type StructuredSegment = ThinkingSegment | ContentSegment | DetailsSegment | QCMSegment | MCPErrorSegment | MCPStatusSegment | AnalyzeBtnSegment;
 
 function ThinkingBlock({ text, isLast, isStreaming }: { text: string; isLast: boolean; isStreaming: boolean }) {
   const [open, setOpen] = useState(false);
@@ -155,6 +156,12 @@ function parseStructuredContent(text: string, isStreamingMsg: boolean = false): 
     }
   }
 
+  const analyzeBtnBlocks: { index: number; length: number }[] = [];
+  const analyzeBtnRegex = /\[ANALYZE_BTN\]/g;
+  while ((match = analyzeBtnRegex.exec(cleanedText)) !== null) {
+    analyzeBtnBlocks.push({ index: match.index, length: match[0].length });
+  }
+
   const mcpErrorRegex = /\[MCP_ERROR_BLOCK\]([\s\S]*?)\[\/MCP_ERROR_BLOCK\]/g;
   while ((match = mcpErrorRegex.exec(cleanedText)) !== null) {
     mcpErrorBlocks.push({ index: match.index, length: match[0].length, errorText: match[1].trim() });
@@ -196,6 +203,7 @@ function parseStructuredContent(text: string, isStreamingMsg: boolean = false): 
     ...qcmBlocks.map(b => ({ ...b, kind: "qcm" as const, streaming: false })),
     ...mcpErrorBlocks.map(b => ({ ...b, kind: "mcp-error" as const, streaming: false })),
     ...mcpStatusBlocks.map(b => ({ ...b, kind: "mcp-status" as const, streaming: false })),
+    ...analyzeBtnBlocks.map(b => ({ ...b, kind: "analyze-btn" as const, streaming: false })),
   ].sort((a, b) => a.index - b.index);
 
   if (allBlocks.length === 0) {
@@ -217,8 +225,10 @@ function parseStructuredContent(text: string, isStreamingMsg: boolean = false): 
       segments.push({ kind: "mcp-error", errorText: (block as typeof mcpErrorBlocks[number] & { kind: "mcp-error" }).errorText });
     } else if (block.kind === "mcp-status") {
       segments.push({ kind: "mcp-status", status: (block as typeof mcpStatusBlocks[number] & { kind: "mcp-status" }).status });
+    } else if (block.kind === "analyze-btn") {
+      segments.push({ kind: "analyze-btn" });
     } else {
-      segments.push({ kind: block.kind, text: block.text });
+      segments.push({ kind: block.kind, text: (block as { text: string }).text });
     }
     cursor = block.index + block.length;
   }
@@ -605,10 +615,14 @@ export default function Home() {
   const [figmaOAuth, setFigmaOAuth] = useState(false);
   const [southleftOAuth, setSouthleftOAuth] = useState(false);
   const [githubOAuth, setGithubOAuth] = useState(false);
+  const [pendingAgentMessage, setPendingAgentMessage] = useState<string | null>(null);
+  // Ref stable vers sendMessage — déclaré tôt pour être accessible dans handleMessage
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const sendMessageEarlyRef = useRef<((msg: { text: string }) => void) | null>(null);
   const [input, setInput] = useState("");
   const [selectedModel, setSelectedModel] = useState<"grok-4-1-fast-reasoning" | "grok-4-1-fast-non-reasoning">("grok-4-1-fast-non-reasoning");
-  const [selectedNode, setSelectedNode] = useState<string | null>(null);
-  const [figmaPluginContext, setFigmaPluginContext] = useState<{ fileKey: string; fileName: string; fileUrl: string } | null>(null);
+  const [selectedNode, setSelectedNode] = useState<{ nodes: unknown[]; image: string | null; nodeUrl: string | null } | null>(null);
+  const [figmaPluginContext, setFigmaPluginContext] = useState<{ fileKey: string; fileName: string; fileUrl: string; currentPage?: { id: string; name: string } | null; pages?: { id: string; name: string }[]; currentUser?: { id: string; name: string } | null } | null>(null);
   const [selectionGlow, setSelectionGlow] = useState(false);
   const [proxyModalOpen, setProxyModalOpen] = useState(false);
   const [tunnelUrl, setTunnelUrl] = useState("");
@@ -687,11 +701,13 @@ export default function Home() {
   useEffect(() => {
     const handleMessage = (event: MessageEvent) => {
       console.log('Webapp received message:', event.data);
-      if (event.data && typeof event.data === "object" && "selectedNode" in event.data) {
-        const url = event.data.selectedNode;
-        if (typeof url === "string" || url === null) {
-          setSelectedNode(url);
-        }
+      if (event.data && typeof event.data === "object" &&
+          (event.data.type === "selection-changed" || event.data.type === "response") &&
+          "data" in event.data && event.data.data) {
+        const d = event.data.data as { nodes?: unknown[]; image?: string | null; nodeUrl?: string | null };
+        const d2 = { nodes: d.nodes ?? [], image: d.image ?? null, nodeUrl: d.nodeUrl ?? null };
+        console.log(d2);
+        setSelectedNode(d2);
       }
       if (event.data && typeof event.data === "object" && event.data.type === "southleft-mcp-auth") {
         console.log('Received southleft-mcp-auth:', event.data.success);
@@ -702,12 +718,28 @@ export default function Home() {
 
       // Figma plugin context (fileKey, fileName, fileUrl)
       if (event.data && typeof event.data === "object" && event.data.type === "figma-context") {
-        const { fileKey, fileName, fileUrl } = event.data as { fileKey: string | null; fileName: string; fileUrl: string | null };
-        console.log('[IDS Webapp] figma-context reçu :', { fileKey, fileName, fileUrl });
+        const { fileKey, fileName, fileUrl, currentPage, pages, currentUser } = event.data as { fileKey: string | null; fileName: string; fileUrl: string | null; currentPage?: { id: string; name: string } | null; pages?: { id: string; name: string }[]; currentUser?: { id: string; name: string } | null };
+        console.log('[IDS Webapp] figma-context reçu :', { fileKey, fileName, fileUrl, currentPage, pages, currentUser });
         if (fileName) {
-          setFigmaPluginContext({ fileKey: fileKey ?? '', fileName, fileUrl: fileUrl ?? '' });
-          console.log('[IDS Webapp] figmaPluginContext mis à jour ✓', { fileKey, fileName });
+          setFigmaPluginContext({ fileKey: fileKey ?? '', fileName, fileUrl: fileUrl ?? '', currentPage, pages, currentUser });
+          console.log('[IDS Webapp] figmaPluginContext mis à jour ✓', { fileKey, fileName, currentPage });
         }
+      }
+
+      // Reset conversation before a new analysis
+      if (event.data && typeof event.data === "object" && event.data.type === "reset-conversation") {
+        setMessages([]);
+      }
+
+      // Fake agent message injected from the plugin mini-mode tooltip
+      if (event.data && typeof event.data === "object" && event.data.type === "inject-agent-message") {
+        const text = (event.data as { type: string; text: string }).text;
+        setPendingAgentMessage(text);
+      }
+
+      // Auto-trigger analysis sent by the plugin 400ms after inject-agent-message
+      if (event.data && typeof event.data === "object" && event.data.type === "trigger-user-analysis") {
+        sendMessageEarlyRef.current?.({ text: "Yes analyze my new figma selection" });
       }
 
       // Token relay from OAuth popup via postMessage
@@ -842,6 +874,28 @@ export default function Home() {
   );
 
   const { messages, sendMessage, status, error, setMessages } = useChat({ transport });
+
+  // Keep a ref to messages to avoid stale closures in effects
+  const messagesRef = useRef(messages);
+  messagesRef.current = messages;
+
+  // Brancher le ref stable (déclaré tôt) sur sendMessage maintenant qu'il est disponible
+  sendMessageEarlyRef.current = sendMessage;
+
+  // Inject fake agent message from plugin mini-mode tooltip
+  // (l'envoi du message user est déclenché séparément via trigger-user-analysis)
+  useEffect(() => {
+    if (pendingAgentMessage !== null) {
+      const text = pendingAgentMessage;
+      setPendingAgentMessage(null);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      setMessages([...messagesRef.current, {
+        id: `agent-prompt-${Date.now()}`,
+        role: "assistant",
+        parts: [{ type: "text", text: `${text} [ANALYZE_BTN]` }],
+      }] as any);
+    }
+  }, [pendingAgentMessage]);
 
   const isLoading = status === "submitted" || status === "streaming";
 
@@ -1334,7 +1388,23 @@ export default function Home() {
                           if (structSeg.kind === "mcp-status") {
                             return <MCPStatusBlock key={sj} status={structSeg.status} />;
                           }
-                          
+                          if (structSeg.kind === "analyze-btn") {
+                            return (
+                              <button
+                                key={sj}
+                                onClick={() => { shouldAutoScroll.current = true; sendMessage({ text: "Yes analyze my new figma selection" }); }}
+                                disabled={isLoading}
+                                title="Analyze with AI"
+                                className="inline-flex items-center justify-center w-7 h-7 rounded-md bg-blue-500 hover:bg-blue-400 text-white transition-all duration-150 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed ml-1 mt-1 hover:scale-110 hover:shadow-[0_0_8px_rgba(59,130,246,0.5)]"
+                              >
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+                                  <path d="M12 2.5c0 0 .9 4 2.8 5.5C16.7 9.5 21 9.5 21 9.5s-4.3.1-6.2 1.6C12.9 12.5 12 16.5 12 16.5s-.9-4-2.8-5.5C7.3 9.6 3 9.5 3 9.5s4.3 0 6.2-1.5C11.1 6.5 12 2.5 12 2.5z"/>
+                                  <path d="M19.5 15c0 0 .5 2 1.5 2.7 1 .7 2.5.8 2.5.8s-1.5 0-2.5.8c-1 .7-1.5 2.7-1.5 2.7s-.5-2-1.5-2.7c-1-.7-2.5-.8-2.5-.8s1.5-.1 2.5-.8c1-.7 1.5-2.7 1.5-2.7z"/>
+                                </svg>
+                              </button>
+                            );
+                          }
+
                           // content kind
                           const imageSegments = parseTextWithImages(structSeg.text, isLoading && isLastMsg);
                           return (
@@ -1497,7 +1567,7 @@ export default function Home() {
               <span className="shrink-0 mt-0.5">👁️</span>
               <div>
                 <span>Selection changed in Figma — </span>
-                <span className="text-purple-200/90 font-medium not-italic break-all">{selectedNode}</span>
+                <span className="text-purple-200/90 font-medium not-italic break-all">{selectedNode.nodeUrl}</span>
                 <div className="mt-1.5 flex gap-2">
                   <button
                     type="button"

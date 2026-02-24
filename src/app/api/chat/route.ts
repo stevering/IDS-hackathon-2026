@@ -566,7 +566,8 @@ async function connectMCPs(
       mcpErrors.push(`Code MCP connection failed: ${msg}`);
     }
   }
-
+  console.debug('allTools:');
+  console.debug(allTools);
   return { allTools, mcpErrors };
 }
 
@@ -593,38 +594,64 @@ export async function POST(req: Request) {
   // Prepare messages for the model
   const modelMessages = await convertToModelMessages(messages);
 
-  // Build the system prompt
-  let system = GUARDIAN_SYSTEM_PROMPT;
-  if (selectedNode) {
-    system += `\n\n### SELECTED FIGMA NODE (from host application — HIGHEST PRIORITY)
-The currently selected node in Figma has the following URL: ${selectedNode}
+  // Build the dynamic system prompt
+  let system = "";
+  if (selectedNode && typeof selectedNode === "object") {
+    const { nodeUrl, nodes } = selectedNode as { nodeUrl?: string | null; nodes?: unknown[] };
+    system += `\n\n### SELECTED FIGMA NODE (from host application — HIGHEST PRIORITY)`;
+    if (nodeUrl) {
+      system += `\nThe currently selected node URL: ${nodeUrl}`;
+    }
+    if (nodes && Array.isArray(nodes) && nodes.length > 0) {
+      system += `\nSelected node properties (from Figma plugin):\n\`\`\`json\n${JSON.stringify(nodes, null, 2)}\n\`\`\``;
+    }
+    system += `
 CRITICAL RULES:
-- This URL is ALREADY the selected node. Do NOT call any Figma MCP tool to get or find the current selection (e.g. get_selection, get_current_selection, etc.). The selection is already known.
-- When the user refers to "this node", "the selection", "the selected element", "this component", or similar, they mean this URL.
-- You may use other Figma MCP tools (e.g. get_node_details, get_styles, etc.) to inspect the properties of this node using the URL above.
-- Always start from this URL when the user asks about the current selection.`;
+- The selection is already known from the data above. Do NOT call any Figma MCP tool to get or find the current selection (e.g. get_selection, get_current_selection, etc.).
+- When the user refers to "this node", "the selection", "the selected element", "this component", or similar, they mean the node above.
+- You may use other Figma MCP tools (e.g. get_node_details, get_styles, etc.) to inspect further properties using the node URL above.
+- Always start from this data when the user asks about the current selection.`;
   }
+
+
+  system += `\n\n### FIGMA PLUGIN CONTEXT (currently open file — HIGH PRIORITY)
+  The user is working in the following Figma file:
+  - **File Name:** "${figmaPluginContext.fileName}"
+  - **File Key:** "${figmaPluginContext.fileKey}"
+  - **File URL:** "${figmaPluginContext.fileUrl}"`;
+        if (figmaPluginContext.currentPage) {
+          system += `\n- **Current Page:** "${figmaPluginContext.currentPage.name}" (id: ${figmaPluginContext.currentPage.id})`;
+        }
+        if (figmaPluginContext.pages && figmaPluginContext.pages.length > 0) {
+          system += `\n- **All Pages:** ${figmaPluginContext.pages.map((p: { id: string; name: string }) => `"${p.name}" (${p.id})`).join(', ')}`;
+        }
+        if (figmaPluginContext.currentUser) {
+          system += `\n- **User:** ${figmaPluginContext.currentUser.name}`;
+        }
 
   // Inject Figma plugin context (file currently open in Figma)
   if (figmaPluginContext?.fileName) {
     if (figmaPluginContext.fileKey) {
-      system += `\n\n### FIGMA PLUGIN CONTEXT (currently open file — HIGH PRIORITY)
-The user is working in the following Figma file:
-- **File Name:** ${figmaPluginContext.fileName}
-- **File Key:** ${figmaPluginContext.fileKey}
-- **File URL:** ${figmaPluginContext.fileUrl}
+      system += `
 RULES:
 - Use this URL as the default Figma file for any tool call that requires a file key or URL when none is explicitly provided.
 - When the user refers to "the current file", "this file", "my file", or similar, they mean this Figma file.
+- When the user refers to "the current page" or "this page", they mean the page named above.
 - Do NOT ask the user for the Figma file URL if this context is present — you already have it.`;
     } else {
-      system += `\n\n### FIGMA PLUGIN CONTEXT (currently open file — HIGH PRIORITY)
-The user is working in a Figma file named: **${figmaPluginContext.fileName}**
+      system += `\n\n
+The user is working in a Figma file without key.
 Note: This is a Community or unsaved file — no direct file URL is available from the plugin API.
 RULES:
 - When the user refers to "the current file", "this file", or similar, they mean "${figmaPluginContext.fileName}".
 - If you need to access this file via MCP tools, ask the user to paste the Figma file URL from their browser address bar.`;
     }
+
+    console.debug('DYNAMIC SYSTEM PROMPT:');
+    console.debug(system);
+
+    // Build the final system prompt
+    system = GUARDIAN_SYSTEM_PROMPT + system;
   }
 
   // Create MCP connection promise (async - non blocking)
