@@ -1,0 +1,1097 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <meta charset="UTF-8">
+    <style>
+        :root {
+            --figma-bg: #2C2C2C;
+            --figma-bg-hover: #383838;
+            --figma-bg-active: #4B4B4B;
+            --figma-surface: #383838;
+            --figma-border: #454545;
+            --figma-text: #FFFFFF;
+            --figma-text-muted: #A0A0A0;
+            --figma-text-disabled: #6B6B6B;
+            --figma-accent: #0D99FF;
+            --figma-accent-hover: #38A5F8;
+            --figma-success: #0ACF83;
+            --figma-warning: #FFAD33;
+            --figma-error: #F5493B;
+            --figma-shadow: rgba(0, 0, 0, 0.3);
+            --radius: 6px;
+            --radius-sm: 4px;
+        }
+
+        * {
+            box-sizing: border-box;
+            -webkit-font-smoothing: antialiased;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+            font-size: 11px;
+            background: var(--figma-bg);
+            color: var(--figma-text);
+            margin: 0;
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+            overflow: hidden;
+            border-radius: 0;
+            line-height: 1.4;
+        }
+
+        /* ── Header ─────────────────────────────────────────── */
+        .header {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 8px 10px;
+            background: var(--figma-bg);
+        }
+
+        .header-selection {
+            flex: 1;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            min-width: 0;
+        }
+
+        .status-indicator {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            padding: 3px 6px;
+            border-radius: var(--radius-sm);
+            font-size: 10px;
+            color: var(--figma-text-muted);
+            flex-shrink: 0;
+        }
+
+        .status-indicator.connected {
+            color: var(--figma-success);
+        }
+
+        .status-dot {
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+            background: currentColor;
+        }
+
+        /* Figma property-panel style icon buttons */
+        .header-icon-btn {
+            width: 28px;
+            height: 28px;
+            border-radius: var(--radius-sm);
+            border: 1px solid var(--figma-border);
+            background: var(--figma-surface);
+            color: var(--figma-text-muted);
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 0;
+            flex-shrink: 0;
+            position: relative;
+            transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+        }
+
+        .header-icon-btn:hover {
+            background: var(--figma-bg-active);
+            color: var(--figma-text);
+            border-color: var(--figma-text-disabled);
+        }
+
+        .header-icon-btn svg {
+            width: 14px;
+            height: 14px;
+        }
+
+        /* Green dot indicator on URL button when a file URL is set */
+        .url-btn.has-url::after {
+            content: '';
+            position: absolute;
+            top: 2px;
+            right: 2px;
+            width: 5px;
+            height: 5px;
+            border-radius: 50%;
+            background: var(--figma-success);
+        }
+
+        /* ── Minimized mode ─────────────────────────────────── */
+        body.minimized .header,
+        body.minimized .content {
+            display: none;
+        }
+
+        /* ── Main header (always visible) ───────────────────────── */
+        .main-header {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 8px 10px;
+            height: 44px;
+            background: var(--figma-bg);
+            border-bottom: 1px solid var(--figma-border);
+            cursor: pointer;
+            flex-shrink: 0;
+            user-select: none;
+        }
+
+        .main-header-figure {
+            width: 24px;
+            height: 24px;
+            flex-shrink: 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            filter: drop-shadow(0 1px 4px rgba(0, 0, 0, 0.5));
+            transition: transform 0.15s ease, background 0.15s ease;
+            cursor: pointer;
+            border-radius: var(--radius-sm);
+        }
+
+        .main-header-figure:hover {
+            transform: scale(1.15);
+            background: var(--figma-bg-active);
+        }
+
+        .main-header-message-area {
+            flex: 1;
+            min-width: 0;
+            position: relative;
+            font-style: italic;
+            height: 100%;
+            display: flex;
+            align-items: center;
+        }
+
+        .main-header-tooltip {
+            position: absolute;
+            inset: 0;
+            display: flex;
+            align-items: center;
+            gap: 7px;
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 0.25s ease;
+        }
+
+        .main-header-tooltip.visible {
+            opacity: 1;
+            pointer-events: auto;
+        }
+
+        .main-header-tooltip-text {
+            flex: 1;
+            min-width: 0;
+            font-size: 11px;
+            color: var(--figma-text);
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .main-header-idle-hint {
+            font-size: 10px;
+            color: var(--figma-text-muted);
+            line-height: 1.4;
+            pointer-events: none;
+            opacity: 1;
+            transition: opacity 0.25s ease;
+        }
+
+        .main-header-tooltip.visible ~ .main-header-idle-hint {
+            opacity: 0;
+        }
+
+        .mini-analyze-btn {
+            flex-shrink: 0;
+            width: 26px;
+            height: 26px;
+            border: none;
+            border-radius: 6px;
+            background: var(--figma-accent);
+            color: white;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: background 0.15s ease, transform 0.15s ease, box-shadow 0.15s ease;
+            padding: 0;
+        }
+
+        .mini-analyze-btn:hover {
+            background: var(--figma-accent-hover);
+            transform: scale(1.12);
+            box-shadow: 0 0 8px rgba(13, 153, 255, 0.5);
+        }
+
+        .mini-analyze-btn svg {
+            width: 14px;
+            height: 14px;
+        }
+
+        /* ── Content ─────────────────────────────────────────── */
+        .content {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        .selection-avatar {
+            width: 24px;
+            height: 24px;
+            border-radius: var(--radius-sm);
+            background: var(--figma-surface);
+            background-size: cover;
+            background-position: center;
+            background-repeat: no-repeat;
+            flex-shrink: 0;
+        }
+
+        .selection-info-text {
+            flex: 1;
+            font-size: 11px;
+        }
+
+        .selection-count {
+            color: var(--figma-text-muted);
+        }
+
+        .selection-count strong {
+            color: var(--figma-text);
+        }
+
+        .webview-container {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            background: #1a1a1a;
+            border-radius: var(--radius-sm);
+            overflow: hidden;
+        }
+
+        .webview-iframe {
+            flex: 1;
+            width: 100%;
+            height: 100%;
+            border: none;
+            background: white;
+        }
+
+        .empty-state {
+            flex: 1;
+            display: none;
+        }
+
+        .chat-container {
+            display: none;
+        }
+
+        /* ── Config button icon size override ───────────────── */
+        .url-btn svg {
+            width: 24px;
+            height: 24px;
+        }
+
+        /* ── Panel area (wrapper isolating animation from main-header) ─────── */
+        .plugin-panel-area {
+            position: relative;
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden; /* clips translateX animation */
+            min-height: 0;
+        }
+
+        /* ── Config panel (slides in from right, covers .header + .content) ── */
+        .config-panel {
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: var(--figma-bg);
+            z-index: 50;
+            display: flex;
+            flex-direction: column;
+            transform: translateX(100%);
+            pointer-events: none;
+            transition: transform 0.25s ease;
+        }
+
+        .config-panel.open {
+            transform: translateX(0);
+            pointer-events: auto;
+        }
+
+        .config-panel-header {
+            display: flex;
+            align-items: center;
+            padding: 8px 10px;
+            border-bottom: 1px solid var(--figma-border);
+            flex-shrink: 0;
+            gap: 8px;
+        }
+
+        .config-panel-title {
+            flex: 1;
+            font-size: 12px;
+            font-weight: 600;
+            color: var(--figma-text);
+        }
+
+        /* Close button aligns with url-btn on the right — same position, same height */
+        #config-close-btn {
+            flex-shrink: 0;
+        }
+
+        .config-panel-body {
+            flex: 1;
+            overflow-y: auto;
+            padding: 16px;
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+        }
+
+        .config-section-label {
+            font-size: 10px;
+            color: var(--figma-text-muted);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 8px;
+        }
+
+        .config-context-block {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+
+        .config-context-field {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
+
+        .config-context-field-label {
+            font-size: 10px;
+            color: var(--figma-text-muted);
+        }
+
+        .config-context-input {
+            width: 100%;
+            background: var(--figma-surface);
+            border: 1px solid var(--figma-border);
+            border-radius: var(--radius-sm);
+            color: var(--figma-text-disabled);
+            font-family: inherit;
+            font-size: 11px;
+            padding: 6px 8px;
+            outline: none;
+            cursor: default;
+            user-select: text;
+        }
+
+        .config-context-empty {
+            font-size: 11px;
+            color: var(--figma-text-disabled);
+            font-style: italic;
+        }
+
+        /* ── Selection preview in config panel ──────────────── */
+        .selection-preview {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 6px 8px;
+            background: var(--figma-surface);
+            border: 1px solid var(--figma-border);
+            border-radius: var(--radius-sm);
+            cursor: default;
+        }
+        .selection-preview-thumb {
+            width: 36px;
+            height: 36px;
+            border-radius: 3px;
+            background: var(--figma-bg);
+            background-size: contain;
+            background-repeat: no-repeat;
+            background-position: center;
+            flex-shrink: 0;
+            border: 1px solid var(--figma-border);
+        }
+        .selection-preview-info {
+            flex: 1;
+            min-width: 0;
+        }
+        .selection-preview-name {
+            font-size: 11px;
+            font-weight: 500;
+            color: var(--figma-text);
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        .selection-preview-meta {
+            font-size: 10px;
+            color: var(--figma-text-muted);
+            margin-top: 1px;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        .selection-preview-expand {
+            background: none;
+            border: 1px solid var(--figma-border);
+            color: var(--figma-text-muted);
+            border-radius: var(--radius-sm);
+            width: 20px;
+            height: 20px;
+            cursor: pointer;
+            font-size: 11px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-shrink: 0;
+            transition: background 0.1s, color 0.1s;
+        }
+        .selection-preview-expand:hover {
+            background: var(--figma-bg-hover);
+            color: var(--figma-text);
+        }
+        .selection-preview-expand.open {
+            color: var(--figma-accent);
+            border-color: var(--figma-accent);
+        }
+        .selection-json {
+            display: none;
+            margin-top: 4px;
+            background: var(--figma-bg);
+            border: 1px solid var(--figma-border);
+            border-radius: var(--radius-sm);
+            padding: 6px 8px;
+            font-size: 10px;
+            font-family: 'SF Mono', 'Fira Code', monospace;
+            color: var(--figma-text-muted);
+            max-height: 160px;
+            overflow-y: auto;
+            white-space: pre;
+            line-height: 1.5;
+        }
+        .selection-json.open { display: block; }
+
+        .url-input {
+            width: 100%;
+            background: var(--figma-bg);
+            border: 1px solid var(--figma-border);
+            border-radius: var(--radius-sm);
+            color: var(--figma-text);
+            font-family: inherit;
+            font-size: 11px;
+            padding: 7px 8px;
+            outline: none;
+            transition: border-color 0.15s ease;
+        }
+
+        .url-input:focus {
+            border-color: var(--figma-accent);
+        }
+
+        .url-input::placeholder {
+            color: var(--figma-text-disabled);
+        }
+
+        .url-error {
+            font-size: 10px;
+            color: var(--figma-error);
+            margin-top: 5px;
+            display: none;
+        }
+
+    </style>
+</head>
+
+<body>
+<!-- Main header (expanded mode) — shield + message area, click to minimize -->
+<div class="main-header" id="main-header">
+    <div class="main-header-figure" id="main-header-figure"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="100%" height="100%"><path d="M 81 34 A 42 42 0 1 0 81 94" fill="none" stroke="#6D28D9" stroke-width="19" stroke-linecap="round"/><path d="M 72 80 L 93 80" fill="none" stroke="#6D28D9" stroke-width="15" stroke-linecap="round"/><path d="M 76 37 A 37 37 0 1 0 76 91" fill="none" stroke="#A78BFA" stroke-width="5" stroke-linecap="round" opacity="0.45"/><ellipse cx="21" cy="27" rx="10" ry="13" fill="#6D28D9"/><ellipse cx="21" cy="28" rx="6" ry="8" fill="#DDD6FE" opacity="0.75"/><path d="M 31 44 Q 40 40 49 43" fill="none" stroke="#4C1D95" stroke-width="2.5" stroke-linecap="round"/><path d="M 55 43 Q 64 40 73 44" fill="none" stroke="#4C1D95" stroke-width="2.5" stroke-linecap="round"/><ellipse cx="40" cy="52" rx="8" ry="9" fill="white"/><ellipse cx="64" cy="52" rx="8" ry="9" fill="white"/><ellipse cx="40" cy="53.5" rx="5.5" ry="6.5" fill="#2E1065"/><ellipse cx="64" cy="53.5" rx="5.5" ry="6.5" fill="#2E1065"/><circle cx="42" cy="51" r="2.2" fill="white"/><circle cx="66" cy="51" r="2.2" fill="white"/><circle cx="38.5" cy="55" r="1" fill="white" opacity="0.6"/><circle cx="62.5" cy="55" r="1" fill="white" opacity="0.6"/><path d="M 32 64 Q 52 78 72 64" fill="none" stroke="#4C1D95" stroke-width="3.5" stroke-linecap="round"/><ellipse cx="29" cy="63" rx="8" ry="4.5" fill="#C4B5FD" opacity="0.55"/><ellipse cx="75" cy="63" rx="8" ry="4.5" fill="#C4B5FD" opacity="0.55"/><path d="M 87 73 L 88.3 77.7 L 93 79 L 88.3 80.3 L 87 85 L 85.7 80.3 L 81 79 L 85.7 77.7 Z" fill="white" opacity="0.92"/><ellipse cx="14" cy="67" rx="6" ry="9" fill="#6D28D9" transform="rotate(-25 14 67)"/><ellipse cx="90" cy="97" rx="6" ry="9" fill="#6D28D9" transform="rotate(15 90 97)"/></svg></div>
+    <div class="main-header-message-area">
+        <div class="main-header-tooltip" id="main-header-tooltip">
+            <span class="main-header-tooltip-text" id="main-header-tooltip-text"></span>
+            <button class="mini-analyze-btn" id="main-header-analyze-btn" title="Start a new chat and analyzing with Guardian">
+                <svg viewBox="0 0 24 24" fill="currentColor" xmlns="http://www.w3.org/2000/svg">
+                    <path d="M12 2.5c0 0 .9 4 2.8 5.5C16.7 9.5 21 9.5 21 9.5s-4.3.1-6.2 1.6C12.9 12.5 12 16.5 12 16.5s-.9-4-2.8-5.5C7.3 9.6 3 9.5 3 9.5s4.3 0 6.2-1.5C11.1 6.5 12 2.5 12 2.5z"/>
+                    <path d="M19.5 15c0 0 .5 2 1.5 2.7 1 .7 2.5.8 2.5.8s-1.5 0-2.5.8c-1 .7-1.5 2.7-1.5 2.7s-.5-2-1.5-2.7c-1-.7-2.5-.8-2.5-.8s1.5-.1 2.5-.8c1-.7 1.5-2.7 1.5-2.7z"/>
+                </svg>
+            </button>
+        </div>
+        <div class="main-header-idle-hint">
+            Guardian watches your selection for design system inconsistencies &amp; design-code issues.
+        </div>
+    </div>
+</div>
+
+<div class="plugin-panel-area">
+    <!-- Config panel — position:absolute inside this wrapper, isolated from main-header -->
+    <div class="config-panel" id="config-panel">
+        <div class="config-panel-header">
+            <span class="config-panel-title">Plugin Parameters</span>
+            <button class="header-icon-btn" id="config-close-btn" title="Close settings">
+                <svg width="24" height="24" fill="none" viewBox="0 0 24 24">
+                    <path stroke="currentColor" stroke-width="2" stroke-linecap="round" d="M6 6l12 12M6 18L18 6"/>
+                </svg>
+            </button>
+        </div>
+        <div class="config-panel-body">
+            <div>
+                <div class="config-section-label">Figma URL to analyze</div>
+                <input class="url-input" id="url-input" type="text" placeholder="https://www.figma.com/design/…" />
+                <div class="url-error" id="url-error">URL not recognized — paste a Figma design/file link</div>
+            </div>
+            <div>
+                <div class="config-section-label">Context sent to Guardian</div>
+                <div class="config-context-block" id="config-context-block">
+                    <span class="config-context-empty">No context loaded yet</span>
+                </div>
+            </div>
+            <div>
+                <div class="config-section-label">Current selection</div>
+                <div id="config-selection-block">
+                    <span class="config-context-empty">No selection</span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="header">
+        <div class="header-selection">
+            <div class="selection-avatar" id="main-avatar"></div>
+            <div class="selection-info-text">
+                <span class="selection-count" id="selection-stats">No selection active</span>
+            </div>
+        </div>
+        <div class="status-indicator" id="status">
+            <div class="status-dot"></div>
+            <span>Connecting...</span>
+        </div>
+        <button class="header-icon-btn url-btn" id="url-btn" title="Plugin settings">
+            <svg width="24" height="24" fill="none" viewBox="0 0 24 24">
+                <path fill="currentColor" d="M8.5 18a.5.5 0 0 0 .5-.5v-1.55a2.5 2.5 0 0 0 0-4.9V6.5a.5.5 0 0 0-1 0v4.55a2.501 2.501 0 0 0 0 4.9v1.55a.5.5 0 0 0 .5.5m7 0a.5.5 0 0 0 .5-.5v-4.55a2.501 2.501 0 0 0 0-4.9V6.5a.5.5 0 0 0-1 0v1.55a2.5 2.5 0 0 0 0 4.9v4.55a.5.5 0 0 0 .5.5m0-6a1.5 1.5 0 1 1 0-3 1.5 1.5 0 0 1 0 3m-7 3a1.5 1.5 0 1 1 0-3 1.5 1.5 0 0 1 0 3"/>
+            </svg>
+        </button>
+    </div>
+
+    <div class="content">
+        <div class="webview-container" id="webview-container">
+            <iframe class="webview-iframe" id="webview-iframe" src="http://localhost:3000"></iframe>
+        </div>
+
+        <div class="empty-state" id="empty-state"></div>
+    </div>
+</div>
+
+
+<script>
+    const mainAvatar = document.getElementById('main-avatar');
+    const selectionStats = document.getElementById('selection-stats');
+    const statusEl = document.getElementById('status');
+    const webviewIframe = document.getElementById('webview-iframe');
+    const urlBtn = document.getElementById('url-btn');
+    const configPanel = document.getElementById('config-panel');
+    const configCloseBtn = document.getElementById('config-close-btn');
+    const urlInput = document.getElementById('url-input');
+    const urlError = document.getElementById('url-error');
+    const configContextBlock = document.getElementById('config-context-block');
+    const configSelectionBlock = document.getElementById('config-selection-block');
+
+    const NORMAL_WIDTH = 400;
+    const NORMAL_HEIGHT = 800;
+    const MINI_HEIGHT = 44;
+    const FIGMA_URL_KEY = 'figpal_file_url';
+    const FIGMA_FNAME_KEY = 'figpal_file_name';
+    const FIGMA_URL_RE = /figma\.com\/(design|file|board)\/([^\/\?]+)/;
+
+    // clientStorage helpers (go through code.js — localStorage unavailable in data: URLs)
+    function storageGet(key) {
+        parent.postMessage({ pluginMessage: { type: 'storage-get', data: { key } } }, '*');
+    }
+    function storageSet(key, value) {
+        parent.postMessage({ pluginMessage: { type: 'storage-set', data: { key, value } } }, '*');
+    }
+
+    const DEFAULT_GHOST = "https://raw.githubusercontent.com/josh-one/figpal/main/assets/ghost.png";
+    let isConnected = false;
+    const inFigmaPlugin = window !== window.top;
+    let cachedFigmaContext = null;
+    let cachedSelection = null; // { nodes, image, nodeUrl }
+    // Saved URL data from clientStorage: { url, fileName, fileKey }
+    let savedUrlData = null;
+
+    console.log('[FigPal UI] Script démarré. inFigmaPlugin =', inFigmaPlugin);
+
+    const mainHeaderEl = document.getElementById('main-header');
+    const mainHeaderTooltipEl = document.getElementById('main-header-tooltip');
+    const mainHeaderTooltipText = document.getElementById('main-header-tooltip-text');
+    const mainHeaderAnalyzeBtn = document.getElementById('main-header-analyze-btn');
+
+    const MINI_MESSAGES = [
+        "Spotted something new! Want me to analyze it? ✨",
+        "New selection detected — should I check it?",
+        "Interesting component! Shall I audit it? 🔍",
+        "I see you selected something. Run an analysis?",
+        "New element! Want an AI design review? 🛡️",
+        "Looking good — want me to verify its consistency?",
+        "Component changed! Should I inspect it?",
+        "Found your selection. Want me to audit it?",
+        "I noticed a new selection — run an analysis?",
+        "Design check ready. Shall I proceed? ✨"
+    ];
+
+    let currentTooltipMessage = null;
+    let tooltipTimer = null;
+
+    function showMiniTooltip(nodeName) {
+        const base = MINI_MESSAGES[Math.floor(Math.random() * MINI_MESSAGES.length)];
+        currentTooltipMessage = nodeName ? `"${nodeName}" — ${base}` : base;
+        mainHeaderTooltipText.textContent = currentTooltipMessage;
+        mainHeaderTooltipEl.classList.add('visible');
+        mainHeaderEl.classList.add('has-message');
+        clearTimeout(tooltipTimer);
+        tooltipTimer = setTimeout(hideMiniTooltip, 8000);
+    }
+
+    function hideMiniTooltip() {
+        mainHeaderTooltipEl.classList.remove('visible');
+        mainHeaderEl.classList.remove('has-message');
+    }
+
+    // ── Minimize / Maximize ───────────────────────────────
+    function setMinimized(mini) {
+        document.body.classList.toggle('minimized', mini);
+        parent.postMessage({
+            pluginMessage: {
+                type: 'resize',
+                data: mini
+                    ? { width: NORMAL_WIDTH, height: MINI_HEIGHT }
+                    : { width: NORMAL_WIDTH, height: NORMAL_HEIGHT }
+            }
+        }, '*');
+    }
+
+    // 🛡️ Bouclier → toggle mini ↔ expanded, sans toucher la conversation
+    document.getElementById('main-header-figure').addEventListener('click', (e) => {
+        e.stopPropagation();
+        setMinimized(!document.body.classList.contains('minimized'));
+    });
+
+    // Texte du message → expand seulement (pas d'inject, pas de minimize)
+    mainHeaderTooltipText.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (document.body.classList.contains('minimized')) setMinimized(false);
+    });
+
+    // Main header: toggle mini ↔ expanded
+    // Si un message est visible → expand seulement (jamais minimize)
+    mainHeaderEl.addEventListener('click', () => {
+        const isMini = document.body.classList.contains('minimized');
+        if (mainHeaderEl.classList.contains('has-message')) {
+            if (isMini) setMinimized(false);
+            // expanded + has-message → on reste agrandi
+        } else {
+            setMinimized(!isMini);
+        }
+    });
+
+    // Hover sur le header → pause le timer du message
+    mainHeaderEl.addEventListener('mouseenter', () => {
+        if (mainHeaderEl.classList.contains('has-message')) clearTimeout(tooltipTimer);
+    });
+    mainHeaderEl.addEventListener('mouseleave', () => {
+        if (mainHeaderEl.classList.contains('has-message')) {
+            tooltipTimer = setTimeout(hideMiniTooltip, 8000);
+        }
+    });
+
+    // ⭐ Étoile → conversation vierge + expand si besoin + inject message + auto-analyse
+    mainHeaderAnalyzeBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (document.body.classList.contains('minimized')) setMinimized(false);
+        if (currentTooltipMessage) {
+            const msg = currentTooltipMessage;
+            currentTooltipMessage = null;
+            hideMiniTooltip();
+            sendToWebview({ type: 'reset-conversation' });
+            setTimeout(function () {
+                sendToWebview({ type: 'inject-agent-message', text: msg });
+                setTimeout(function () {
+                    sendToWebview({ type: 'trigger-user-analysis' });
+                }, 400);
+            }, 200);
+        }
+    });
+
+    // ── Figma URL Modal ───────────────────────────────────
+    function extractFileKey(url) {
+        const m = url.match(FIGMA_URL_RE);
+        return m ? m[2] : null;
+    }
+
+    function validateUrlInput(val) {
+        const valid = FIGMA_URL_RE.test(val.trim());
+        urlError.style.display = (val.trim() && !valid) ? 'block' : 'none';
+    }
+
+    function applyFigmaUrl(url) {
+        const fileKey = extractFileKey(url);
+        if (!fileKey) return false;
+        // Associate URL with the current file name so we can validate on file switch
+        const fileName = cachedFigmaContext?.fileName || '';
+        savedUrlData = { url, fileName, fileKey };
+        storageSet(FIGMA_URL_KEY, url);
+        storageSet(FIGMA_FNAME_KEY, fileName);
+        cachedFigmaContext = {
+            ...cachedFigmaContext,
+            type: 'figma-context',
+            fileKey,
+            fileName: fileName || 'Figma File',
+            fileUrl: `https://www.figma.com/design/${fileKey}/`,
+        };
+        console.log('[FigPal UI] URL Figma appliquée :', cachedFigmaContext);
+        sendToWebview(cachedFigmaContext);
+        try { window.top.postMessage({ source: 'figpal-plugin', ...cachedFigmaContext }, '*'); } catch (e) {}
+        urlBtn.classList.add('has-url');
+        return true;
+    }
+
+    function openConfigPanel() {
+        const saved = savedUrlData?.url || '';
+        urlInput.value = saved;
+        validateUrlInput(saved);
+        updateContextDisplay();
+        updateSelectionDisplay();
+        configPanel.classList.add('open');
+        setTimeout(() => urlInput.focus(), 50);
+        if (!cachedFigmaContext) requestAndSendFigmaContext();
+    }
+
+    function closeConfigPanel() {
+        configPanel.classList.remove('open');
+    }
+
+    function updateContextDisplay() {
+        const ctx = cachedFigmaContext;
+        if (!ctx) {
+            configContextBlock.innerHTML = '<span class="config-context-empty">No context loaded yet</span>';
+            return;
+        }
+        function field(label, value) {
+            const v = (value || '').toString().replace(/"/g, '&quot;');
+            return `<div class="config-context-field">
+                    <span class="config-context-field-label">${label}</span>
+                    <input class="config-context-input" readonly value="${v}" />
+                </div>`;
+        }
+        const sections = [];
+        // File
+        sections.push(field('Type', ctx.type));
+        sections.push(field('File Name', ctx.fileName));
+        sections.push(field('File Key', ctx.fileKey));
+        sections.push(field('File URL', ctx.fileUrl));
+        // Page
+        if (ctx.currentPage) {
+            sections.push(field('Current Page', ctx.currentPage.name));
+        }
+        if (ctx.pages && ctx.pages.length) {
+            sections.push(field('Pages', ctx.pages.map(p => p.name).join(', ')));
+        }
+        // User
+        if (ctx.currentUser) {
+            sections.push(field('User', ctx.currentUser.name));
+        }
+        configContextBlock.innerHTML = sections.join('');
+    }
+
+    function updateSelectionDisplay() {
+        const sel = cachedSelection;
+        if (!sel || !sel.nodes || sel.nodes.length === 0) {
+            configSelectionBlock.innerHTML = '<span class="config-context-empty">No selection</span>';
+            return;
+        }
+        const first = sel.nodes[0];
+        const name = first.name || '(unnamed)';
+        const type = first.type || '';
+        const b = first.bounds;
+        const dims = b ? `${Math.round(b.width)}×${Math.round(b.height)} @ (${Math.round(b.x)}, ${Math.round(b.y)})` : '';
+        const count = sel.nodes.length;
+        const countLabel = count > 1 ? `${count} nodes` : '1 node';
+        // JSON without image field
+        const jsonObj = sel.nodes.map(n => {
+            const { ...rest } = n;
+            return rest;
+        });
+        const jsonStr = JSON.stringify(jsonObj, null, 2);
+        const thumbStyle = sel.image ? `background-image:url('${sel.image}')` : '';
+        configSelectionBlock.innerHTML = `
+                <div class="selection-preview">
+                    <div class="selection-preview-thumb" style="${thumbStyle}"></div>
+                    <div class="selection-preview-info">
+                        <div class="selection-preview-name">${name.replace(/</g,'&lt;')}</div>
+                        <div class="selection-preview-meta">${type} · ${countLabel}${dims ? ' · ' + dims : ''}</div>
+                    </div>
+                    <button class="selection-preview-expand" id="sel-expand-btn" title="Show JSON">›</button>
+                </div>
+                <pre class="selection-json" id="sel-json">${jsonStr.replace(/</g,'&lt;')}</pre>`;
+        document.getElementById('sel-expand-btn').addEventListener('click', () => {
+            const json = document.getElementById('sel-json');
+            const btn = document.getElementById('sel-expand-btn');
+            const open = json.classList.toggle('open');
+            btn.classList.toggle('open', open);
+            btn.textContent = open ? '‹' : '›';
+        });
+    }
+
+    urlBtn.addEventListener('click', openConfigPanel);
+    configCloseBtn.addEventListener('click', closeConfigPanel);
+
+    urlInput.addEventListener('input', () => {
+        const val = urlInput.value.trim();
+        validateUrlInput(val);
+        if (FIGMA_URL_RE.test(val)) {
+            applyFigmaUrl(val);
+            updateContextDisplay();
+        } else if (val === '') {
+            // URL cleared — strip fileKey/fileUrl from context and storage
+            savedUrlData = null;
+            storageSet(FIGMA_URL_KEY, '');
+            storageSet(FIGMA_FNAME_KEY, '');
+            if (cachedFigmaContext) {
+                cachedFigmaContext = { ...cachedFigmaContext, fileKey: null, fileUrl: null };
+                sendToWebview(cachedFigmaContext);
+                try { window.top.postMessage({ source: 'figpal-plugin', ...cachedFigmaContext }, '*'); } catch (e) {}
+            }
+            urlBtn.classList.remove('has-url');
+            updateContextDisplay();
+        }
+    });
+
+    urlInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') closeConfigPanel();
+    });
+
+    // If savedUrlData matches the current open file, apply it to context
+    function applySavedUrlIfCoherent() {
+        if (!savedUrlData?.fileKey || !cachedFigmaContext) return;
+        if (savedUrlData.fileName && savedUrlData.fileName === cachedFigmaContext.fileName) {
+            cachedFigmaContext.fileKey = savedUrlData.fileKey;
+            cachedFigmaContext.fileUrl = `https://www.figma.com/design/${savedUrlData.fileKey}/`;
+            sendToWebview(cachedFigmaContext);
+            urlBtn.classList.add('has-url');
+        }
+    }
+
+    // Restore saved URL on startup (two separate plain-string keys)
+    storageGet(FIGMA_URL_KEY);
+    storageGet(FIGMA_FNAME_KEY);
+
+    // ── Connection & messaging ────────────────────────────
+    function passAuthTokensToIframe() {
+        // The extension content script sends tokens directly to the iframe
+    }
+
+    function broadcastReady() {
+        const msg = { source: 'figpal-plugin', type: 'plugin-ready' };
+        if (!inFigmaPlugin) {
+            try { window.top.postMessage(msg, '*'); } catch (e) { }
+        }
+    }
+    broadcastReady();
+    const bootInterval = inFigmaPlugin ? null : setInterval(broadcastReady, 2000);
+
+    // Request Figma context on startup (plugin mode — gets fileName from figma.root.name)
+    if (inFigmaPlugin) {
+        console.log('[FigPal UI] Mode plugin → requestAndSendFigmaContext dans 500ms');
+        setTimeout(requestAndSendFigmaContext, 500);
+    }
+
+    function updateConnectionStatus(connected) {
+        isConnected = connected;
+        statusEl.className = connected ? 'status-indicator connected' : 'status-indicator';
+        statusEl.querySelector('span').textContent = connected ? 'Connected' : 'Connecting...';
+    }
+
+    function sendToWebview(data) {
+        try {
+            webviewIframe.contentWindow.postMessage(data, '*');
+        } catch (e) {
+            console.log('Webview not ready:', e);
+        }
+    }
+
+    function requestAndSendFigmaContext() {
+        parent.postMessage({ pluginMessage: { type: 'get-file-info', id: 'figma-context-init' } }, '*');
+    }
+
+    webviewIframe.onload = function () {
+        console.log('[FigPal UI] iframe webapp chargée → requestAndSendFigmaContext dans 800ms');
+        setTimeout(passAuthTokensToIframe, 500);
+        setTimeout(requestAndSendFigmaContext, 800);
+    };
+
+    window.onmessage = (event) => {
+        const data = event.data;
+
+        // Première communication depuis la webapp (ou l'extension) → connected
+        if (!isConnected && data && (data.source === 'figpal-webapp' || data.source === 'figpal-extension')) {
+            updateConnectionStatus(true);
+        }
+
+        if (data && data.source === 'figpal-extension') {
+            clearInterval(bootInterval);
+            updateConnectionStatus(true);
+
+            if (data.type === 'ping') {
+                try { window.top.postMessage({ source: 'figpal-plugin', type: 'pong' }, '*'); } catch (e) {}
+            } else if (data.type === 'mcp-tokens') {
+                console.log('Plugin received MCP tokens, forwarding to iframe');
+                sendToWebview(data);
+            } else if (data.type && data.type !== 'handshake-ack') {
+                parent.postMessage({ pluginMessage: data }, '*');
+                sendToWebview(data);
+            }
+        }
+
+        const msg = data.pluginMessage;
+        if (!msg) return;
+
+        // Handle clientStorage read responses (two separate keys)
+        if (msg.type === 'storage-value' && msg.key === FIGMA_URL_KEY) {
+            if (msg.value && typeof msg.value === 'string') {
+                if (!savedUrlData) savedUrlData = { url: '', fileName: '', fileKey: null };
+                savedUrlData.url = msg.value;
+                savedUrlData.fileKey = extractFileKey(msg.value);
+                console.log('[FigPal UI] URL restaurée :', msg.value);
+                // Check coherence once we have both values
+                applySavedUrlIfCoherent();
+            }
+            return;
+        }
+
+        if (msg.type === 'storage-value' && msg.key === FIGMA_FNAME_KEY) {
+            if (!savedUrlData) savedUrlData = { url: '', fileName: '', fileKey: null };
+            savedUrlData.fileName = msg.value || '';
+            console.log('[FigPal UI] fileName restauré :', msg.value);
+            applySavedUrlIfCoherent();
+            return;
+        }
+
+        if (msg.type === 'selection-change-triggered') {
+            parent.postMessage({ pluginMessage: { type: 'get-selection', id: 'auto-stream' } }, '*');
+        }
+
+        // Handle Figma file context response
+        if (msg.type === 'page-changed') {
+            if (cachedFigmaContext) {
+                cachedFigmaContext.currentPage = msg.data.currentPage;
+                cachedFigmaContext.pages = msg.data.pages;
+                sendToWebview(cachedFigmaContext);
+                if (configPanel.classList.contains('open')) updateContextDisplay();
+            }
+        }
+
+        if (msg.type === 'response' && msg.id === 'figma-context-init') {
+            const { name, fileKey, currentPage, pages, currentUser } = msg.data || {};
+            const currentName = name || 'Untitled';
+
+            // savedUrlData is only valid if its fileName matches the current file
+            const savedKeyValid = savedUrlData?.fileKey && savedUrlData.fileName === currentName;
+
+            cachedFigmaContext = {
+                type: 'figma-context',
+                fileKey: fileKey || (savedKeyValid ? savedUrlData.fileKey : null),
+                fileName: currentName,
+                fileUrl: fileKey
+                    ? `https://www.figma.com/design/${fileKey}/`
+                    : (savedKeyValid ? `https://www.figma.com/design/${savedUrlData.fileKey}/` : null),
+                currentPage: currentPage || null,
+                pages: pages || [],
+                currentUser: currentUser || null,
+            };
+
+            // Update URL button indicator
+            if (savedKeyValid || fileKey) {
+                urlBtn.classList.add('has-url');
+            } else {
+                urlBtn.classList.remove('has-url');
+            }
+
+            sendToWebview(cachedFigmaContext);
+            try { window.top.postMessage({ source: 'figpal-plugin', ...cachedFigmaContext }, '*'); } catch (e) {}
+            if (configPanel.classList.contains('open')) updateContextDisplay();
+            return;
+        }
+
+        if (msg.type === 'response' || msg.type === 'selection-changed' || msg.type === 'ai-response') {
+            const nodes = msg.data?.nodes;
+            const image = msg.data?.image;
+
+            if (Array.isArray(nodes)) {
+                selectionStats.innerHTML = nodes.length > 0
+                    ? `<strong>${nodes.length}</strong> ${nodes.length === 1 ? 'layer' : 'layers'} selected`
+                    : 'No selection active';
+            }
+
+            if (image && mainAvatar) {
+                mainAvatar.style.backgroundImage = `url('${image}')`;
+            } else if (mainAvatar) {
+                mainAvatar.style.backgroundImage = '';
+            }
+
+            // Tooltip: à chaque nouvelle sélection (mini ou agrandi)
+            if (msg.type === 'selection-changed'
+                && Array.isArray(nodes) && nodes.length > 0) {
+                showMiniTooltip(nodes[0]?.name || '');
+            }
+
+            // Cache la sélection pour le panneau config
+            if (msg.type === 'selection-changed') {
+                cachedSelection = msg.data || null;
+                if (configPanel.classList.contains('open')) updateSelectionDisplay();
+            }
+
+        }
+
+        // Always relay every code.js message to the webview iframe (catch-all)
+        // This covers: response, selection-changed, ai-response, typing,
+        // EXECUTE_CODE_RESULT, VARIABLES_DATA, figpal-init, and any future types.
+        sendToWebview(msg);
+
+        try { window.top.postMessage({ source: 'figpal-plugin', type: msg.type, id: msg.id, data: msg.data }, '*'); } catch (e) {}
+    };
+
+    mainAvatar.style.backgroundImage = '';
+
+    window.addEventListener('message', (event) => {
+        if (event.data && event.data.source === 'figpal-webapp') {
+            if (event.data.type === 'request-figma-context') {
+                if (cachedFigmaContext) {
+                    sendToWebview(cachedFigmaContext);
+                } else {
+                    requestAndSendFigmaContext();
+                }
+                return;
+            }
+            parent.postMessage({ pluginMessage: event.data }, '*');
+        }
+    });
+</script>
+</body>
+
+</html>

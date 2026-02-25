@@ -1,0 +1,30 @@
+{
+  "name": "@guardian/mcp-server",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Guardian MCP Server — DS AI Guardian investigation orchestrator",
+  "type": "module",
+  "main": "dist/index.js",
+  "bin": {
+    "guardian-mcp": "dist/index.js"
+  },
+  "scripts": {
+    "dev": "GUARDIAN_MCP_MODE=http GUARDIAN_MCP_PORT=3847 dotenv-run -- tsx watch src/index.ts",
+    "dev:proxy": "pnpm run dev",
+    "dev:stdio": "dotenv-run -- tsx watch src/index.ts",
+    "build": "dotenv-run -- tsup src/index.ts --format esm --dts --outDir dist",
+    "start": "dotenv-run -- node dist/index.js",
+    "typecheck": "tsc --noEmit",
+    "inspector": "npx @modelcontextprotocol/inspector tsx src/index.ts"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.6.0",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "tsup": "^8.3.5",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.0"
+  }
+}

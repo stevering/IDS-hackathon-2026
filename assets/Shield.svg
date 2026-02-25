@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128">
+  <!-- Shield body -->
+  <path d="M64 8 L112 28 L112 64 C112 92 88 114 64 120 C40 114 16 92 16 64 L16 28 Z"
+        fill="#4A6CF7" stroke="#2D4FCC" stroke-width="3" stroke-linejoin="round"/>
+  <!-- Shield inner highlight -->
+  <path d="M64 18 L104 35 L104 64 C104 87 84 106 64 112 C44 106 24 87 24 64 L24 35 Z"
+        fill="#6B8CF9" opacity="0.4"/>
+  <!-- Checkmark / star accent -->
+  <path d="M44 64 L57 77 L84 50"
+        fill="none" stroke="white" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

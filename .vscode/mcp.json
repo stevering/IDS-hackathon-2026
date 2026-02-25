@@ -7,6 +7,13 @@
         "@modelcontextprotocol/server-filesystem",
         "/Users/stephanechevreux/IdeaProjects/IDS-hackathon-2026/guardian"
       ]
+    },
+    "guardian": {
+      "command": "npx",
+      "args": ["tsx", "/Users/stephanechevreux/IdeaProjects/IDS-hackathon-2026/packages/mcp/src/index.ts"],
+      "env": {
+        "GUARDIAN_MCP_MODE": "stdio"
+      }
     }
   }
 }

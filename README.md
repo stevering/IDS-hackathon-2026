@@ -61,31 +61,46 @@ Thank you to the entire team, it was extraordinary : 🎉
 
 The project uses an architecture based on the **Model Context Protocol (MCP)** to connect the AI to data sources (Figma and filesystem), enabling real-time analysis and contextual interactions.
 
+The repository is structured as a **pnpm monorepo** managed with [Turborepo](https://turbo.build/):
+
+```
+/                              ← workspace root
+├── packages/
+│   ├── web/                   ← Next.js 16 app  (@guardian/web)
+│   ├── mcp/                   ← MCP server       (@guardian/mcp-server)
+│   └── design-system-sample/  ← Storybook        (@guardian/design-system-sample)
+├── assets/, docs/, tools/     ← static assets & documentation
+├── pnpm-workspace.yaml
+├── turbo.json
+└── package.json
+```
+
 ## Demonstration of Concept
 
 You can test online the application
 
 ### Prerequisites
 
-- clone this repository with your favorite code editor (IDE)
-- Install dependencies:
+- Clone this repository with your favorite code editor (IDE)
+- Install [pnpm](https://pnpm.io/installation) if not already available (`npm install -g pnpm`)
+- Install all workspace dependencies from the repo root:
 ```bash
-npm install
+pnpm install
 ```
-- If your code editor supports an integrated MCP server like Intellij Idea, enable it on port 3846
-- If your code editor does not support an integrated MCP server, starts one like :
+- Optional: If your code editor supports an integrated MCP server like Intellij Idea, enable it on port 3846
+- Optional: If your code editor does not support an integrated MCP server, start one like:
 ```bash
 sudo npm install -g supergateway @modelcontextprotocol/server-filesystem
 npx supergateway --stdio "mcp-server-filesystem $(pwd)" --outputTransport streamableHttp --port 3846
 ```
-- Start your Figma Desktop and enable the MCP server in parameters (default on port 3845)
+- Recommended: Start your Figma Desktop and enable the MCP server in parameters (default on port 3845)
 
 
 ### Getting Started
 
-- start the tunnel that redirects to your Figma/Code Desktop MCP securely in another terminal:
+- Start the tunnel that redirects to your Figma/Code Desktop MCP securely in another terminal:
 ```bash
-npm run dev:proxy
+pnpm dev:proxy
 ```
 - Copy the domain/secret you received from cloudflare, something like:
 ```bash
@@ -101,7 +116,7 @@ npm run dev:proxy
 ║                                                                              ║
 ╚══════════════════════════════════════════════════════════════════════════════╝
 ```
-- go to the online demo page : https://ids-hackathon-2026-ds-ai-guardian.vercel.app/
+- go to the online demo page: https://v2.guardian.figdesys.com
 - Click on `Configure proxy` in the side panel `parameters` panel
 - Paste the domain in the `Tunnel URL` field
 - Paste the secret in the `Secret` field
@@ -113,10 +128,11 @@ npm run dev:proxy
 
 #### Install
 
-- clone this repository with your favorite code editor (IDE)
-- Install dependencies:
+- Clone this repository with your favorite code editor (IDE)
+- Install [pnpm](https://pnpm.io/installation) if not already available (`npm install -g pnpm`)
+- Install all workspace dependencies from the repo root:
 ```bash
-npm install
+pnpm install
 ```
 
 #### Setup your Keys and secret
@@ -133,7 +149,7 @@ MCP_TUNNEL_SECRET=YOUR_PRIVATE_SECRET
 
 #### MCP of code editor
 
-- If your code editor supports an integrated MCP server like Intellij Idea, enable it on port 3846
+- If your code editor supports an integrated MCP server like IntelliJ IDEA, enable it on port 3846
 - If your code editor does not support an integrated MCP server, starts one like :
 ```bash
 sudo npm install -g supergateway @modelcontextprotocol/server-filesystem
@@ -149,8 +165,15 @@ Be sure to enable the MCP integration in your Figma Desktop application on port 
 First, run the development server:
 
 ```bash
-npm install
-npm run dev
+pnpm install
+pnpm dev          # starts both web (port 3000) and MCP server (port 3847) via Turborepo
+```
+
+Or start each package individually:
+
+```bash
+pnpm dev:web      # Next.js only  → http://localhost:3000
+pnpm dev:mcp      # MCP server only → port 3847
 ```
 
 Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
@@ -227,9 +250,11 @@ Special text blocks:
 
 ## Deploy on Vercel
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+The easiest way to deploy the web app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme).
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+The `vercel.json` at the repo root sets `rootDirectory` to `packages/web`, so Vercel automatically detects the Next.js app in the monorepo without extra configuration.
+
+Check out the [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
 
 ### Demo Deployment
 
