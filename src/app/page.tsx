@@ -3,6 +3,7 @@
 import { useChat } from "@ai-sdk/react";
 import { DefaultChatTransport } from "ai";
 import { useState, useRef, useEffect, useMemo } from "react";
+import { useFigmaPlugin } from "./hooks/useFigmaPlugin";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import remarkBreaks from "remark-breaks";
@@ -611,6 +612,9 @@ function parseTextWithImages(text: string, isStreaming: boolean): Segment[] {
 }
 
 export default function Home() {
+  // ── Figma plugin bridge ─────────────────────────────────────────────
+  const { isFigmaPlugin, figmaContext, sendToPlugin, executeCode } = useFigmaPlugin();
+
   const isDev = process.env.NODE_ENV === 'development';
   const [figmaMcpUrl, setFigmaMcpUrl] = useState(
       isDev ? process.env.NEXT_PUBLIC_PROXY_LOCAL_FIGMA_MCP : process.env.NEXT_PUBLIC_LOCAL_MCP_FIGMA_URL
@@ -693,18 +697,26 @@ export default function Home() {
   localCodeMcpUrlRef.current = localCodeMcpUrl;
   const enabledMcpsRef = useRef(enabledMcps);
   enabledMcpsRef.current = enabledMcps;
+  const sendToPluginRef = useRef(sendToPlugin);
+  sendToPluginRef.current = sendToPlugin;
+  const executeCodeRef = useRef(executeCode);
+  executeCodeRef.current = executeCode;
+  const isFigmaPluginRef = useRef(isFigmaPlugin);
+  isFigmaPluginRef.current = isFigmaPlugin;
 
-
-
-  // Demander le contexte Figma au parent (ui.html) dès que React est monté
+  // Sync figmaContext from hook → local state used by the rest of the component
   useEffect(() => {
-    if (typeof window !== 'undefined' && window.parent !== window) {
-      console.log('[IDS Webapp] React monté dans un iframe → envoi request-figma-context au parent');
-      window.parent.postMessage({ source: 'figpal-webapp', type: 'request-figma-context' }, '*');
-    } else {
-      console.log('[IDS Webapp] Pas dans un iframe, pas de request-figma-context');
+    if (figmaContext) {
+      setFigmaPluginContext({
+        fileKey: figmaContext.fileKey ?? '',
+        fileName: figmaContext.fileName,
+        fileUrl: figmaContext.fileUrl ?? '',
+        currentPage: figmaContext.currentPage,
+        pages: figmaContext.pages,
+        currentUser: figmaContext.currentUser,
+      });
     }
-  }, []);
+  }, [figmaContext]);
 
   useEffect(() => {
     const handleMessage = (event: MessageEvent) => {
@@ -721,16 +733,6 @@ export default function Home() {
         console.log('Received southleft-mcp-auth:', event.data.success);
         if (event.data.success) {
           setSouthleftOAuth(true);
-        }
-      }
-
-      // Figma plugin context (fileKey, fileName, fileUrl)
-      if (event.data && typeof event.data === "object" && event.data.type === "figma-context") {
-        const { fileKey, fileName, fileUrl, currentPage, pages, currentUser } = event.data as { fileKey: string | null; fileName: string; fileUrl: string | null; currentPage?: { id: string; name: string } | null; pages?: { id: string; name: string }[]; currentUser?: { id: string; name: string } | null };
-        console.log('[IDS Webapp] figma-context reçu :', { fileKey, fileName, fileUrl, currentPage, pages, currentUser });
-        if (fileName) {
-          setFigmaPluginContext({ fileKey: fileKey ?? '', fileName, fileUrl: fileUrl ?? '', currentPage, pages, currentUser });
-          console.log('[IDS Webapp] figmaPluginContext mis à jour ✓', { fileKey, fileName, currentPage });
         }
       }
 
