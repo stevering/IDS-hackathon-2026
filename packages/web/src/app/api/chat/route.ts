@@ -416,7 +416,10 @@ async function connectMCPs(
   if (enabledMcps.figma !== false && figmaMcpUrl) {
     try {
       const cookieStore = await cookies();
-      const mcpTokensRaw = cookieStore.get(COOKIE_TOKENS)?.value;
+      // Prefer cookie, fall back to X-Figma-MCP-Tokens header (Figma plugin context)
+      const mcpTokensRaw = cookieStore.get(COOKIE_TOKENS)?.value
+        ?? req.headers.get("X-Figma-MCP-Tokens")
+        ?? undefined;
       let oauthToken = cookieStore.get("figma_access_token")?.value;
 
       if (figmaOAuth && mcpTokensRaw) {
@@ -428,7 +431,7 @@ async function connectMCPs(
         }
       }
 
-      const useOAuthHttp = !!(figmaOAuth && (oauthToken || cookieStore.get(COOKIE_TOKENS)?.value));
+      const useOAuthHttp = !!(figmaOAuth && (oauthToken || mcpTokensRaw));
       const effectiveUrl = (figmaOAuth && figmaMcpUrl === "https://mcp.figma.com/mcp")
         ? figmaMcpUrl
         : (useOAuthHttp ? MCP_FIGMA_SERVER_URL : figmaMcpUrl);
@@ -445,8 +448,20 @@ async function connectMCPs(
 
       let mcpResult: CachedMCP;
       if (figmaOAuth) {
-        const provider = await createFigmaMcpOAuthProvider(cookieStore);
-        mcpResult = await getOrConnectWithAuth(effectiveUrl, "Figma", provider);
+        const figmaProvider = await createFigmaMcpOAuthProvider(cookieStore);
+        // If cookie is missing but header token is present, patch tokens() for plugin context
+        const figmaHeaderTokens = !cookieStore.get(COOKIE_TOKENS)?.value
+          ? req.headers.get("X-Figma-MCP-Tokens")
+          : null;
+        const effectiveFigmaProvider = figmaHeaderTokens
+          ? {
+              ...figmaProvider,
+              async tokens() {
+                try { return JSON.parse(figmaHeaderTokens); } catch { return undefined; }
+              },
+            }
+          : figmaProvider;
+        mcpResult = await getOrConnectWithAuth(effectiveUrl, "Figma", effectiveFigmaProvider);
       } else {
         const token = figmaAccessToken || oauthToken || process.env.FIGMA_ACCESS_TOKEN;
         if (token) {
@@ -515,16 +530,29 @@ async function connectMCPs(
   const githubMcpUrl = GITHUB_MCP_URL;
   try {
     const cookieStoreForGithub = await cookies();
-    const githubTokensRaw = cookieStoreForGithub.get(GITHUB_COOKIE_TOKENS)?.value;
+    // Prefer cookie (browser-based), fall back to X-GitHub-MCP-Tokens header
+    // (needed in Figma plugin context where popup cookies are not accessible)
+    const githubTokensRaw = cookieStoreForGithub.get(GITHUB_COOKIE_TOKENS)?.value
+      ?? req.headers.get("X-GitHub-MCP-Tokens")
+      ?? undefined;
 
     if (githubTokensRaw) {
       console.log("[GitHub] Connecting with OAuth to:", githubMcpUrl);
+      // Build a provider that uses the tokens — may come from cookie or header
       const githubProvider = await createGithubMcpOAuthProvider(cookieStoreForGithub);
-      const tokens = await githubProvider.tokens();
-      console.log("[GitHub DEBUG] tokens:", tokens);
-      const clientInfo = await githubProvider.clientInformation();
-      console.log("[GitHub DEBUG] clientInfo:", clientInfo);
-      const { tools } = await getOrConnectWithAuth(githubMcpUrl, "GitHub", githubProvider);
+      // If the cookie was missing but we have the header token, patch tokens() method
+      const headerTokensRaw = !cookieStoreForGithub.get(GITHUB_COOKIE_TOKENS)?.value
+        ? req.headers.get("X-GitHub-MCP-Tokens")
+        : null;
+      const effectiveProvider = headerTokensRaw
+        ? {
+            ...githubProvider,
+            async tokens() {
+              try { return JSON.parse(headerTokensRaw); } catch { return undefined; }
+            },
+          }
+        : githubProvider;
+      const { tools } = await getOrConnectWithAuth(githubMcpUrl, "GitHub", effectiveProvider);
       const prefixedTools = Object.fromEntries(
         Object.entries(tools).map(([name, tool]) => [`github_${name}`, tool])
       );

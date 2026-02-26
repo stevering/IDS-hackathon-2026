@@ -1,0 +1,20 @@
+{
+  "name": "Guardian",
+  "id": "widget-guardian-placeholder",
+  "api": "1.0.0",
+  "widgetApi": "1.0.0",
+  "main": "dist/code.js",
+  "ui": "ui.html",
+  "capabilities": [],
+  "editorType": ["figma"],
+  "containsWidget": true,
+  "networkAccess": {
+    "allowedDomains": [
+      "https://ids-hackathon-2026-ds-ai-guardian.vercel.app",
+      "https://guardian.figdesys.com"
+    ],
+    "devAllowedDomains": [
+      "http://localhost:3000"
+    ]
+  }
+}

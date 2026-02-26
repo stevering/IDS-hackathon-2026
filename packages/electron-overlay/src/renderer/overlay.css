@@ -1,0 +1,171 @@
+/* ── Reset & transparent host ───────────────────────────────────────────────── */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html,
+body {
+  width: 100%;
+  height: 100%;
+  background: transparent;
+  overflow: hidden;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+#root {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* ── Guardian mascot ────────────────────────────────────────────────────────── */
+.guardian {
+  width: 80px;
+  height: 80px;
+  cursor: grab;
+  position: relative;
+  filter: drop-shadow(0 4px 20px rgba(109, 40, 217, 0.45));
+  animation: guardian-float 3s ease-in-out infinite;
+  transition: filter 0.25s ease;
+  /* Native macOS/Windows window drag — works even when app is in background */
+  -webkit-app-region: drag;
+}
+
+.guardian:active {
+  cursor: grabbing;
+  -webkit-app-region: drag;
+}
+
+.guardian.hovered {
+  filter: drop-shadow(0 6px 28px rgba(109, 40, 217, 0.75));
+  animation-play-state: paused;
+}
+
+/* State indicator dot (MCP connection) */
+.guardian::after {
+  content: "";
+  position: absolute;
+  bottom: 6px;
+  right: 6px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #4b5563; /* disconnected: gray */
+  border: 2px solid rgba(0, 0, 0, 0.3);
+  transition: background 0.3s ease;
+}
+
+.guardian.connected::after {
+  background: #10b981; /* connected: green */
+  box-shadow: 0 0 6px #10b981;
+}
+
+.guardian.error::after {
+  background: #ef4444; /* error: red */
+}
+
+/* ── SVG animations ─────────────────────────────────────────────────────────── */
+@keyframes guardian-float {
+  0%,
+  100% {
+    translate: 0 0px;
+  }
+  50% {
+    translate: 0 -9px;
+  }
+}
+
+.eye-left,
+.eye-right {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: guardian-blink 4.5s ease-in-out infinite;
+}
+.eye-right {
+  animation-delay: 0.08s;
+}
+
+@keyframes guardian-blink {
+  0%,
+  88%,
+  100% {
+    transform: scaleY(1);
+  }
+  92% {
+    transform: scaleY(0.07);
+  }
+}
+
+.guardian-arc {
+  animation: guardian-breathe 4s ease-in-out infinite;
+}
+
+@keyframes guardian-breathe {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.78;
+  }
+}
+
+.guardian-star {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: guardian-twinkle 2.8s ease-in-out infinite;
+}
+
+@keyframes guardian-twinkle {
+  0%,
+  100% {
+    transform: scale(1);
+    opacity: 0.92;
+  }
+  50% {
+    transform: scale(1.3);
+    opacity: 1;
+  }
+}
+
+/* ── Alert badge ────────────────────────────────────────────────────────────── */
+.alert-badge {
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #ef4444;
+  color: white;
+  font-size: 10px;
+  font-weight: 700;
+  font-family: system-ui, sans-serif;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 2px solid rgba(0, 0, 0, 0.2);
+  animation: badge-pulse 1.5s ease-in-out infinite;
+  pointer-events: none;
+}
+
+.alert-badge.hidden {
+  display: none;
+}
+
+@keyframes badge-pulse {
+  0%,
+  100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.15);
+  }
+}

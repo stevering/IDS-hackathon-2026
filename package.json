@@ -10,6 +10,10 @@
     "dev:web:proxy": "turbo run dev:proxy --filter=@guardian/web",
     "dev:proxy": "turbo run dev:proxy",
     "dev:mcp": "turbo run dev --filter=@guardian/mcp-server",
+    "dev:extension": "turbo run dev --filter=@guardian/chrome-extension",
+    "build:extension": "turbo run build --filter=@guardian/chrome-extension",
+    "dev:overlay": "turbo run dev --filter=@guardian/electron-overlay",
+    "build:overlay": "turbo run build --filter=@guardian/electron-overlay",
     "build": "turbo run build",
     "lint": "turbo run lint",
     "typecheck": "turbo run typecheck"
@@ -22,7 +26,8 @@
     "onlyBuiltDependencies": [
       "esbuild",
       "sharp",
-      "unrs-resolver"
+      "unrs-resolver",
+      "electron"
     ]
   }
 }

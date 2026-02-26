@@ -642,6 +642,10 @@ export default function Home() {
   const [localFigmaMcpUrl, setLocalFigmaMcpUrl] = useState(process.env.NEXT_PUBLIC_LOCAL_MCP_FIGMA_URL || "");
   const [localCodeMcpUrl, setLocalCodeMcpUrl] = useState(process.env.NEXT_PUBLIC_LOCAL_MCP_CODE_URL || "");
   const [waitingForOAuth, setWaitingForOAuth] = useState(false);
+  const [githubWaitingForOAuth, setGithubWaitingForOAuth] = useState(false);
+  const [figmaWaitingForOAuth, setFigmaWaitingForOAuth] = useState(false);
+  const githubOAuthSessionRef = useRef<string | null>(null);
+  const figmaOAuthSessionRef = useRef<string | null>(null);
 
   // MCP Toggles - enabled/disabled state
   const [enabledMcps, setEnabledMcps] = useState<Record<string, boolean>>({
@@ -752,6 +756,36 @@ export default function Home() {
         sendMessageEarlyRef.current?.({ text: "Yes analyze my new figma selection" });
       }
 
+      // GitHub OAuth popup fast-path
+      if (event.data && typeof event.data === "object" && event.data.type === "github-oauth-complete") {
+        if (event.data.success) {
+          if (event.data.tokensJson && typeof window !== 'undefined') {
+            try { localStorage.setItem('github_mcp_tokens', event.data.tokensJson as string); } catch(_) {}
+          }
+          setGithubOAuth(true);
+        }
+        setGithubWaitingForOAuth(false);
+      }
+      if (event.data && typeof event.data === "object" && event.data.type === "github-oauth-error") {
+        console.error("[GitHub OAuth] Error from popup:", event.data.error);
+        setGithubWaitingForOAuth(false);
+      }
+
+      // Figma official OAuth popup fast-path
+      if (event.data && typeof event.data === "object" && event.data.type === "figma-oauth-complete") {
+        if (event.data.success) {
+          if (event.data.tokensJson && typeof window !== 'undefined') {
+            try { localStorage.setItem('figma_mcp_tokens', event.data.tokensJson as string); } catch(_) {}
+          }
+          setFigmaOAuth(true);
+        }
+        setFigmaWaitingForOAuth(false);
+      }
+      if (event.data && typeof event.data === "object" && event.data.type === "figma-oauth-error") {
+        console.error("[Figma OAuth] Error from popup:", event.data.error);
+        setFigmaWaitingForOAuth(false);
+      }
+
       // Token relay from OAuth popup via postMessage
       if (event.data && typeof event.data === "object" && event.data.type === "southleft-oauth-complete") {
         const accessToken = event.data.accessToken as string | undefined;
@@ -830,20 +864,89 @@ export default function Home() {
     };
   }, [waitingForOAuth]);
 
-  // Restore GitHub and Figma MCP auth status from server cookies on mount
+  // Polling fallback for GitHub MCP OAuth popup
   useEffect(() => {
-    fetch("/api/auth/figma-mcp/status", {
-      headers: { "X-Auth-Token": tunnelSecret || "" },
-    })
-      .then((r) => r.json())
-      .then((d) => setFigmaOAuth(d.connected))
-      .catch(() => {});
-    fetch("/api/auth/github-mcp/status", {
-      headers: { "X-Auth-Token": tunnelSecret || "" },
-    })
-      .then((r) => r.json())
-      .then((d) => setGithubOAuth(d.connected))
-      .catch(() => {});
+    if (!githubWaitingForOAuth) return;
+    let interval: NodeJS.Timeout;
+    let timeout: NodeJS.Timeout;
+    const poll = async () => {
+      try {
+        const res = await fetch('/api/set-oauth-result', {
+          headers: githubOAuthSessionRef.current ? { 'X-Auth-Token': githubOAuthSessionRef.current } : {},
+        });
+        const data = await res.json();
+        if (data?.type === 'github-mcp-auth') {
+          if (data.success) {
+            const tokensJson = data.tokens?.github_mcp_tokens as string | undefined;
+            if (tokensJson) {
+              try { localStorage.setItem('github_mcp_tokens', tokensJson); } catch(_) {}
+            }
+            setGithubOAuth(true);
+          }
+          setGithubWaitingForOAuth(false);
+        }
+      } catch { /* ignore */ }
+    };
+    interval = setInterval(poll, 2000);
+    timeout = setTimeout(() => { setGithubWaitingForOAuth(false); clearInterval(interval); }, 60000);
+    return () => { clearInterval(interval); clearTimeout(timeout); };
+  }, [githubWaitingForOAuth]);
+
+  // Polling fallback for Figma official OAuth popup
+  useEffect(() => {
+    if (!figmaWaitingForOAuth) return;
+    let interval: NodeJS.Timeout;
+    let timeout: NodeJS.Timeout;
+    const poll = async () => {
+      try {
+        const res = await fetch('/api/set-oauth-result', {
+          headers: figmaOAuthSessionRef.current ? { 'X-Auth-Token': figmaOAuthSessionRef.current } : {},
+        });
+        const data = await res.json();
+        if (data?.type === 'figma-mcp-auth') {
+          if (data.success) {
+            const tokensJson = data.tokens?.figma_mcp_tokens as string | undefined;
+            if (tokensJson) {
+              try { localStorage.setItem('figma_mcp_tokens', tokensJson); } catch(_) {}
+            }
+            setFigmaOAuth(true);
+          }
+          setFigmaWaitingForOAuth(false);
+        }
+      } catch { /* ignore */ }
+    };
+    interval = setInterval(poll, 2000);
+    timeout = setTimeout(() => { setFigmaWaitingForOAuth(false); clearInterval(interval); }, 60000);
+    return () => { clearInterval(interval); clearTimeout(timeout); };
+  }, [figmaWaitingForOAuth]);
+
+  // Restore GitHub and Figma MCP auth status on mount
+  // localStorage takes priority (works in Figma plugin iframe where cookies from OAuth popup are not sent),
+  // then fall back to server cookie check.
+  useEffect(() => {
+    // Figma: localStorage takes priority (works in Figma plugin iframe)
+    if (typeof window !== 'undefined' && localStorage.getItem('figma_mcp_tokens')) {
+      setFigmaOAuth(true);
+    } else {
+      fetch("/api/auth/figma-mcp/status", {
+        headers: { "X-Auth-Token": tunnelSecret || "" },
+      })
+        .then((r) => r.json())
+        .then((d) => setFigmaOAuth(d.connected))
+        .catch(() => {});
+    }
+
+    // GitHub: localStorage takes priority (works in Figma plugin iframe)
+    if (typeof window !== 'undefined' && localStorage.getItem('github_mcp_tokens')) {
+      setGithubOAuth(true);
+    } else {
+      fetch("/api/auth/github-mcp/status", {
+        headers: { "X-Auth-Token": tunnelSecret || "" },
+      })
+        .then((r) => r.json())
+        .then((d) => setGithubOAuth(d.connected))
+        .catch(() => {});
+    }
   }, [tunnelSecret]);
 
   useEffect(() => {
@@ -869,11 +972,22 @@ export default function Home() {
           if (localCodeMcpUrlRef.current) {
             headers['X-MCP-Code-URL'] = localCodeMcpUrlRef.current;
           }
-          // Add Bearer token from localStorage if available
+          // Add Bearer token from localStorage if available (Southleft)
           if (typeof window !== 'undefined') {
             const southleftToken = localStorage.getItem('southleft_access_token');
             if (southleftToken) {
               headers['Authorization'] = `Bearer ${southleftToken}`;
+            }
+            // GitHub MCP tokens — sent as header for Figma plugin context
+            // where cookies from the OAuth popup may not be accessible
+            const githubTokens = localStorage.getItem('github_mcp_tokens');
+            if (githubTokens) {
+              headers['X-GitHub-MCP-Tokens'] = githubTokens;
+            }
+            // Figma MCP tokens — same pattern for Figma plugin context
+            const figmaMcpTokens = localStorage.getItem('figma_mcp_tokens');
+            if (figmaMcpTokens) {
+              headers['X-Figma-MCP-Tokens'] = figmaMcpTokens;
             }
           }
           return headers;
@@ -1096,7 +1210,10 @@ export default function Home() {
                         headers: {
                           "X-Auth-Token": tunnelSecret || "",
                         },
-                      }).then(() => setFigmaOAuth(false));
+                      }).then(() => {
+                        localStorage.removeItem('figma_mcp_tokens');
+                        setFigmaOAuth(false);
+                      });
                     }}
                     className="px-2 py-2 text-xs text-red-400 hover:bg-red-500/10 rounded-md transition-colors cursor-pointer"
                   >
@@ -1105,22 +1222,7 @@ export default function Home() {
                 </div>
               ) : (
                 <button
-                  title="OAuth is currently disabled Due to limitation of Figma MCP server"
                   onClick={async () => {
-                    // Set auth token cookie before OAuth redirect
-                    if (tunnelSecret) {
-                      try {
-                        await fetch("/api/auth/set-token", {
-                          method: "POST",
-                          headers: { "Content-Type": "application/json" },
-                          body: JSON.stringify({ token: tunnelSecret }),
-                        });
-                      } catch (e) {
-                        console.error("[Figma] Failed to set auth cookie:", e);
-                        return;
-                      }
-                    }
-                    
                     // Attempt Dynamic Client Registration first (required for mcp:connect scope)
                     try {
                       const res = await fetch("/api/auth/figma-mcp/register", { method: "POST" });
@@ -1132,12 +1234,16 @@ export default function Home() {
                     } catch (e) {
                       console.warn("[Figma] DCR request failed, falling back to standard OAuth:", e);
                     }
-                    // Redirect to the auth flow (will use DCR client if available, else fallback)
-                    window.location.href = "/api/auth/figma-mcp";
+                    // Open popup (works inside Figma plugin iframe)
+                    const session = Math.random().toString(36).slice(2) + Date.now().toString(36);
+                    figmaOAuthSessionRef.current = session;
+                    window.open(`/api/auth/figma-mcp?session=${session}`, 'figma-oauth', 'width=600,height=700,scrollbars=yes,resizable=yes');
+                    setFigmaWaitingForOAuth(true);
                   }}
-                  className="block w-full text-center bg-[#a259ff]/20 border border-[#a259ff]/30 hover:bg-[#a259ff]/30 rounded-md px-3 py-2 text-sm text-[#a259ff] transition-colors cursor-pointer"
+                  className="block w-full text-center bg-[#a259ff]/20 border border-[#a259ff]/30 hover:bg-[#a259ff]/30 rounded-md px-3 py-2 text-sm text-[#a259ff] transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                  disabled={figmaWaitingForOAuth}
                 >
-                  Sign in with Figma
+                  {figmaWaitingForOAuth ? "⏳ Waiting for Figma…" : "Sign in with Figma"}
                 </button>
               )}
             </div>
@@ -1231,7 +1337,10 @@ export default function Home() {
             headers: {
               "X-Auth-Token": tunnelSecret || "",
             },
-          }).then(() => setGithubOAuth(false));
+          }).then(() => {
+            localStorage.removeItem('github_mcp_tokens');
+            setGithubOAuth(false);
+          });
         }}
         className="px-2 py-2 text-xs text-red-400 hover:bg-red-500/10 rounded-md transition-colors cursor-pointer"
       >
@@ -1241,12 +1350,16 @@ export default function Home() {
   ) : (
     <button
       onClick={() => {
-        // Full-page navigation: cookies are set in the current context (works in both standalone and plugin iframe)
-        window.location.href = "/api/auth/github-mcp";
+        // Open popup (works inside Figma plugin iframe)
+        const session = Math.random().toString(36).slice(2) + Date.now().toString(36);
+        githubOAuthSessionRef.current = session;
+        window.open(`/api/auth/github-mcp?session=${session}`, 'github-oauth', 'width=600,height=700,scrollbars=yes,resizable=yes');
+        setGithubWaitingForOAuth(true);
       }}
-      className="w-full text-center bg-gradient-to-r from-gray-600/20 to-black/20 border border-gray-500/30 hover:from-gray-600/30 hover:to-black/30 rounded-md px-3 py-2.5 text-sm text-gray-300 font-medium transition-all hover:shadow-lg"
+      className="w-full text-center bg-gradient-to-r from-gray-600/20 to-black/20 border border-gray-500/30 hover:from-gray-600/30 hover:to-black/30 rounded-md px-3 py-2.5 text-sm text-gray-300 font-medium transition-all hover:shadow-lg disabled:opacity-50 disabled:cursor-not-allowed"
+      disabled={githubWaitingForOAuth}
     >
-      🌐 Sign in with GitHub
+      {githubWaitingForOAuth ? "⏳ Waiting for GitHub…" : "🌐 Sign in with GitHub"}
     </button>
   )}
   <span className="text-xs text-white/30 mt-1 block">GitHub repos MCP (online)</span>

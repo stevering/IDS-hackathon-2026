@@ -9,6 +9,17 @@
 // This shows the HTML page in "ui.html".
 figma.showUI(__html__, { width: 400, height: 800, title: "Guardian" });
 
+// Vérifier si le plugin a été déclenché depuis le widget Guardian
+figma.clientStorage.getAsync('guardianWidgetCtx').then((raw) => {
+  if (raw) {
+    try {
+      const ctx = JSON.parse(raw as string);
+      figma.ui.postMessage({ type: 'FROM_WIDGET', context: ctx });
+    } catch (_) { /* ctx corrompu, on ignore */ }
+    figma.clientStorage.deleteAsync('guardianWidgetCtx');
+  }
+});
+
 console.log("Commande :", figma.command);
 
 if (figma.command === 'guardian-analyze') {
@@ -278,6 +289,14 @@ async function sendVariablesData(id?: string): Promise<void> {
 
 figma.ui.onmessage = async (msg: IncomingMessage): Promise<void> => {
   const { type } = msg;
+
+  // Le plugin écrit son statut backend dans clientStorage pour que le widget
+  // puisse mettre à jour son badge au prochain clic
+  if ((type as string) === 'BACKEND_STATUS') {
+    const { status, text } = msg as unknown as { status: string; text: string };
+    figma.clientStorage.setAsync('guardianBackendStatus', JSON.stringify({ status, text }));
+    return;
+  }
 
   if (type === 'get-selection') {
     const selection = figma.currentPage.selection;

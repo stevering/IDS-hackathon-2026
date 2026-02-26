@@ -5,7 +5,7 @@ export async function POST(request: NextRequest) {
   try {
     const secret = request.headers.get("X-Auth-Token") || "shared-dev-session";
     const body = await request.json();
-    if (body.type === "southleft-mcp-auth") {
+    if (["southleft-mcp-auth", "github-mcp-auth", "figma-mcp-auth"].includes(body.type)) {
       writeOAuthResult(secret, body);
       return NextResponse.json({ ok: true });
     }

@@ -9,6 +9,9 @@ import {
   COOKIE_CLIENT_INFO,
   getBaseUrl,
 } from "@/lib/figma-mcp-oauth";
+import { writeOAuthResult } from "@/lib/oauth-store";
+
+const COOKIE_OAUTH_SESSION = "figma_oauth_session";
 
 export async function GET(request: NextRequest) {
   const cookieStore = await cookies();
@@ -25,6 +28,8 @@ export async function GET(request: NextRequest) {
       return NextResponse.redirect(targetUrl);
     }
   }
+
+  const session = request.nextUrl.searchParams.get("session") || "shared-dev-session";
 
   const state = crypto.randomBytes(16).toString("hex");
   const pendingCookies: Array<{ name: string; value: string; options: Record<string, unknown> }> = [];
@@ -90,7 +95,15 @@ export async function GET(request: NextRequest) {
         },
       });
     }
-    return NextResponse.redirect(new URL("/", baseUrl));
+    // Tokens already valid — notify the polling client directly
+    writeOAuthResult(session, { type: "figma-mcp-auth", success: true });
+    return new NextResponse(
+      `<!DOCTYPE html><html><head><meta charset="UTF-8"></head><body><script>
+        if (window.opener) { try { window.opener.postMessage({ type: 'figma-oauth-complete', success: true }, '*'); } catch(e) {} }
+        window.close();
+      </script></body></html>`,
+      { headers: { "Content-Type": "text/html" } }
+    );
   } catch (error) {
     if (error instanceof RedirectError) {
       const url = new URL(error.url);
@@ -106,17 +119,29 @@ export async function GET(request: NextRequest) {
       }
 
       const isSecure = baseUrl.startsWith("https");
-      response.cookies.set(COOKIE_STATE, redirectState, {
+      const sessionCookieOptions = {
         httpOnly: true,
         secure: isSecure,
-        sameSite: "lax",
+        sameSite: "lax" as const,
         path: "/",
         maxAge: 600,
-      });
+      };
+      response.cookies.set(COOKIE_STATE, redirectState, sessionCookieOptions);
+      response.cookies.set(COOKIE_OAUTH_SESSION, session, sessionCookieOptions);
 
       return response;
     }
-    console.error("[Figma MCP OAuth] Auth error:", error);
-    return NextResponse.json({ error: "OAuth initialization failed" }, { status: 500 });
+    const msg = error instanceof Error ? error.message : String(error);
+    console.error("[Figma MCP OAuth] Auth error:", msg);
+    writeOAuthResult(session, { type: "figma-mcp-auth", success: false });
+    return new NextResponse(
+      `<!DOCTYPE html><html><head><meta charset="UTF-8"></head><body>
+      <p style="font-family:system-ui;color:#f87171;padding:20px">Figma Auth Failed: ${msg.replace(/</g, "&lt;")}</p>
+      <script>
+        if (window.opener) { try { window.opener.postMessage({ type: 'figma-oauth-error', error: ${JSON.stringify(msg)} }, '*'); } catch(e) {} }
+        window.close();
+      </script></body></html>`,
+      { headers: { "Content-Type": "text/html" } }
+    );
   }
 }

@@ -1,0 +1,15 @@
+{
+  "compilerOptions": {
+    "target": "es6",
+    "lib": ["es6"],
+    "strict": true,
+    "jsx": "react",
+    "jsxFactory": "widget.h",
+    "jsxFragmentFactory": "widget.Fragment",
+    "typeRoots": ["./node_modules/@figma/widget-typings"],
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noImplicitReturns": true
+  },
+  "include": ["widget-src/**/*"]
+}

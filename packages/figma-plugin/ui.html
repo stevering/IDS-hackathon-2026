@@ -925,6 +925,12 @@
         isConnected = connected;
         statusEl.className = connected ? 'status-indicator connected' : 'status-indicator';
         statusEl.querySelector('span').textContent = connected ? 'Connected' : 'Connecting...';
+        // Notifie le widget Guardian du statut backend pour mettre à jour son badge
+        parent.postMessage({ pluginMessage: {
+            type: 'BACKEND_STATUS',
+            status: connected ? 'connected' : 'error',
+            text: connected ? 'connected' : 'offline',
+        }}, '*');
     }
 
     function sendToWebview(data) {

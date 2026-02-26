@@ -2,23 +2,17 @@
   "name": "Guardian",
   "id": "1204941393675708447",
   "api": "1.0.0",
-  "main": "code.js",
+  "widgetApi": "1.0.0",
+  "containsWidget": true,
+  "main": "main.js",
   "ui": "ui.html",
   "capabilities": [
-    "inspect"
   ],
   "enableProposedApi": false,
   "documentAccess": "dynamic-page",
   "editorType": [
     "figma",
     "dev"
-  ],
-  "relaunchButtons": [
-    {
-      "command": "guardian-analyze",
-      "name": "Guardian Analyze",
-      "multipleSelection": false
-    }
   ],
   "permissions": ["currentuser"],
   "networkAccess": {

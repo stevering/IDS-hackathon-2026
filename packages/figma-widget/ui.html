@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Guardian</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: 'Inter', system-ui, sans-serif;
+      background: #1E1B2E;
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+      overflow: hidden;
+    }
+
+    /* ── Header compact ── */
+    .header {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 12px;
+      background: #2A2540;
+      border-bottom: 1px solid #3D3560;
+      flex-shrink: 0;
+    }
+    .header-title {
+      font-size: 12px;
+      font-weight: 600;
+      color: #EDE9FE;
+      flex: 1;
+    }
+    .status-dot {
+      width: 7px; height: 7px;
+      border-radius: 50%;
+      background: #A78BFA;
+      transition: background 0.3s;
+    }
+    .status-dot.ok  { background: #10B981; box-shadow: 0 0 5px #10B981; }
+    .status-dot.err { background: #EF4444; }
+    .status-dot.loading { animation: pulse 1s ease-in-out infinite; }
+    @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.3} }
+
+    .status-label {
+      font-size: 10px;
+      color: #A78BFA;
+      transition: color 0.3s;
+    }
+    .status-label.ok  { color: #10B981; }
+    .status-label.err { color: #EF4444; }
+
+    /* ── iframe webapp ── */
+    .webview {
+      flex: 1;
+      border: none;
+      display: block;
+      width: 100%;
+    }
+  </style>
+</head>
+<body>
+
+<div class="header">
+  <!-- Shield_v2 miniature -->
+  <svg width="22" height="22" viewBox="0 0 128 128" xmlns="http://www.w3.org/2000/svg">
+    <path d="M 81 34 A 42 42 0 1 0 81 94" fill="none" stroke="#6D28D9" stroke-width="19" stroke-linecap="round"/>
+    <path d="M 72 80 L 93 80" fill="none" stroke="#6D28D9" stroke-width="15" stroke-linecap="round"/>
+    <path d="M 76 37 A 37 37 0 1 0 76 91" fill="none" stroke="#A78BFA" stroke-width="5" stroke-linecap="round" opacity="0.45"/>
+    <ellipse cx="21" cy="27" rx="10" ry="13" fill="#6D28D9"/>
+    <ellipse cx="21" cy="28" rx="6" ry="8" fill="#DDD6FE" opacity="0.75"/>
+    <ellipse cx="40" cy="52" rx="8" ry="9" fill="white"/>
+    <ellipse cx="64" cy="52" rx="8" ry="9" fill="white"/>
+    <ellipse cx="40" cy="53.5" rx="5.5" ry="6.5" fill="#2E1065"/>
+    <ellipse cx="64" cy="53.5" rx="5.5" ry="6.5" fill="#2E1065"/>
+    <circle cx="42" cy="51" r="2.2" fill="white"/>
+    <circle cx="66" cy="51" r="2.2" fill="white"/>
+    <path d="M 32 64 Q 52 78 72 64" fill="none" stroke="#4C1D95" stroke-width="3.5" stroke-linecap="round"/>
+  </svg>
+  <span class="header-title">Guardian</span>
+  <div class="status-dot loading" id="dot"></div>
+  <span class="status-label" id="lbl">Connexion…</span>
+</div>
+
+<!-- La même webapp que le plugin, en iframe -->
+<iframe
+  id="webview"
+  class="webview"
+  src="http://localhost:3000"
+  allow="clipboard-read; clipboard-write"
+></iframe>
+
+<script>
+  const dot = document.getElementById('dot');
+  const lbl = document.getElementById('lbl');
+  const iframe = document.getElementById('webview');
+
+  // ── Détecter si le backend est accessible ────────────────────────────────
+  async function probe() {
+    const URLS = ['http://localhost:3000', 'https://ids-hackathon-2026-ds-ai-guardian.vercel.app'];
+    for (const base of URLS) {
+      try {
+        const r = await fetch(`${base}/api/health`, { signal: AbortSignal.timeout(3000) });
+        if (r.ok) {
+          setStatus('ok', 'connecté');
+          if (iframe.src !== base + '/') iframe.src = base;
+          // Notifier le widget pour mettre à jour son badge
+          parent.postMessage({ pluginMessage: {
+            type: 'STATUS_UPDATE', status: 'connected', statusText: 'connecté'
+          }}, '*');
+          return;
+        }
+      } catch { /* essaie l'URL suivante */ }
+    }
+    setStatus('err', 'hors ligne');
+    parent.postMessage({ pluginMessage: {
+      type: 'STATUS_UPDATE', status: 'error', statusText: 'offline'
+    }}, '*');
+  }
+
+  function setStatus(state, text) {
+    dot.className = 'status-dot ' + state;
+    lbl.className = 'status-label ' + state;
+    lbl.textContent = text;
+  }
+
+  // ── Messages entrants depuis le widget (main thread) ────────────────────
+  window.onmessage = (e) => {
+    const msg = e.data?.pluginMessage;
+    if (!msg) return;
+    if (msg.type === 'PING') probe();
+  };
+
+  probe();
+</script>
+</body>
+</html>
