@@ -6,8 +6,7 @@
   "main": "code.js",
   "scripts": {
     "build": "node build.mjs",
-    "build:plugin": "tsc -p tsconfig.json",
-    "dev": "tsc -p tsconfig.json --watch",
+    "dev": "node build.mjs --watch",
     "lint": "eslint --ext .ts,.tsx --ignore-pattern node_modules .",
     "lint:fix": "eslint --ext .ts,.tsx --ignore-pattern node_modules --fix ."
   },

@@ -16,6 +16,7 @@ figma-widget/
 │                           main: dist/code.js  |  ui: dist/ui.html
 ├── widget-src/
 │   └── code.tsx          — Widget source: mascot SVG, layout, onClick handler
+│                           imports bridge.ts from figma-plugin/
 ├── build.mjs             — Combined build script (see below)
 ├── tsconfig.json         — For IDE / type-checking only (esbuild handles the build)
 ├── package.json
@@ -27,10 +28,11 @@ figma-widget/
 **Build pipeline (`build.mjs`):**
 
 ```
-figma-plugin/code.ts  ──tsc──────────────────▶  figma-plugin/code.js  ─┐
-widget-src/code.tsx   ──esbuild (in-memory)──▶  widget bundle          ─┤
-                                                                          ▼
-                                                           dist/code.js (merged)
+figma-plugin/code.ts  ──esbuild──▶  figma-plugin/dist/code.js  ─┐
+  + figma-plugin/bridge.ts                                        │
+widget-src/code.tsx   ──esbuild (in-memory)──▶  widget bundle   ─┤
+  + figma-plugin/bridge.ts (imported)                             ▼
+                                                     dist/code.js (merged)
 
 figma-plugin/ui.html  ──copy──────────────────▶  dist/ui.html
 ```
@@ -41,11 +43,24 @@ The merged `dist/code.js` uses a runtime context guard:
 // Widget code — always runs (widget.register is a no-op in plugin context)
 widget.register(GuardianWidget)
 
-// Plugin code — only runs when opened as a plugin (onClick handler context)
+// Plugin code — only runs when opened via Plugins menu (standalone mode)
 if (typeof figma.openPlugin === 'function') {
-  // figma-plugin/code.js content
+  // figma-plugin/dist/code.js content
 }
 ```
+
+**Shared bridge (`figma-plugin/bridge.ts`):**
+
+Both `code.ts` and `code.tsx` import from the same `bridge.ts`:
+
+| Function | Role |
+|---|---|
+| `sendFigpalInit()` | Handshake — notifies webapp it's inside Figma |
+| `setupPageChangeListener()` | Streams page changes to the UI |
+| `handleBasicMessage()` | Handles `close` / `resize` / `notify` messages |
+| `buildNodeUrl()` | Builds a Figma node URL from a node ID |
+
+The only intentional difference: `selectionchange` sends full node data + exported image in plugin mode, lightweight payload (no image) in widget mode.
 
 **onClick flow:**
 
@@ -53,7 +68,8 @@ if (typeof figma.openPlugin === 'function') {
 User clicks widget on canvas
   → onClick() → figma.showUI(__html__, { width: 400, height: 800 })
                   __html__ = dist/ui.html  (same as the standalone plugin)
-  → Guardian panel opens — identical to opening the plugin directly
+  → sendFigpalInit() + initial selection + event listeners set up
+  → Guardian panel opens — functionally identical to opening the plugin directly
 ```
 
 **Communication with the plugin** (when both are loaded):
@@ -76,10 +92,22 @@ pnpm install
 ## Scripts
 
 ```bash
-pnpm build    # one-shot: compile plugin (tsc) + widget (esbuild) → dist/
-pnpm dev      # watch: esbuild watches widget-src/, tsc --watch watches figma-plugin/code.ts
-              #        any change in either source rebuilds dist/code.js automatically
+pnpm build    # one-shot: build plugin (esbuild) + bundle widget (esbuild) → dist/
+pnpm dev      # watch: compiles plugin once, then esbuild watches widget-src/
+              # run `pnpm dev` in figma-plugin/ in parallel to also watch plugin changes
 ```
+
+**Running both in parallel (recommended for active development):**
+
+```bash
+# Terminal 1
+cd packages/figma-plugin && pnpm dev   # esbuild --watch on plugin
+
+# Terminal 2
+cd packages/figma-widget && pnpm dev   # esbuild watches widget, fs.watch picks up plugin changes
+```
+
+No conflict: each side has its own esbuild process. The widget's `fs.watch` on `figma-plugin/dist/` triggers a re-merge whenever the plugin rebuilds.
 
 ## Loading in Figma
 
@@ -95,4 +123,5 @@ pnpm dev      # watch: esbuild watches widget-src/, tsc --watch watches figma-pl
 
 - **Do not edit `dist/` files** — they are regenerated on every build.
 - **Do not edit `ui.html` at the package root** — it does not exist; the UI lives in `figma-plugin/ui.html` and is copied to `dist/ui.html` at build time.
-- The widget and plugin have **different Figma IDs** and appear as two separate items in Figma. They share code only at build time.
+- The widget and plugin have **different Figma IDs** and appear as two separate items in Figma. They share `bridge.ts` and `ui.html` only at build time.
+- `figma.openPlugin()` does not exist in the widget API — that's why the combined manifest approach is used.
