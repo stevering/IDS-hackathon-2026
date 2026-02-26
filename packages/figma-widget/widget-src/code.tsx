@@ -57,6 +57,10 @@ function GuardianWidget() {
         new Promise<void>((resolve) => {
           figma.showUI(__html__, { width: 400, height: 800, title: 'Guardian' });
 
+          // Signal the UI that it's running inside a widget (not the standalone plugin).
+          // The BridgeClient in ui.html uses this to register as clientType 'widget'.
+          figma.ui.postMessage({ type: 'GUARDIAN_MODE', mode: 'widget', widgetId: figma.widgetId });
+
           // ── Bridge plugin → nécessaire car code.ts ne tourne pas en contexte widget ──
 
           sendFigpalInit();
@@ -79,7 +83,36 @@ function GuardianWidget() {
           figma.on('selectionchange', () => sendSelection('auto-stream'));
           setupPageChangeListener();
 
-          figma.ui.onmessage = (msg: { type?: string; data?: unknown }) => {
+          figma.ui.onmessage = (msg: { type?: string; data?: unknown; code?: string; nodeId?: string; id?: string; requestId?: string; timeout?: number }) => {
+            // ── EXECUTE_CODE — run arbitrary Figma API JS from the Electron overlay ──
+            if (msg.type === 'EXECUTE_CODE' && msg.code) {
+              const requestId = msg.id ?? msg.requestId;
+              try {
+                const wrapped = `(async function() {\n${msg.code}\n})()`;
+                const timeoutMs = msg.timeout ?? 5000;
+                const timeoutPromise = new Promise<never>((_, reject) =>
+                  setTimeout(() => reject(new Error(`Timeout after ${timeoutMs}ms`)), timeoutMs)
+                );
+                // eslint-disable-next-line no-eval
+                Promise.race([eval(wrapped) as Promise<unknown>, timeoutPromise])
+                  .then((result) => figma.ui.postMessage({ type: 'EXECUTE_CODE_RESULT', id: requestId, success: true, result }))
+                  .catch((err: unknown) => figma.ui.postMessage({ type: 'EXECUTE_CODE_RESULT', id: requestId, success: false, error: err instanceof Error ? err.message : String(err) }));
+              } catch (err: unknown) {
+                figma.ui.postMessage({ type: 'EXECUTE_CODE_RESULT', id: requestId, success: false, error: err instanceof Error ? err.message : String(err) });
+              }
+              return;
+            }
+
+            // ── HIGHLIGHT_NODE — select and scroll to a node by ID ──
+            if (msg.type === 'HIGHLIGHT_NODE' && msg.nodeId) {
+              const node = figma.getNodeById(msg.nodeId);
+              if (node && node.type !== 'PAGE' && node.type !== 'DOCUMENT') {
+                figma.currentPage.selection = [node as SceneNode];
+                figma.viewport.scrollAndZoomIntoView([node as SceneNode]);
+              }
+              return;
+            }
+
             handleBasicMessage(msg, resolve);
           };
         })

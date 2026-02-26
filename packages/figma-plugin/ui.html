@@ -1097,6 +1097,153 @@
             parent.postMessage({ pluginMessage: event.data }, '*');
         }
     });
+
+    // ── Guardian Bridge Client ──────────────────────────────────────────────────
+    // Connects to the BridgeServer running in the Electron overlay (ws://localhost:3002).
+    // Enables bidirectional communication: Electron ↔ Figma plugin/widget.
+    //
+    // Source of truth (TypeScript): packages/bridge/src/client.ts
+    // This inline version mirrors that code for browser/Figma plugin context.
+    // ───────────────────────────────────────────────────────────────────────────
+    (function initGuardianBridge() {
+        const BRIDGE_PORT = 3002;
+        let ws = null;
+        let clientId = null;
+        let reconnectTimer = null;
+        const RECONNECT_DELAY = 3000;
+
+        // Client type is 'plugin' by default.
+        // The widget sends a GUARDIAN_MODE message early in its onClick handler,
+        // which upgrades clientType to 'widget' before (or just after) WS REGISTER.
+        let guardianClientType = 'plugin';
+        let guardianWidgetId = undefined;
+
+        function connect() {
+            try {
+                ws = new WebSocket('ws://localhost:' + BRIDGE_PORT);
+            } catch (e) {
+                scheduleReconnect();
+                return;
+            }
+
+            ws.addEventListener('open', function () {
+                console.log('[Guardian Bridge] Connecté à Electron (:' + BRIDGE_PORT + ')');
+                ws.send(JSON.stringify({
+                    type: 'REGISTER',
+                    clientType: guardianClientType,
+                    widgetId: guardianWidgetId,
+                    fileKey: cachedFigmaContext?.fileKey ?? undefined,
+                }));
+            });
+
+            ws.addEventListener('message', function (event) {
+                try {
+                    const msg = JSON.parse(event.data);
+                    if (msg.type === 'REGISTERED') {
+                        clientId = msg.clientId;
+                        console.log('[Guardian Bridge] Enregistré comme', clientId);
+                        return;
+                    }
+                    handleElectronMessage(msg);
+                } catch (e) { /* ignore */ }
+            });
+
+            ws.addEventListener('close', function () {
+                clientId = null;
+                console.log('[Guardian Bridge] Déconnecté — retry dans ' + RECONNECT_DELAY + 'ms');
+                scheduleReconnect();
+            });
+
+            ws.addEventListener('error', function () { /* close will fire */ });
+        }
+
+        function scheduleReconnect() {
+            if (reconnectTimer) return;
+            reconnectTimer = setTimeout(function () {
+                reconnectTimer = null;
+                connect();
+            }, RECONNECT_DELAY);
+        }
+
+        function send(msg) {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify(msg));
+            }
+        }
+
+        /**
+         * Handle a message arriving from the Electron overlay.
+         * Most messages are forwarded to figma-plugin/code.ts via parent.postMessage.
+         * The plugin's existing EXECUTE_CODE handler can run any Figma API code,
+         * making it the universal entry point for "generate Figma objects" requests.
+         */
+        function handleElectronMessage(msg) {
+            console.log('[Guardian Bridge] Message depuis Electron:', msg.type, msg);
+
+            if (msg.type === 'PING') {
+                send({ type: 'PONG' });
+                return;
+            }
+
+            if (msg.type === 'TRIGGER_ANALYSIS') {
+                // Ask the webapp to start an AI analysis on the current selection
+                sendToWebview({ type: 'trigger-user-analysis' });
+                return;
+            }
+
+            if (msg.type === 'NOTIFY') {
+                // Show a Figma notification toast
+                parent.postMessage({ pluginMessage: { type: 'notify', data: { message: msg.message } } }, '*');
+                return;
+            }
+
+            // EXECUTE_CODE, HIGHLIGHT_NODE → forward to plugin code.ts main thread
+            // code.ts already handles EXECUTE_CODE (runs arbitrary Figma API JS).
+            // HIGHLIGHT_NODE is handled by code.ts after this PR.
+            parent.postMessage({ pluginMessage: msg }, '*');
+        }
+
+        // ── Forward Figma events to Electron ─────────────────────────────────
+        // Patch into the existing window.onmessage to intercept plugin/widget code messages.
+        const _originalOnMessage = window.onmessage;
+        window.onmessage = function (event) {
+            // Forward to original handler first
+            if (_originalOnMessage) _originalOnMessage.call(window, event);
+
+            const msg = event.data?.pluginMessage;
+            if (!msg) return;
+
+            // ── Widget mode detection ──────────────────────────────────────────
+            // code.tsx sends this immediately after figma.showUI() in widget context.
+            if (msg.type === 'GUARDIAN_MODE' && msg.mode === 'widget') {
+                guardianClientType = 'widget';
+                guardianWidgetId = msg.widgetId;
+                // Re-register with updated info if already connected
+                if (ws && ws.readyState === WebSocket.OPEN && clientId) {
+                    ws.send(JSON.stringify({
+                        type: 'REGISTER',
+                        clientType: 'widget',
+                        widgetId: msg.widgetId,
+                        fileKey: cachedFigmaContext?.fileKey ?? undefined,
+                    }));
+                }
+                return;
+            }
+
+            // Mirror selection changes to the Electron overlay
+            if (msg.type === 'selection-changed') {
+                send({
+                    type: 'SELECTION_CHANGED',
+                    nodes: (msg.data?.nodes ?? []).map(function (n) {
+                        return { id: n.id, name: n.name, type: n.type, bounds: n.bounds };
+                    }),
+                    fileKey: cachedFigmaContext?.fileKey ?? undefined,
+                });
+            }
+        };
+
+        connect();
+    })();
 </script>
 </body>
 

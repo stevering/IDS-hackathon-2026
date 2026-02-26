@@ -15,6 +15,22 @@ importers:
         specifier: ^2.3.0
         version: 2.8.11
 
+  packages/bridge:
+    dependencies:
+      ws:
+        specifier: ^8.18.0
+        version: 8.19.0
+    devDependencies:
+      '@types/node':
+        specifier: ^22.10.0
+        version: 22.19.11
+      '@types/ws':
+        specifier: ^8.5.13
+        version: 8.18.1
+      typescript:
+        specifier: ^5.7.3
+        version: 5.9.3
+
   packages/chrome-extension:
     devDependencies:
       '@types/chrome':
@@ -101,6 +117,10 @@ importers:
         version: 5.4.21(@types/node@22.19.11)(lightningcss@1.31.1)
 
   packages/electron-overlay:
+    dependencies:
+      '@guardian/bridge':
+        specifier: workspace:*
+        version: link:../bridge
     devDependencies:
       '@types/node':
         specifier: ^22.10.0
@@ -2061,6 +2081,9 @@ packages:
 
   '@types/uuid@9.0.8':
     resolution: {integrity: sha512-jg+97EGIcY9AGHJJRaaPVgetKDsrTgbRjQ5Msgjh/DQKEFl0DtyRr/VCOyD1T2R1MNeWPK/u7JoGhlDZnKBAfA==}
+
+  '@types/ws@8.18.1':
+    resolution: {integrity: sha512-ThVF6DCVhA8kUGy+aazFQ4kXQ7E1Ty7A3ypFOe0IcJV8O/M511G99AW24irKrW56Wt44yG9+ij8FaqoBGkuBXg==}
 
   '@types/yauzl@2.10.3':
     resolution: {integrity: sha512-oJoftv0LSuaDZE3Le4DbKX+KS9G36NzOeSap90UIK0yMA/NhKJhqlSGtNDORNRaIbQfzjXDrQa0ytJ6mNRGz/Q==}
@@ -7155,6 +7178,10 @@ snapshots:
   '@types/unist@3.0.3': {}
 
   '@types/uuid@9.0.8': {}
+
+  '@types/ws@8.18.1':
+    dependencies:
+      '@types/node': 22.19.11
 
   '@types/yauzl@2.10.3':
     dependencies:

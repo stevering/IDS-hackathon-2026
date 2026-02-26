@@ -1,6 +1,6 @@
 {
   "name": "Guardian Widget",
-  "id": "1608823978550669687",
+  "id": "1608823978550169687",
   "api": "1.0.0",
   "main": "dist/code.js",
   "capabilities": [],
@@ -27,6 +27,7 @@
     ],
     "devAllowedDomains": [
       "http://localhost:3000",
+      "ws://localhost:3002",
       "https://preview.guardian.figdesys.com",
       "https://figma-console-mcp.southleft.com",
       "https://www.figma.com"

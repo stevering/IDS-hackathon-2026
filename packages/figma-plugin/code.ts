@@ -172,6 +172,11 @@ interface CloseMessage {
   type: 'close';
 }
 
+interface HighlightNodeMessage {
+  type: 'HIGHLIGHT_NODE';
+  nodeId: string;
+}
+
 type IncomingMessage =
     | GetSelectionMessage
     | NotifyMessage
@@ -181,7 +186,8 @@ type IncomingMessage =
     | StorageSetMessage
     | GetFileInfoMessage
     | ResizeMessage
-    | CloseMessage;
+    | CloseMessage
+    | HighlightNodeMessage;
 
 // ─── ENTRY POINT ─────────────────────────────────────────────────────
 
@@ -414,6 +420,16 @@ figma.ui.onmessage = async (msg: IncomingMessage): Promise<void> => {
         currentUser
       }
     });
+  }
+
+  if (type === 'HIGHLIGHT_NODE') {
+    const nodeId = (msg as HighlightNodeMessage).nodeId;
+    const node = figma.getNodeById(nodeId);
+    if (node && node.type !== 'PAGE' && node.type !== 'DOCUMENT') {
+      figma.currentPage.selection = [node as SceneNode];
+      figma.viewport.scrollAndZoomIntoView([node as SceneNode]);
+    }
+    return;
   }
 
   handleBasicMessage(msg as { type?: string; data?: unknown }, () => {});

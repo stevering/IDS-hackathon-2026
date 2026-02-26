@@ -1,9 +1,14 @@
 import { GUARDIAN_SVG } from "../shared/guardian-svg";
+import type { ClientInfo, FigmaMessage } from "@guardian/bridge";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 interface ElectronAPI {
   onHoverChange: (callback: (isOver: boolean) => void) => void;
+  onBridgeClients: (callback: (clients: ClientInfo[]) => void) => void;
+  onBridgeMessage: (callback: (clientId: string, msg: FigmaMessage) => void) => void;
+  bridgeSend: (clientId: string, msg: unknown) => void;
+  bridgeBroadcast: (msg: unknown) => void;
 }
 
 declare global {
@@ -36,11 +41,17 @@ const badge = document.createElement("div");
 badge.className = "alert-badge hidden";
 badge.textContent = "0";
 
+// Figma connection indicator — small dot shown on the mascot when Figma is connected
+const figmaDot = document.createElement("div");
+figmaDot.className = "figma-dot hidden";
+figmaDot.title = "Figma connecté";
+
 wrapper.appendChild(guardian);
 wrapper.appendChild(badge);
+wrapper.appendChild(figmaDot);
 root.appendChild(wrapper);
 
-// ── MCP WebSocket ─────────────────────────────────────────────────────────────
+// ── MCP WebSocket (alerts from AI agent) ─────────────────────────────────────
 
 const params = new URLSearchParams(window.location.search);
 const WS_PORT = Number(params.get("wsPort") ?? 3001);
@@ -62,7 +73,7 @@ function connect(): void {
   ws.addEventListener("message", (event: MessageEvent<string>) => {
     try {
       const msg = JSON.parse(event.data) as McpMessage;
-      handleMessage(msg);
+      handleMcpMessage(msg);
     } catch {
       // ignore malformed messages
     }
@@ -87,7 +98,7 @@ function scheduleReconnect(): void {
   }, 3000);
 }
 
-function handleMessage(msg: McpMessage): void {
+function handleMcpMessage(msg: McpMessage): void {
   if (msg.type === "ALERT") {
     alertCount = msg.count ?? alertCount + 1;
     badge.textContent = String(alertCount);
@@ -103,6 +114,59 @@ function handleMessage(msg: McpMessage): void {
 }
 
 connect();
+
+// ── Bridge: Figma client state ────────────────────────────────────────────────
+
+let figmaClients: ClientInfo[] = [];
+
+function updateFigmaState(clients: ClientInfo[]): void {
+  figmaClients = clients;
+  const hasClients = clients.length > 0;
+
+  figmaDot.classList.toggle("hidden", !hasClients);
+  guardian.classList.toggle("figma-connected", hasClients);
+
+  if (hasClients) {
+    const types = clients.map((c) => c.clientType).join(", ");
+    figmaDot.title = `Figma connecté (${types})`;
+    // Brief pulse animation to signal the connection change
+    guardian.style.filter = "drop-shadow(0 4px 20px rgba(99,102,241,0.9))";
+    setTimeout(() => {
+      guardian.style.filter = "";
+    }, 800);
+  }
+}
+
+window.electronAPI.onBridgeClients((clients) => {
+  updateFigmaState(clients);
+});
+
+window.electronAPI.onBridgeMessage((clientId, msg) => {
+  // React to messages coming from Figma
+  if (msg.type === "SELECTION_CHANGED") {
+    const count = msg.nodes?.length ?? 0;
+    if (count > 0) {
+      // Brief glow to signal the selection update
+      guardian.style.filter = "drop-shadow(0 4px 16px rgba(99,102,241,0.6))";
+      setTimeout(() => {
+        guardian.style.filter = "";
+      }, 400);
+    }
+  } else if (msg.type === "ANALYSIS_RESULT") {
+    const issues = msg.issues ?? [];
+    if (issues.length > 0) {
+      alertCount += issues.length;
+      badge.textContent = String(alertCount);
+      badge.classList.remove("hidden");
+      guardian.style.filter = "drop-shadow(0 6px 32px rgba(239,68,68,0.8))";
+      setTimeout(() => {
+        guardian.style.filter = "";
+      }, 600);
+    }
+  } else if (msg.type === "PONG") {
+    console.log(`[guardian] Figma client ${clientId} is alive`);
+  }
+});
 
 // ── Hover state from main process ─────────────────────────────────────────────
 // Drag is handled natively via -webkit-app-region:drag in overlay.css.

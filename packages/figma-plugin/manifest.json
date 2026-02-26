@@ -24,6 +24,7 @@
     ],
     "devAllowedDomains": [
       "http://localhost:3000",
+      "ws://localhost:3002",
       "https://ids-hackathon-2026-ds-ai-git-8e1526-stephane-chevreuxs-projects.vercel.app",
       "https://ids-hackathon-2026-ds-ai-guardian.vercel.app",
       "https://preview.guardian.figdesys.com",

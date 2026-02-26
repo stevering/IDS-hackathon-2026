@@ -9,20 +9,24 @@ import {
 } from "electron";
 import { join } from "path";
 import { fileURLToPath } from "url";
+import { BridgeServer } from "@guardian/bridge";
+import type { ClientInfo } from "@guardian/bridge";
 
 const __dirname = fileURLToPath(new URL(".", import.meta.url));
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
 const OVERLAY_SIZE = 100; // px — size of the floating mascot
-const MARGIN = 24; // px — margin from screen edge
+const MARGIN = 24;        // px — margin from screen edge
 const WS_PORT = Number(process.env["GUARDIAN_WS_PORT"] ?? 3001);
+const BRIDGE_PORT = Number(process.env["GUARDIAN_BRIDGE_PORT"] ?? 3002);
 
 // ── State ────────────────────────────────────────────────────────────────────
 
 let overlayWin: BrowserWindow | null = null;
 let tray: Tray | null = null;
 let isVisible = true;
+const bridgeServer = new BridgeServer(BRIDGE_PORT);
 
 // ── Error handling ───────────────────────────────────────────────────────────
 
@@ -53,6 +57,10 @@ app.whenReady().then(() => {
     app.dock.hide();
   }
 
+  // Start the Figma bridge server
+  bridgeServer.start();
+  setupBridgeHandlers();
+
   createOverlay();
   try {
     createTray();
@@ -64,6 +72,27 @@ app.whenReady().then(() => {
 app.on("window-all-closed", () => {
   // Keep the app alive even if all windows are closed (tray app pattern)
 });
+
+// ── Bridge event handlers ─────────────────────────────────────────────────────
+
+function setupBridgeHandlers(): void {
+  bridgeServer.on("client-connected", (client: ClientInfo) => {
+    console.log(`[guardian/bridge] Figma ${client.clientType} connected (${client.id})`);
+    overlayWin?.webContents.send("bridge-clients", bridgeServer.getClients());
+    refreshTrayMenu();
+  });
+
+  bridgeServer.on("client-disconnected", (client: ClientInfo) => {
+    console.log(`[guardian/bridge] Figma ${client.clientType} disconnected (${client.id})`);
+    overlayWin?.webContents.send("bridge-clients", bridgeServer.getClients());
+    refreshTrayMenu();
+  });
+
+  bridgeServer.on("message", (clientId: string, msg) => {
+    // Forward all Figma messages to the renderer for display/reaction
+    overlayWin?.webContents.send("bridge-message", clientId, msg);
+  });
+}
 
 // ── Overlay window ───────────────────────────────────────────────────────────
 
@@ -130,31 +159,86 @@ function createOverlay(): void {
   }, 50);
 
   // ── Right-click context menu ──────────────────────────────────────────────
-  // webContents.on('context-menu') fires in the main process when the user
-  // right-clicks inside the renderer, regardless of JS event listeners.
   overlayWin.webContents.on("context-menu", () => {
-    if (overlayWin === null) return;
-    const menu = Menu.buildFromTemplate([
-      {
-        label: isVisible ? "Hide Guardian" : "Show Guardian",
-        click: () => toggleVisibility(),
-      },
-      { type: "separator" },
-      { label: "Quit Guardian", click: () => app.quit() },
-    ]);
-    menu.popup({ window: overlayWin });
+    buildContextMenu().popup({ window: overlayWin! });
   });
 
   // Load the renderer
   if (process.env["ELECTRON_RENDERER_URL"] != null) {
     void overlayWin.loadURL(
-      `${process.env["ELECTRON_RENDERER_URL"]}?wsPort=${WS_PORT}`
+      `${process.env["ELECTRON_RENDERER_URL"]}?wsPort=${WS_PORT}&bridgePort=${BRIDGE_PORT}`
     );
   } else {
     void overlayWin.loadFile(join(__dirname, "../renderer/index.html"), {
-      query: { wsPort: String(WS_PORT) },
+      query: { wsPort: String(WS_PORT), bridgePort: String(BRIDGE_PORT) },
     });
   }
+}
+
+// ── Context menu (right-click on overlay) ────────────────────────────────────
+
+function buildContextMenu(): Menu {
+  const clients = bridgeServer.getClients();
+
+  const figmaItems: Electron.MenuItemConstructorOptions[] =
+    clients.length > 0
+      ? clients.map((c) => ({
+          label: `● ${c.clientType === "widget" ? "Widget" : "Plugin"}${
+            c.widgetId ? " #" + c.widgetId.slice(-6) : ""
+          }${c.fileKey ? "  ·  " + c.fileKey.slice(0, 8) : ""}`,
+          enabled: false,
+        }))
+      : [{ label: "○ Aucun client Figma connecté", enabled: false }];
+
+  const sendItems: Electron.MenuItemConstructorOptions[] =
+    clients.length > 0
+      ? [
+          {
+            label: "Envoyer vers Figma…",
+            submenu: [
+              {
+                label: "Analyser la sélection",
+                click: () => bridgeServer.broadcast({ type: "TRIGGER_ANALYSIS" }),
+              },
+              {
+                label: "Créer un Frame test",
+                click: () =>
+                  bridgeServer.broadcast({
+                    type: "EXECUTE_CODE",
+                    id: "test-frame",
+                    code: `
+const f = figma.createFrame();
+f.name = "Guardian Frame";
+f.x = figma.viewport.center.x;
+f.y = figma.viewport.center.y;
+f.resize(200, 200);
+figma.currentPage.appendChild(f);
+figma.currentPage.selection = [f];
+figma.viewport.scrollAndZoomIntoView([f]);`,
+                  }),
+              },
+              {
+                label: "Ping Figma",
+                click: () => bridgeServer.broadcast({ type: "PING" }),
+              },
+            ],
+          },
+        ]
+      : [];
+
+  return Menu.buildFromTemplate([
+    { label: "DS AI Guardian", enabled: false },
+    { type: "separator" },
+    { label: "Figma Connections :", enabled: false },
+    ...figmaItems,
+    ...(sendItems.length > 0 ? [{ type: "separator" as const }, ...sendItems] : []),
+    { type: "separator" },
+    {
+      label: isVisible ? "Masquer Guardian" : "Afficher Guardian",
+      click: () => toggleVisibility(),
+    },
+    { label: "Quitter", click: () => app.quit() },
+  ]);
 }
 
 // ── System tray ──────────────────────────────────────────────────────────────
@@ -179,36 +263,57 @@ function createTray(): void {
 }
 
 function buildTrayMenu(): Menu {
+  const clients = bridgeServer.getClients();
+
+  const figmaItems: Electron.MenuItemConstructorOptions[] =
+    clients.length > 0
+      ? clients.map((c) => ({
+          label: `● ${c.clientType === "widget" ? "Widget" : "Plugin"}${
+            c.widgetId ? " #" + c.widgetId.slice(-6) : ""
+          }`,
+          enabled: false,
+        }))
+      : [{ label: "○ Aucun Figma connecté", enabled: false }];
+
   return Menu.buildFromTemplate([
     {
-      label: isVisible ? "Hide Guardian" : "Show Guardian",
+      label: isVisible ? "Masquer Guardian" : "Afficher Guardian",
       click: () => toggleVisibility(),
     },
     { type: "separator" },
-    { label: `MCP: ws://localhost:${WS_PORT}`, enabled: false },
+    { label: "Figma :", enabled: false },
+    ...figmaItems,
     { type: "separator" },
-    { label: "Quit Guardian", click: () => app.quit() },
+    { label: `MCP: ws://localhost:${WS_PORT}`, enabled: false },
+    { label: `Bridge: ws://localhost:${BRIDGE_PORT}`, enabled: false },
+    { type: "separator" },
+    { label: "Quitter", click: () => app.quit() },
   ]);
+}
+
+function refreshTrayMenu(): void {
+  tray?.setContextMenu(buildTrayMenu());
 }
 
 function toggleVisibility(): void {
   if (overlayWin === null) return;
   isVisible = !isVisible;
   isVisible ? overlayWin.show() : overlayWin.hide();
-  tray?.setContextMenu(buildTrayMenu());
+  refreshTrayMenu();
 }
 
 // ── IPC handlers ─────────────────────────────────────────────────────────────
 
 ipcMain.on("show-context-menu", () => {
-  if (overlayWin === null) return;
-  const menu = Menu.buildFromTemplate([
-    {
-      label: isVisible ? "Hide Guardian" : "Show Guardian",
-      click: () => toggleVisibility(),
-    },
-    { type: "separator" },
-    { label: "Quit Guardian", click: () => app.quit() },
-  ]);
-  menu.popup({ window: overlayWin });
+  buildContextMenu().popup({ window: overlayWin! });
+});
+
+// Renderer → send a message to a specific Figma client
+ipcMain.on("bridge-send", (_event, clientId: string, msg: unknown) => {
+  bridgeServer.send(clientId, msg as Parameters<typeof bridgeServer.send>[1]);
+});
+
+// Renderer → broadcast a message to all Figma clients
+ipcMain.on("bridge-broadcast", (_event, msg: unknown) => {
+  bridgeServer.broadcast(msg as Parameters<typeof bridgeServer.broadcast>[0]);
 });

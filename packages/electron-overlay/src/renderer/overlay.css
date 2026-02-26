@@ -135,6 +135,31 @@ body {
   }
 }
 
+/* ── Figma connection dot ───────────────────────────────────────────────────── */
+/* Small dot at top-left, visible when at least one Figma client is connected.  */
+.figma-dot {
+  position: absolute;
+  top: -2px;
+  left: -2px;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #6366f1; /* indigo — Figma's brand colour */
+  border: 2px solid rgba(0, 0, 0, 0.25);
+  box-shadow: 0 0 6px rgba(99, 102, 241, 0.8);
+  animation: figma-dot-pulse 2s ease-in-out infinite;
+  pointer-events: none;
+}
+
+.figma-dot.hidden {
+  display: none;
+}
+
+@keyframes figma-dot-pulse {
+  0%, 100% { transform: scale(1); opacity: 1; }
+  50%       { transform: scale(1.2); opacity: 0.85; }
+}
+
 /* ── Alert badge ────────────────────────────────────────────────────────────── */
 .alert-badge {
   position: absolute;
