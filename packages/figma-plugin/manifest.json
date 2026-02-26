@@ -1,10 +1,8 @@
 {
-  "name": "Guardian",
+  "name": "Guardian Plugin",
   "id": "1204941393675708447",
   "api": "1.0.0",
-  "widgetApi": "1.0.0",
-  "containsWidget": true,
-  "main": "main.js",
+  "main": "dist/code.js",
   "ui": "ui.html",
   "capabilities": [
   ],

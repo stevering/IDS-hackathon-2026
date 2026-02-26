@@ -1,40 +1,69 @@
-Below are the steps to get your plugin running. You can also find instructions at:
+# Guardian — Figma Plugin
 
-  https://www.figma.com/plugin-docs/plugin-quickstart-guide/
+Standalone Figma plugin that opens the Guardian AI assistant interface.
 
-This plugin template uses Typescript and NPM, two standard tools in creating JavaScript applications.
+## Purpose
 
-First, download Node.js which comes with NPM. This will allow you to install TypeScript and other
-libraries. You can find the download link here:
+This package is the **plugin entry point**: it appears in Figma's **Plugins** menu and can be run independently, without any widget on the canvas. It provides the full Guardian UI — chat, API key management, design system analysis — embedded in a Figma panel.
 
-  https://nodejs.org/en/download/
+## Architecture
 
-Next, install TypeScript using the command:
+```
+figma-plugin/
+├── manifest.json     — Plugin-only manifest (no containsWidget)
+├── code.ts           — Plugin main thread: opens the UI, handles messages,
+│                       reads/writes figma.clientStorage
+├── code.js           — Compiled output (tsc) — referenced by manifest
+├── ui.html           — Plugin UI: single HTML file embedding the webapp
+│                       in an iframe + Figma ↔ webapp bridge logic
+│                       ⚠ Source of truth — also copied by the widget build
+├── build.mjs         — Build script (tsc only)
+├── tsconfig.json
+└── package.json
+```
 
-  npm install -g typescript
+**Runtime flow:**
 
-Finally, in the directory of your plugin, get the latest type definitions for the plugin API by running:
+```
+User → Figma Plugins menu → Guardian
+  → Figma loads manifest.json
+  → Runs code.js (main thread)
+    → figma.showUI(__html__)   opens ui.html as a panel
+    → ui.html probes /api/health, loads webapp in <iframe>
+    → Messages flow: ui.html ↔ code.ts ↔ figma document
+```
 
-  npm install --save-dev @figma/plugin-typings
+**Communication with the widget** (when both are used together):
 
-If you are familiar with JavaScript, TypeScript will look very familiar. In fact, valid JavaScript code
-is already valid Typescript code.
+Both the plugin and the widget UI can exchange state through the webapp backend:
 
-TypeScript adds type annotations to variables. This allows code editors such as Visual Studio Code
-to provide information about the Figma API while you are writing code, as well as help catch bugs
-you previously didn't notice.
+```
+Plugin UI  →  POST /api/figma-bridge?key=<fileKey>  →  Backend store
+Widget UI  →  GET  /api/figma-bridge?key=<fileKey>  →  reads state
+```
 
-For more information, visit https://www.typescriptlang.org/
+## Setup
 
-Using TypeScript requires a compiler to convert TypeScript (code.ts) into JavaScript (code.js)
-for the browser to run.
+Dependencies are managed at the monorepo root. From the repo root:
 
-We recommend writing TypeScript code using Visual Studio code:
+```bash
+pnpm install
+```
 
-1. Download Visual Studio Code if you haven't already: https://code.visualstudio.com/.
-2. Open this directory in Visual Studio Code.
-3. Compile TypeScript to JavaScript: Run the "Terminal > Run Build Task..." menu item,
-    then select "npm: watch". You will have to do this again every time
-    you reopen Visual Studio Code.
+## Scripts
 
-That's it! Visual Studio Code will regenerate the JavaScript file every time you save.
+```bash
+pnpm build          # compile code.ts → code.js  (one-shot)
+pnpm dev            # tsc --watch  (recompiles on every save)
+pnpm lint
+pnpm lint:fix
+```
+
+## Loading in Figma
+
+1. Open Figma Desktop
+2. **Plugins** → **Development** → **Import plugin from manifest…**
+3. Select `packages/figma-plugin/manifest.json`
+4. Run it from **Plugins** → **Development** → **Guardian**
+
+> The plugin and the widget use **separate manifests** and appear as two distinct items in Figma. They share the same UI (`ui.html`) — the widget build copies it at compile time.
