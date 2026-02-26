@@ -1,12 +1,5 @@
-// This plugin will open a window to prompt the user to enter a number, and
-// it will then create that many rectangles on the screen.
+import { sendFigpalInit, setupPageChangeListener, handleBasicMessage, buildNodeUrl } from './bridge';
 
-// This file holds the main code for plugins. Code in this file has access to
-// the *figma document* via the figma global object.
-// You can access browser APIs in the <script> tag inside "ui.html" which has a
-// full browser environment (See https://www.figma.com/plugin-docs/how-plugins-run).
-
-// This shows the HTML page in "ui.html".
 figma.showUI(__html__, { width: 400, height: 800, title: "Guardian" });
 
 // Vérifier si le plugin a été déclenché depuis le widget Guardian
@@ -208,14 +201,7 @@ type IncomingMessage =
   }
 
   // Handshake: notify the embedded webapp that it's inside the Figma plugin
-  figma.ui.postMessage({
-    type: 'figpal-init',
-    data: {
-      pluginVersion: '1.0',
-      figmaFileKey: figma.fileKey ?? null,
-      userName: figma.currentUser ? figma.currentUser.name : null,
-    }
-  });
+  sendFigpalInit();
 })();
 
 // ─── FUNCTIONS ───────────────────────────────────────────────────────
@@ -238,10 +224,7 @@ async function sendCurrentSelection(id?: string): Promise<void> {
   }
 
   const firstNode = selection[0];
-  const fileKey = figma.fileKey;
-  const nodeUrl: string | null = fileKey && firstNode
-      ? `https://www.figma.com/design/${fileKey}?node-id=${firstNode.id.replace(':', '-')}`
-      : null;
+  const nodeUrl: string | null = firstNode ? buildNodeUrl(firstNode.id) : null;
 
   figma.ui.postMessage({
     type: 'selection-changed',
@@ -321,12 +304,8 @@ figma.ui.onmessage = async (msg: IncomingMessage): Promise<void> => {
       }
     }
 
-    // Build a Figma URL for the first selected node (if fileKey is known)
     const firstNode = selection[0];
-    const fileKey = figma.fileKey;
-    const nodeUrl: string | null = fileKey && firstNode
-        ? `https://www.figma.com/design/${fileKey}?node-id=${firstNode.id.replace(':', '-')}`
-        : null;
+    const nodeUrl: string | null = firstNode ? buildNodeUrl(firstNode.id) : null;
 
     const dataResponse = { nodes: simplified, image: imageData, nodeUrl };
 
@@ -437,13 +416,7 @@ figma.ui.onmessage = async (msg: IncomingMessage): Promise<void> => {
     });
   }
 
-  if (type === 'resize') {
-    figma.ui.resize(msg.data.width, msg.data.height);
-  }
-
-  if (type === 'close') {
-    figma.closePlugin();
-  }
+  handleBasicMessage(msg as { type?: string; data?: unknown }, () => {});
 };
 
 // ─── HELPER FUNCTIONS ───────────────────────────────────────────────
@@ -454,15 +427,7 @@ figma.on('selectionchange', () => {
   sendCurrentSelection('auto-stream');
 });
 
-figma.on('currentpagechange', () => {
-  figma.ui.postMessage({
-    type: 'page-changed',
-    data: {
-      currentPage: { id: figma.currentPage.id, name: figma.currentPage.name },
-      pages: figma.root.children.map(p => ({ id: p.id, name: p.name })),
-    }
-  });
-});
+setupPageChangeListener();
 
 // ─── UTILS ───────────────────────────────────────────────────────────
 

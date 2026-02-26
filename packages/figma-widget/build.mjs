@@ -45,8 +45,8 @@ ${pluginCode}
 
 // ── Build unique ────────────────────────────────────────────────────────────
 if (!isWatch) {
-  console.log('[Guardian Widget] Compiling plugin (tsc)…');
-  execSync('tsc -p tsconfig.json', { stdio: 'inherit', cwd: pluginDir });
+  console.log('[Guardian Widget] Building plugin (esbuild)…');
+  execSync('node build.mjs', { stdio: 'inherit', cwd: pluginDir });
 
   console.log('[Guardian Widget] Compiling widget (esbuild)…');
   const result = await esbuild.build({
@@ -71,8 +71,8 @@ console.log('[Guardian Widget] Tip: run `pnpm dev` in figma-plugin/ in parallel 
 // 1. Compiler le plugin une fois au démarrage (s'assure que dist/code.js existe et est à jour).
 //    Le widget ne spawne PAS tsc --watch : si figma-plugin/pnpm dev tourne en parallèle,
 //    c'est lui qui écrit dist/code.js → pas de conflit entre deux tsc sur le même fichier.
-console.log('[Guardian Widget] Initial plugin compile (tsc)…');
-execSync('tsc -p tsconfig.json', { stdio: 'inherit', cwd: pluginDir });
+console.log('[Guardian Widget] Initial plugin build (esbuild)…');
+execSync('node build.mjs', { stdio: 'inherit', cwd: pluginDir });
 
 // Cache du dernier widget compilé (pour re-fusionner quand le plugin change)
 let lastWidgetCode = null;

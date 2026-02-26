@@ -1,10 +1,17 @@
 /**
  * Build Guardian Plugin (standalone)
- * Produit code.js depuis code.ts via tsc.
+ * Utilise esbuild pour bundler code.ts + bridge.ts → dist/code.js
  */
 
-import { execSync } from 'child_process';
+import * as esbuild from 'esbuild';
 
-console.log('[Guardian Plugin] Compiling (tsc)…');
-execSync('tsc -p tsconfig.json', { stdio: 'inherit' });
-console.log('[Guardian Plugin] Build complete → code.js');
+console.log('[Guardian Plugin] Bundling (esbuild)…');
+await esbuild.build({
+  entryPoints: ['code.ts'],
+  bundle: true,
+  outfile: 'dist/code.js',
+  target: 'es6',
+  platform: 'browser',
+  logLevel: 'silent',
+});
+console.log('[Guardian Plugin] Build complete → dist/code.js');

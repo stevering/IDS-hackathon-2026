@@ -1,5 +1,7 @@
 /// <reference types="@figma/widget-typings" />
 
+import { sendFigpalInit, setupPageChangeListener, handleBasicMessage, buildNodeUrl } from '../../figma-plugin/bridge';
+
 const { widget } = figma;
 const { AutoLayout, SVG, Text } = widget;
 
@@ -54,11 +56,31 @@ function GuardianWidget() {
       onClick={() =>
         new Promise<void>((resolve) => {
           figma.showUI(__html__, { width: 400, height: 800, title: 'Guardian' });
-          figma.ui.onmessage = (msg: { type?: string }) => {
-            if (msg?.type === 'close' || msg?.type === 'CLOSE') {
-              figma.closePlugin();
-              resolve();
-            }
+
+          // ── Bridge plugin → nécessaire car code.ts ne tourne pas en contexte widget ──
+
+          sendFigpalInit();
+
+          // Sélection initiale (simplifiée — pas d'export image depuis le widget)
+          const sendSelection = (id: string) => {
+            const sel = figma.currentPage.selection;
+            figma.ui.postMessage({
+              type: 'selection-changed',
+              id,
+              data: {
+                nodes: sel.map(n => ({ id: n.id, name: n.name, type: n.type })),
+                image: null,
+                nodeUrl: sel[0] ? buildNodeUrl(sel[0].id) : null,
+              },
+            });
+          };
+
+          sendSelection('init');
+          figma.on('selectionchange', () => sendSelection('auto-stream'));
+          setupPageChangeListener();
+
+          figma.ui.onmessage = (msg: { type?: string; data?: unknown }) => {
+            handleBasicMessage(msg, resolve);
           };
         })
       }
