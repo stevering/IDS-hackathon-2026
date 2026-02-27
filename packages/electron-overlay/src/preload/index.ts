@@ -60,6 +60,13 @@ contextBridge.exposeInMainWorld("electronAPI", {
   // ── Overlay panel resize ──────────────────────────────────────────────────
   expandOverlay: (): void => ipcRenderer.send("expand-overlay"),
   collapseOverlay: (): void => ipcRenderer.send("collapse-overlay"),
+  expandForMessage: (): void => ipcRenderer.send("expand-for-message"),
+  collapseForMessage: (): void => ipcRenderer.send("collapse-for-message"),
+
+  // ── Message bubble side notification ─────────────────────────────────────
+  onMessageSide: (callback: (side: "left" | "right") => void): void => {
+    ipcRenderer.on("message-side", (_event, side: "left" | "right") => callback(side));
+  },
 
   // ── Console forwarding → main terminal ──────────────────────────────────
   logToMain: (level: string, ...args: unknown[]): void => {

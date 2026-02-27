@@ -954,6 +954,26 @@
     window.onmessage = (event) => {
         const data = event.data;
 
+        // Handle messages from overlay
+        if (data && data.type === 'FROM_OVERLAY') {
+            if (data.action === 'START_NEW_CONVERSATION') {
+                // Expand the plugin if minimized
+                if (document.body.classList.contains('minimized')) {
+                    setMinimized(false);
+                }
+
+                // Reset conversation and start analysis (similar to main-header-analyze-btn click)
+                sendToWebview({ type: 'reset-conversation' });
+                setTimeout(function () {
+                    sendToWebview({ type: 'inject-agent-message', text: 'New analysis requested from Guardian overlay' });
+                    setTimeout(function () {
+                        sendToWebview({ type: 'trigger-user-analysis' });
+                    }, 400);
+                }, 200);
+            }
+            return;
+        }
+
         // Première communication depuis la webapp (ou l'extension) → connected
         if (!isConnected && data && (data.source === 'figpal-webapp' || data.source === 'figpal-extension')) {
             updateConnectionStatus(true);
@@ -1198,6 +1218,17 @@
             if (msg.type === 'TRIGGER_ANALYSIS') {
                 // Ask the webapp to start an AI analysis on the current selection
                 sendToWebview({ type: 'trigger-user-analysis' });
+                return;
+            }
+
+            if (msg.type === 'OPEN_PLUGIN_AND_CONVERSE') {
+                // Expand the plugin if currently minimized
+                if (document.body.classList.contains('minimized')) setMinimized(false);
+                // Reset conversation and trigger a fresh analysis
+                sendToWebview({ type: 'reset-conversation' });
+                setTimeout(function () {
+                    sendToWebview({ type: 'trigger-user-analysis' });
+                }, 400);
                 return;
             }
 

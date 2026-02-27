@@ -77,6 +77,14 @@ const SHARED_KEY = 'pluginStatus';
 const SESSION_TTL = 30 * 1000;      // 30s: session expires if no heartbeat received
 const HEARTBEAT_MS = 3 * 1000;      // 3s: keep-alive interval while plugin is open
 
+// ── Local state (not synced) ─────────────────────────────────────────────────
+// figma.currentUser is forbidden during widget rendering, so we can't compute
+// "iAmActive" from useSyncedMap during render. Instead we use a module-level flag
+// that lives in the same JS execution context as the onClick Promise — it persists
+// across re-renders triggered while the Promise is pending, and resets to false
+// once the Promise resolves (plugin closed).
+let localPluginOpen = false;
+
 // ── Widget ───────────────────────────────────────────────────────────────────
 
 function GuardianWidget() {
@@ -116,12 +124,17 @@ function GuardianWidget() {
   usePropertyMenu([], () => {});
 
   // ── Status display ────────────────────────────────────────────────────────
-  const statusColor = anyoneActive ? '#10B981' : '#9CA3AF';
-  const statusLabel = anyoneActive
-    ? `${activeCount} guardian${activeCount > 1 ? 's' : ''} active`
-    : lastSeenTs > 0
-      ? 'No guardian active'
-      : 'Never activated';
+  // localPluginOpen is reliable within a single window: same JS execution context
+  // as the onClick Promise. Unreliable only for same-account multi-window (impossible in prod).
+  const iAmActive = localPluginOpen;
+  const statusColor = iAmActive ? '#10B981' : anyoneActive ? '#A78BFA' : '#9CA3AF';
+  const statusLabel = iAmActive
+    ? 'You\'re guarding'
+    : anyoneActive
+      ? `${activeCount} guardian${activeCount > 1 ? 's' : ''} active`
+      : lastSeenTs > 0
+        ? 'No guardian active'
+        : 'Never activated';
 
   // ── Open plugin handler ───────────────────────────────────────────────────
   // sessionKey is computed here (event handler context) because figma.currentUser
@@ -157,14 +170,21 @@ function GuardianWidget() {
 
       sendFigpalInit();
 
-      const sendSelection = (id: string) => {
+      const sendSelection = async (id: string) => {
         const sel = figma.currentPage.selection;
+        let imageData: string | null = null;
+        if (sel.length > 0) {
+          try {
+            const bytes = await sel[0].exportAsync({ format: 'PNG', constraint: { type: 'SCALE', value: 1 } });
+            imageData = `data:image/png;base64,${figma.base64Encode(bytes)}`;
+          } catch { /* ignore — export not available for this node type */ }
+        }
         figma.ui.postMessage({
           type: 'selection-changed',
           id,
           data: {
             nodes: sel.map((n) => ({ id: n.id, name: n.name, type: n.type })),
-            image: null,
+            image: imageData,
             nodeUrl: sel[0] ? buildNodeUrl(sel[0].id) : null,
           },
         });
@@ -240,6 +260,22 @@ function GuardianWidget() {
           return;
         }
 
+        if (msg.type === 'get-file-info') {
+          const requestId = (msg as { id?: string }).id;
+          let currentPage: { id: string; name: string } | null = null;
+          let pages: { id: string; name: string }[] = [];
+          let currentUser: { id: string | null; name: string } | null = null;
+          try { currentPage = { id: figma.currentPage.id, name: figma.currentPage.name }; } catch { /* protected */ }
+          try { pages = (figma.root.children as ReadonlyArray<{ id: string; name: string }>).map(p => ({ id: p.id, name: p.name })); } catch { /* protected */ }
+          try { currentUser = figma.currentUser ? { id: figma.currentUser.id, name: figma.currentUser.name } : null; } catch { /* protected */ }
+          figma.ui.postMessage({
+            type: 'response',
+            id: requestId,
+            data: { name: figma.root.name, fileKey: figma.fileKey, currentPage, pages, currentUser },
+          });
+          return;
+        }
+
         handleBasicMessage(msg as { type?: string; data?: unknown }, cleanup);
       };
     });
@@ -247,12 +283,18 @@ function GuardianWidget() {
   // ── Click handler ─────────────────────────────────────────────────────────
   const handleOpen = async () => {
     // figma.currentUser is accessible here (event handler context, not render)
-    const sessionKey = figma.currentUser?.id ?? 'anon-widget';
+    // sessionId is unique per file-open session (even for the same account across
+    // multiple desktop windows), which allows testing multi-guardian with two windows.
+    const sessionKey = figma.currentUser?.sessionId != null
+      ? String(figma.currentUser.sessionId)
+      : (figma.currentUser?.id ?? 'anon-widget');
+    localPluginOpen = true;   // ← immediately visible to re-renders in this context
     const now = Date.now();
     sessions.set(sessionKey, { ts: now });
     setLastSeenTs(now);
     figma.root.setSharedPluginData(SHARED_NS, SHARED_KEY, JSON.stringify({ connected: true, ts: now }));
     await openPlugin(sessionKey);
+    localPluginOpen = false;  // ← Promise resolved = plugin closed
     // sessions.set(sessionKey, { ts: 0 }) was already called inside cleanup().
     // The stale cleanup in useEffect will remove it on the next render (ts=0 → !isActive).
     const stillActive = sessions.keys().some(k => {
@@ -289,26 +331,27 @@ function GuardianWidget() {
         padding={{ top: 4, bottom: 4, left: 10, right: 10 }}
         cornerRadius={20}
         fill={anyoneActive ? '#312E81' : '#F3F4F6'}
-        onClick={() => { /* re-render → recomputes anyoneActive */ }}
       >
         <Rectangle width={8} height={8} cornerRadius={4} fill={statusColor} />
         <Text fontSize={10} fill={anyoneActive ? '#C7D2FE' : '#6B7280'}>{statusLabel}</Text>
       </AutoLayout>
 
-      {/* Open button: label adapts based on whether others are already active */}
-      <AutoLayout
-        direction="horizontal"
-        spacing={6}
-        verticalAlignItems="center"
-        padding={{ top: 6, bottom: 6, left: 14, right: 14 }}
-        cornerRadius={20}
-        fill="#6D28D9"
-        onClick={handleOpen}
-      >
-        <Text fontSize={11} fontWeight={600} fill="#FFFFFF">
-          {anyoneActive ? 'Join' : 'Activate Guardian'}
-        </Text>
-      </AutoLayout>
+      {/* Open button: hidden while plugin is open in this window */}
+      {!iAmActive && (
+        <AutoLayout
+          direction="horizontal"
+          spacing={6}
+          verticalAlignItems="center"
+          padding={{ top: 6, bottom: 6, left: 14, right: 14 }}
+          cornerRadius={20}
+          fill="#6D28D9"
+          onClick={handleOpen}
+        >
+          <Text fontSize={11} fontWeight={600} fill="#FFFFFF">
+            {anyoneActive ? 'Join' : 'Activate Guardian'}
+          </Text>
+        </AutoLayout>
+      )}
     </AutoLayout>
   );
 }

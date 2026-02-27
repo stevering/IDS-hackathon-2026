@@ -81,10 +81,19 @@ export interface NotifyMessage {
   message: string;
 }
 
+/**
+ * Ask the plugin to open (if minimized) and start a fresh conversation.
+ * Mirrors the ⭐ button in the plugin's main-header.
+ */
+export interface OpenPluginAndConverseMessage {
+  type: 'OPEN_PLUGIN_AND_CONVERSE';
+}
+
 /** BridgeServer (Electron) → Figma plugin UI */
 export type ElectronMessage =
   | PingMessage
   | TriggerAnalysisMessage
   | ExecuteCodeMessage
   | HighlightNodeMessage
-  | NotifyMessage;
+  | NotifyMessage
+  | OpenPluginAndConverseMessage;

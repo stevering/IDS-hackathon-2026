@@ -23,6 +23,7 @@ const __dirname = fileURLToPath(new URL(".", import.meta.url));
 const OVERLAY_SIZE = 100; // px — compact mascot
 const PANEL_WIDTH  = 320; // px — onboarding panel width
 const PANEL_HEIGHT = 420; // px — onboarding panel height
+const MESSAGE_WIDTH = 400; // px — width when showing message bubble
 const MARGIN = 24;        // px — margin from screen edge
 const WS_PORT = Number(process.env["GUARDIAN_WS_PORT"] ?? 3001);
 const BRIDGE_PORT = Number(process.env["GUARDIAN_BRIDGE_PORT"] ?? 3002);
@@ -55,8 +56,41 @@ let overlayWin: BrowserWindow | null = null;
 let tray: Tray | null = null;
 let isVisible = true;
 let isPanelExpanded = false;
+let isMessageExpanded = false;
+let messageSide: "left" | "right" = "left";
+
+// ── Position tracking ─────────────────────────────────────────────────────────
+// Each "expand" saves the compact position so the matching "collapse" can restore it.
+// We never rely on getBounds() at collapse-time because the window may be mid-animation.
+
+/** Compact position saved just before expandOverlay(). Restored by collapseOverlay(). */
+let preOverlayBounds: { x: number; y: number } | null = null;
+
+/**
+ * Target compact position stored by collapseForMessage().
+ * Used by the NEXT expandForMessage() when it fires before the collapse animation
+ * finishes — getBounds() would return a mid-animation value at that point.
+ * Expires after COLLAPSE_ANIM_TTL ms so a subsequent user drag is honoured.
+ */
+let lastCollapseTarget: { x: number; y: number; ts: number } | null = null;
+const COLLAPSE_ANIM_TTL = 600; // ms — comfortably longer than any macOS window anim
+
 let devToolsOpen = false; // loaded from settings after app ready
 const bridgeServer = new BridgeServer(BRIDGE_PORT);
+
+// ── Position helpers ─────────────────────────────────────────────────────────
+
+/**
+ * Clamp a compact (100×100) window position so the mascot is always fully
+ * visible on screen with at least MARGIN px clearance on every side.
+ */
+function clampCompactPos(x: number, y: number): { x: number; y: number } {
+  const { width, height } = screen.getPrimaryDisplay().workAreaSize;
+  return {
+    x: Math.max(MARGIN, Math.min(x, width  - OVERLAY_SIZE - MARGIN)),
+    y: Math.max(MARGIN, Math.min(y, height - OVERLAY_SIZE - MARGIN)),
+  };
+}
 
 // ── Error handling ───────────────────────────────────────────────────────────
 
@@ -185,15 +219,27 @@ async function launchPlugin(): Promise<{ success: boolean; method: string; error
 function expandOverlay(): void {
   if (!overlayWin || isPanelExpanded) return;
   isPanelExpanded = true;
+
+  // Save the compact position so collapseOverlay() can restore it later.
+  // When a message is expanded, derive the compact position from the current
+  // window bounds (mascot is at one known edge of the expanded window).
+  if (isMessageExpanded) {
+    const b = overlayWin.getBounds();
+    const compactX = messageSide === "left"
+      ? b.x + b.width - OVERLAY_SIZE   // mascot at right end
+      : b.x;                            // mascot at left end
+    preOverlayBounds = { x: compactX, y: b.y };
+    isMessageExpanded = false;
+    lastCollapseTarget = null;
+  } else {
+    const b = overlayWin.getBounds();
+    preOverlayBounds = { x: b.x, y: b.y };
+  }
+
   const { width, height } = screen.getPrimaryDisplay().workAreaSize;
   overlayWin.setBounds(
-    {
-      x: width - PANEL_WIDTH - MARGIN,
-      y: height - PANEL_HEIGHT - MARGIN,
-      width: PANEL_WIDTH,
-      height: PANEL_HEIGHT,
-    },
-    true // animate
+    { x: width - PANEL_WIDTH - MARGIN, y: height - PANEL_HEIGHT - MARGIN, width: PANEL_WIDTH, height: PANEL_HEIGHT },
+    true
   );
 }
 
@@ -212,15 +258,85 @@ function toggleDevTools(): void {
 function collapseOverlay(): void {
   if (!overlayWin || !isPanelExpanded) return;
   isPanelExpanded = false;
-  const { width, height } = screen.getPrimaryDisplay().workAreaSize;
+
+  // A message bubble is managing the window — don't override its position.
+  if (isMessageExpanded) return;
+
+  // Restore the compact position that was saved when the panel opened.
+  // Falls back to the default bottom-right corner only on the very first use.
+  const restore = preOverlayBounds;
+  preOverlayBounds = null;
+
+  if (restore) {
+    const clamped = clampCompactPos(restore.x, restore.y);
+    overlayWin.setBounds(
+      { x: clamped.x, y: clamped.y, width: OVERLAY_SIZE, height: OVERLAY_SIZE },
+      true
+    );
+  } else {
+    const { width, height } = screen.getPrimaryDisplay().workAreaSize;
+    overlayWin.setBounds(
+      { x: width - OVERLAY_SIZE - MARGIN, y: height - OVERLAY_SIZE - MARGIN, width: OVERLAY_SIZE, height: OVERLAY_SIZE },
+      true
+    );
+  }
+}
+
+function expandForMessage(): void {
+  if (!overlayWin || isPanelExpanded || isMessageExpanded) return;
+  isMessageExpanded = true;
+
+  // ── Resolve compact position ─────────────────────────────────────────────────
+  // If a collapse just fired (< COLLAPSE_ANIM_TTL ms ago) the window is still
+  // animating — getBounds() returns a mid-frame value. Reuse the stored target.
+  const useTarget = lastCollapseTarget && (Date.now() - lastCollapseTarget.ts < COLLAPSE_ANIM_TTL);
+  const compact = useTarget ? lastCollapseTarget! : overlayWin.getBounds();
+  lastCollapseTarget = null;
+
+  // ── Choose expansion direction ───────────────────────────────────────────────
+  const { width: screenWidth } = screen.getPrimaryDisplay().workAreaSize;
+  const compactCenterX = compact.x + OVERLAY_SIZE / 2;
+  const isOnRightSide = compactCenterX > screenWidth / 2;
+
+  let newX: number;
+  if (isOnRightSide) {
+    newX = Math.max(MARGIN, compact.x + OVERLAY_SIZE - MESSAGE_WIDTH);
+    messageSide = "left";
+  } else {
+    newX = compact.x;
+    messageSide = "right";
+  }
+
+  // animate: false → instant resize, no CoreAnimation jitter on mascot position
+  overlayWin.setBounds({ x: newX, y: compact.y, width: MESSAGE_WIDTH, height: OVERLAY_SIZE }, false);
+  overlayWin.webContents.send("message-side", messageSide);
+}
+
+function collapseForMessage(): void {
+  if (!overlayWin || !isMessageExpanded) return;
+  isMessageExpanded = false;
+
+  // ── Compute mascot's compact position from CURRENT bounds ────────────────────
+  // The mascot is always pinned to one edge of the expanded window.
+  // Using getBounds() here (not a pre-captured snapshot) means any drag the user
+  // performed while the bubble was open is fully respected — the mascot stays
+  // exactly where the user left it.
+  const b = overlayWin.getBounds();
+  const restore = messageSide === "left"
+    ? { x: b.x + b.width - OVERLAY_SIZE, y: b.y }   // mascot at right end
+    : { x: b.x, y: b.y };                             // mascot at left end
+
+  // Clamp so the mascot can't end up outside the screen (e.g. after a drag
+  // that moved the expanded window near or past a screen edge).
+  const clamped = clampCompactPos(restore.x, restore.y);
+
+  // Store so rapid re-expand can use the correct target instead of a mid-anim value.
+  lastCollapseTarget = { x: clamped.x, y: clamped.y, ts: Date.now() };
+
+  // animate: false → instant resize, no CoreAnimation jitter on mascot position
   overlayWin.setBounds(
-    {
-      x: width - OVERLAY_SIZE - MARGIN,
-      y: height - OVERLAY_SIZE - MARGIN,
-      width: OVERLAY_SIZE,
-      height: OVERLAY_SIZE,
-    },
-    true // animate
+    { x: clamped.x, y: clamped.y, width: OVERLAY_SIZE, height: OVERLAY_SIZE },
+    false
   );
 }
 
@@ -305,6 +421,24 @@ function createOverlay(): void {
     overlayWin.setIgnoreMouseEvents(!over, { forward: true });
     overlayWin.webContents.send("hover-change", over);
   }, 50);
+
+  // ── Clamp after user drag ─────────────────────────────────────────────────
+  // -webkit-app-region:drag lets the user move the window freely, including
+  // partially off-screen. Debounce on 'moved' so we clamp once the drag ends.
+  let moveClampTimer: ReturnType<typeof setTimeout> | null = null;
+  overlayWin.on("moved", () => {
+    if (isPanelExpanded || isMessageExpanded) return; // only in compact mode
+    if (moveClampTimer !== null) clearTimeout(moveClampTimer);
+    moveClampTimer = setTimeout(() => {
+      moveClampTimer = null;
+      if (!overlayWin || isPanelExpanded || isMessageExpanded) return;
+      const b = overlayWin.getBounds();
+      const clamped = clampCompactPos(b.x, b.y);
+      if (clamped.x !== b.x || clamped.y !== b.y) {
+        overlayWin.setBounds({ x: clamped.x, y: clamped.y, width: OVERLAY_SIZE, height: OVERLAY_SIZE }, true);
+      }
+    }, 200);
+  });
 
   // Auto-open DevTools if enabled in settings
   overlayWin.webContents.on("did-finish-load", () => {
@@ -505,8 +639,10 @@ ipcMain.on("bridge-broadcast", (_event, msg: unknown) => {
 });
 
 // Onboarding panel resize
-ipcMain.on("expand-overlay", () => expandOverlay());
-ipcMain.on("collapse-overlay", () => collapseOverlay());
+  ipcMain.on("expand-overlay", () => expandOverlay());
+  ipcMain.on("collapse-overlay", () => collapseOverlay());
+  ipcMain.on("expand-for-message", () => expandForMessage());
+  ipcMain.on("collapse-for-message", () => collapseForMessage());
 
 // Figma / plugin actions (invokable from renderer)
 ipcMain.handle("open-figma", () => openFigma());

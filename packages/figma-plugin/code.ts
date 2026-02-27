@@ -188,6 +188,10 @@ interface HighlightNodeMessage {
   nodeId: string;
 }
 
+interface OpenPluginAndConverseMessage {
+  type: 'OPEN_PLUGIN_AND_CONVERSE';
+}
+
 type IncomingMessage =
     | GetSelectionMessage
     | NotifyMessage
@@ -198,7 +202,8 @@ type IncomingMessage =
     | GetFileInfoMessage
     | ResizeMessage
     | CloseMessage
-    | HighlightNodeMessage;
+    | HighlightNodeMessage
+    | OpenPluginAndConverseMessage;
 
 // ─── ENTRY POINT ─────────────────────────────────────────────────────
 
@@ -435,11 +440,25 @@ figma.ui.onmessage = async (msg: IncomingMessage): Promise<void> => {
 
   if (type === 'HIGHLIGHT_NODE') {
     const nodeId = (msg as HighlightNodeMessage).nodeId;
-    const node = figma.getNodeById(nodeId);
-    if (node && node.type !== 'PAGE' && node.type !== 'DOCUMENT') {
-      figma.currentPage.selection = [node as SceneNode];
-      figma.viewport.scrollAndZoomIntoView([node as SceneNode]);
-    }
+    figma.getNodeByIdAsync(nodeId).then((node) => {
+      if (node && node.type !== 'PAGE' && node.type !== 'DOCUMENT') {
+        figma.currentPage.selection = [node as SceneNode];
+        figma.viewport.scrollAndZoomIntoView([node as SceneNode]);
+      }
+    });
+    return;
+  }
+
+  if (type === 'OPEN_PLUGIN_AND_CONVERSE') {
+    // Focus the plugin UI and start a new conversation
+    // The plugin should already be open, but let's ensure it's visible
+    figma.ui.show();
+
+    // Send a message to the UI to reset conversation and trigger analysis
+    figma.ui.postMessage({
+      type: 'FROM_OVERLAY',
+      action: 'START_NEW_CONVERSATION'
+    });
     return;
   }
 
