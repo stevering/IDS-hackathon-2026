@@ -84,10 +84,10 @@ function GuardianWidget() {
   const isRecentlyConnected = pluginConnected || (lastSeenTs > 0 && Date.now() - lastSeenTs < 3600_000);
   const statusColor = pluginConnected ? '#10B981' : isRecentlyConnected ? '#F59E0B' : '#6B7280';
   const statusLabel = pluginConnected
-    ? 'Plugin actif'
+    ? 'Active'
     : lastSeenTs > 0
-      ? 'Dernière vue'
-      : 'Non connecté';
+      ? 'Unactive'
+      : 'Nerver Used';
 
   // ── Open plugin handler (only triggered by the "Open" button) ─────────────
   const openPlugin = () =>
