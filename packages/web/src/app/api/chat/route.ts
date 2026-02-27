@@ -678,9 +678,10 @@ RULES:
     console.debug('DYNAMIC SYSTEM PROMPT:');
     console.debug(system);
 
-    // Build the final system prompt
-    system = GUARDIAN_SYSTEM_PROMPT + system;
   }
+
+  // Build the final system prompt
+  system = GUARDIAN_SYSTEM_PROMPT + system;
 
   // Create MCP connection promise (async - non blocking)
   const mcpConnectionPromise = connectMCPs(

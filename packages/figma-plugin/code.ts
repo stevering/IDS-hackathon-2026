@@ -2,8 +2,16 @@ import { sendFigpalInit, setupPageChangeListener, handleBasicMessage, buildNodeU
 
 figma.showUI(__html__, { width: 400, height: 800, title: "Guardian" });
 
-// Signal the widget badge: plugin is now open.
-figma.clientStorage.setAsync('guardianPluginStatus', JSON.stringify({ connected: true, ts: Date.now() })).catch(() => {});
+// Signal the widget badge via sharedPluginData (readable by any plugin regardless of ID).
+// Using setSharedPluginData (synchronous) ensures the close write completes before plugin exit.
+const _pluginOpenTs = Date.now();
+figma.root.setSharedPluginData('guardian', 'pluginStatus', JSON.stringify({ connected: true, ts: _pluginOpenTs }));
+
+// Covers X-button close (no UI message sent). Synchronous → guaranteed to execute before exit.
+// Use Date.now() at close time (not _pluginOpenTs) so ts changes → widget detects the update.
+figma.on('close', () => {
+  figma.root.setSharedPluginData('guardian', 'pluginStatus', JSON.stringify({ connected: false, ts: Date.now() }));
+});
 
 // Vérifier si le plugin a été déclenché depuis le widget Guardian
 figma.clientStorage.getAsync('guardianWidgetCtx').then((raw) => {
@@ -435,11 +443,9 @@ figma.ui.onmessage = async (msg: IncomingMessage): Promise<void> => {
     return;
   }
 
-  // Signal the widget badge: plugin is closing.
-  if ((type as string) === 'close' || (type as string) === 'CLOSE') {
-    await figma.clientStorage.setAsync('guardianPluginStatus', JSON.stringify({ connected: false, ts: Date.now() }));
-  }
-
+  // Note: close is also handled by figma.on('close') above (covers X-button).
+  // The UI close-button message path goes through handleBasicMessage → figma.closePlugin()
+  // which triggers the 'close' event, so no extra write needed here.
   handleBasicMessage(msg as { type?: string; data?: unknown }, () => {});
 };
 

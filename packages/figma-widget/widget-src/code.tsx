@@ -8,11 +8,9 @@ import {
 } from '../../figma-plugin/bridge';
 
 const { widget } = figma;
-const { AutoLayout, SVG, Text, Rectangle, useEffect, useSyncedState } = widget;
+const { AutoLayout, SVG, Text, Rectangle, useEffect, useSyncedState, useSyncedMap, usePropertyMenu } = widget;
 
-// ── SVG mascot ───────────────────────────────────────────────────────────────
-// viewBox centered on mascot content (x≈0→101, y≈14→107 → center ~50,61).
-// Structure mirrors guardian-svg.ts in electron-overlay (CSS classes are no-ops in Figma).
+// ── SVG mascot (active — full color) ─────────────────────────────────────────
 const SHIELD_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="-18 -4 136 128" width="80" height="80">
   <path class="guardian-arc" d="M 81 34 A 42 42 0 1 0 81 94"
         fill="none" stroke="#6D28D9" stroke-width="19" stroke-linecap="round"/>
@@ -47,76 +45,116 @@ const SHIELD_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="-18 -4 136 
   <ellipse cx="90" cy="97" rx="6" ry="9" fill="#6D28D9" transform="rotate(15 90 97)"/>
 </svg>`;
 
+// ── SVG mascot (idle — muted, no guardian active) ─────────────────────────────
+const SHIELD_SVG_IDLE = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="-18 -4 136 128" width="80" height="80">
+  <path d="M 81 34 A 42 42 0 1 0 81 94"
+        fill="none" stroke="#9CA3AF" stroke-width="19" stroke-linecap="round"/>
+  <path d="M 72 80 L 93 80"
+        fill="none" stroke="#9CA3AF" stroke-width="15" stroke-linecap="round"/>
+  <path d="M 76 37 A 37 37 0 1 0 76 91"
+        fill="none" stroke="#D1D5DB" stroke-width="5" stroke-linecap="round" opacity="0.45"/>
+  <ellipse cx="21" cy="27" rx="10" ry="13" fill="#9CA3AF"/>
+  <ellipse cx="21" cy="28" rx="6" ry="8" fill="#F3F4F6" opacity="0.75"/>
+  <path d="M 31 44 Q 40 40 49 43" fill="none" stroke="#6B7280" stroke-width="2.5" stroke-linecap="round"/>
+  <path d="M 55 43 Q 64 40 73 44" fill="none" stroke="#6B7280" stroke-width="2.5" stroke-linecap="round"/>
+  <ellipse cx="40" cy="52" rx="8" ry="9" fill="white"/>
+  <ellipse cx="64" cy="52" rx="8" ry="9" fill="white"/>
+  <ellipse cx="40" cy="53.5" rx="5.5" ry="6.5" fill="#9CA3AF"/>
+  <circle cx="42" cy="51" r="2.2" fill="white"/>
+  <ellipse cx="64" cy="53.5" rx="5.5" ry="6.5" fill="#9CA3AF"/>
+  <circle cx="66" cy="51" r="2.2" fill="white"/>
+  <path d="M 32 64 Q 52 78 72 64"
+        fill="none" stroke="#6B7280" stroke-width="3.5" stroke-linecap="round"/>
+  <ellipse cx="29" cy="63" rx="8" ry="4.5" fill="#D1D5DB" opacity="0.55"/>
+  <ellipse cx="75" cy="63" rx="8" ry="4.5" fill="#D1D5DB" opacity="0.55"/>
+  <ellipse cx="14" cy="67" rx="6" ry="9" fill="#9CA3AF" transform="rotate(-25 14 67)"/>
+  <ellipse cx="90" cy="97" rx="6" ry="9" fill="#9CA3AF" transform="rotate(15 90 97)"/>
+</svg>`;
+
 // ── Constants ────────────────────────────────────────────────────────────────
-const STORAGE_KEY = 'guardianPluginStatus';
+const SHARED_NS = 'guardian';
+const SHARED_KEY = 'pluginStatus';
+const SESSION_TTL = 30 * 1000;      // 30s: session expires if no heartbeat received
+const HEARTBEAT_MS = 3 * 1000;      // 3s: keep-alive interval while plugin is open
 
 // ── Widget ───────────────────────────────────────────────────────────────────
 
 function GuardianWidget() {
-  // Synced state: visible to all Figma users in the file
-  const [pluginConnected, setPluginConnected] = useSyncedState('pluginConnected', false);
+  // Per-user session map: key = figma user id, value = last heartbeat ts.
+  // Each user writes only their own entry → closing one session deletes only
+  // that user's key and does not affect others (fixes the multi-user overwrite bug).
+  const sessions = useSyncedMap<{ ts: number }>('sessions');
   const [lastSeenTs, setLastSeenTs] = useSyncedState('lastSeenTs', 0);
 
-  // Self-correction + one-time init from clientStorage.
-  useEffect(() => {
-    // If pluginConnected is stale (plugin was open when Figma closed unexpectedly,
-    // so handleOpen never ran setPluginConnected(false)), auto-reset after 5 minutes.
-    // The widget is paused during openPlugin, so this only fires in stale-state scenarios.
-    if (pluginConnected && lastSeenTs > 0 && Date.now() - lastSeenTs > 5 * 60 * 1000) {
-      setPluginConnected(false);
-      return;
-    }
-    // One-time init from clientStorage when the widget has never been used.
-    if (lastSeenTs !== 0) return;
-    try {
-      figma.clientStorage.getAsync(STORAGE_KEY).then((raw) => {
-        if (typeof raw !== 'string') return;
-        try {
-          const data = JSON.parse(raw) as { connected: boolean; ts: number };
-          // Don't restore connected=true: we can't know if the plugin is still open.
-          if (data.ts) setLastSeenTs(data.ts);
-        } catch (parseErr) { console.error('[widget] clientStorage JSON parse failed:', parseErr instanceof Error ? parseErr.message : String(parseErr)); }
-      }).catch((err: unknown) => { console.error('[widget] clientStorage.getAsync rejected:', err instanceof Error ? err.message : String(err)); });
-    } catch (err) { console.error('[widget] useEffect clientStorage failed:', err instanceof Error ? err.message : String(err), err); }
+  // ── Derived states ────────────────────────────────────────────────────────
+  const isActive = (ts: number) => Date.now() - ts < SESSION_TTL;
+
+  // anyoneActive: at least one user has the plugin open → guardian is on guard
+  const anyoneActive = sessions.keys().some(k => {
+    const v = sessions.get(k);
+    return v != null && isActive(v.ts);
   });
 
-  // Status label
-  const isRecentlyConnected = pluginConnected || (lastSeenTs > 0 && Date.now() - lastSeenTs < 3600_000);
-  const statusColor = pluginConnected ? '#10B981' : isRecentlyConnected ? '#F59E0B' : '#6B7280';
-  const statusLabel = pluginConnected
-    ? 'Active'
-    : lastSeenTs > 0
-      ? 'Unactive'
-      : 'Nerver Used';
+  // Count of currently active guardians
+  const activeCount = sessions.keys().filter(k => {
+    const v = sessions.get(k);
+    return v != null && isActive(v.ts);
+  }).length;
 
-  // ── Open plugin handler (only triggered by the "Open" button) ─────────────
-  const openPlugin = () =>
+  // ── Stale session cleanup ─────────────────────────────────────────────────
+  // Runs on every render; removes entries that missed heartbeats (crashed sessions).
+  // Stabilizes after one cycle: stale → delete → re-render → no stale → no delete.
+  useEffect(() => {
+    for (const key of sessions.keys()) {
+      const v = sessions.get(key);
+      if (v && !isActive(v.ts)) {
+        sessions.delete(key);
+      }
+    }
+  });
+
+  usePropertyMenu([], () => {});
+
+  // ── Status display ────────────────────────────────────────────────────────
+  const statusColor = anyoneActive ? '#10B981' : '#9CA3AF';
+  const statusLabel = anyoneActive
+    ? `${activeCount} guardian${activeCount > 1 ? 's' : ''} active`
+    : lastSeenTs > 0
+      ? 'No guardian active'
+      : 'Never activated';
+
+  // ── Open plugin handler ───────────────────────────────────────────────────
+  // sessionKey is computed here (event handler context) because figma.currentUser
+  // is NOT accessible during widget rendering — only in event handlers.
+  const openPlugin = (sessionKey: string) =>
     new Promise<void>((resolve) => {
       figma.showUI(__html__, { width: 400, height: 800, title: 'Guardian' });
 
-      // ── Cleanup: idempotent, called from both figma.on('close') and close message ──
       let cleanupDone = false;
       const cleanup = () => {
         if (cleanupDone) return;
         cleanupDone = true;
         clearInterval(heartbeatInterval);
+        // Set ts=0 instead of deleting: avoids the race-condition flicker where
+        // all clients briefly see anyoneActive=false before other sessions re-sync.
+        // The stale cleanup in useEffect will remove this entry on the next render.
+        sessions.set(sessionKey, { ts: 0 });
         figma.off('close', cleanup);
         resolve();
       };
 
-      // Detect X-button close (no message sent by the UI in that case).
       figma.on('close', cleanup);
 
-      // Heartbeat: keep lastSeenTs fresh every 10 s while the plugin is open.
-      // This lets the TTL self-correction in useEffect work accurately.
+      // Heartbeat: refresh this session's ts every HEARTBEAT_MS while plugin is open.
+      // Faster interval = faster count sync across clients + quicker TTL expiry detection.
       const heartbeatInterval = setInterval(() => {
-        setLastSeenTs(Date.now());
-      }, 10_000);
+        const now = Date.now();
+        sessions.set(sessionKey, { ts: now });
+        setLastSeenTs(now);
+      }, HEARTBEAT_MS);
 
-      // Signal the UI that it's running inside a widget (not the standalone plugin).
       figma.ui.postMessage({ type: 'GUARDIAN_MODE', mode: 'widget', widgetId: figma.widgetId });
 
-      // Standard plugin initialisation
       sendFigpalInit();
 
       const sendSelection = (id: string) => {
@@ -136,7 +174,6 @@ function GuardianWidget() {
       figma.on('selectionchange', () => sendSelection('auto-stream'));
       setupPageChangeListener();
 
-      // ── Message handler for this widget context ───────────────────────────
       figma.ui.onmessage = (msg: {
         type?: string;
         data?: unknown;
@@ -148,7 +185,6 @@ function GuardianWidget() {
         key?: string;
         value?: unknown;
       }) => {
-        // EXECUTE_CODE — run arbitrary Figma API JS from the Electron overlay
         if (msg.type === 'EXECUTE_CODE' && msg.code) {
           const requestId = msg.id ?? msg.requestId;
           try {
@@ -181,7 +217,6 @@ function GuardianWidget() {
           return;
         }
 
-        // HIGHLIGHT_NODE — select and scroll to a node
         if (msg.type === 'HIGHLIGHT_NODE' && msg.nodeId) {
           const node = figma.getNodeById(msg.nodeId);
           if (node && node.type !== 'PAGE' && node.type !== 'DOCUMENT') {
@@ -191,8 +226,6 @@ function GuardianWidget() {
           return;
         }
 
-        // storage-get / storage-set — needed by the BridgeClient to update
-        // guardianBridgeStatus so the widget canvas reflects connection state.
         if (msg.type === 'storage-get' && (msg as { data?: { key?: string } }).data?.key) {
           const key = (msg as { data: { key: string } }).data.key;
           figma.clientStorage.getAsync(key).then((value) => {
@@ -207,26 +240,31 @@ function GuardianWidget() {
           return;
         }
 
-        // resize / close / notify — handled by shared bridge helper
         handleBasicMessage(msg as { type?: string; data?: unknown }, cleanup);
       };
     });
 
-  // ── Click handler: updates synced state directly (no async storage race) ──
+  // ── Click handler ─────────────────────────────────────────────────────────
   const handleOpen = async () => {
+    // figma.currentUser is accessible here (event handler context, not render)
+    const sessionKey = figma.currentUser?.id ?? 'anon-widget';
     const now = Date.now();
-    setPluginConnected(true);
+    sessions.set(sessionKey, { ts: now });
     setLastSeenTs(now);
-    figma.clientStorage.setAsync(STORAGE_KEY, JSON.stringify({ connected: true, ts: now })).catch(() => {});
-    await openPlugin();
-    // openPlugin() resolves when the plugin UI closes (close message or X button).
-    setPluginConnected(false);
-    figma.clientStorage.setAsync(STORAGE_KEY, JSON.stringify({ connected: false, ts: now })).catch(() => {});
+    figma.root.setSharedPluginData(SHARED_NS, SHARED_KEY, JSON.stringify({ connected: true, ts: now }));
+    await openPlugin(sessionKey);
+    // sessions.set(sessionKey, { ts: 0 }) was already called inside cleanup().
+    // The stale cleanup in useEffect will remove it on the next render (ts=0 → !isActive).
+    const stillActive = sessions.keys().some(k => {
+      const v = sessions.get(k);
+      return v != null && isActive(v.ts);
+    });
+    figma.root.setSharedPluginData(SHARED_NS, SHARED_KEY, JSON.stringify({ connected: stillActive, ts: Date.now() }));
   };
 
   // ── Render ────────────────────────────────────────────────────────────────
-  // NOTE: `effect` prop (DROP_SHADOW) crashes the widget at insertion time —
-  // widgetApi 1.0.0 does not support it on AutoLayout. Do NOT add it back.
+  // NOTE: `effect` prop (DROP_SHADOW) crashes widgetApi 1.0.0 on AutoLayout. Do NOT add it back.
+  // NOTE: `name` prop on root node also crashes. Do NOT add it.
   return (
     <AutoLayout
       direction="vertical"
@@ -234,15 +272,42 @@ function GuardianWidget() {
       padding={16}
       spacing={10}
       cornerRadius={16}
+      fill={anyoneActive ? '#1E1B4B' : '#F9FAFB'}
     >
-      <SVG src={SHIELD_SVG} width={80} height={80} />
-      <Text fontSize={13} fontWeight={700} fill="#EDE9FE" letterSpacing={0.5}>Guardian Widget</Text>
-      <AutoLayout direction="horizontal" spacing={6} verticalAlignItems="center" padding={{ top: 4, bottom: 4, left: 10, right: 10 }} cornerRadius={20} fill="#EDE9FE">
+      {/* Shield: full color when at least one guardian is active, muted otherwise */}
+      <SVG src={anyoneActive ? SHIELD_SVG : SHIELD_SVG_IDLE} width={80} height={80} />
+
+      <Text fontSize={13} fontWeight={700} fill={anyoneActive ? '#EDE9FE' : '#6B7280'} letterSpacing={0.5}>
+        Guardian
+      </Text>
+
+      {/* Status badge — tapping triggers a re-render to recompute derived state */}
+      <AutoLayout
+        direction="horizontal"
+        spacing={6}
+        verticalAlignItems="center"
+        padding={{ top: 4, bottom: 4, left: 10, right: 10 }}
+        cornerRadius={20}
+        fill={anyoneActive ? '#312E81' : '#F3F4F6'}
+        onClick={() => { /* re-render → recomputes anyoneActive */ }}
+      >
         <Rectangle width={8} height={8} cornerRadius={4} fill={statusColor} />
-        <Text fontSize={10} fill="#6D28D9">{statusLabel}</Text>
+        <Text fontSize={10} fill={anyoneActive ? '#C7D2FE' : '#6B7280'}>{statusLabel}</Text>
       </AutoLayout>
-      <AutoLayout direction="horizontal" spacing={6} verticalAlignItems="center" padding={{ top: 4, bottom: 4, left: 10, right: 10 }} cornerRadius={20} fill="#EDE9FE" onClick={handleOpen}>
-        <Text fontSize={10} fill="#6D28D9">Open</Text>
+
+      {/* Open button: label adapts based on whether others are already active */}
+      <AutoLayout
+        direction="horizontal"
+        spacing={6}
+        verticalAlignItems="center"
+        padding={{ top: 6, bottom: 6, left: 14, right: 14 }}
+        cornerRadius={20}
+        fill="#6D28D9"
+        onClick={handleOpen}
+      >
+        <Text fontSize={11} fontWeight={600} fill="#FFFFFF">
+          {anyoneActive ? 'Join' : 'Activate Guardian'}
+        </Text>
       </AutoLayout>
     </AutoLayout>
   );
@@ -253,7 +318,6 @@ if (typeof widget?.register === 'function') {
   try {
     widget.register(GuardianWidget);
   } catch (err) {
-    // Log the real error — visible in Plugins → Development → Open Console
     console.error('[widget] widget.register failed:', err instanceof Error ? err.message : String(err), err);
   }
 }

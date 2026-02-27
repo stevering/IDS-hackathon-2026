@@ -1,6 +1,6 @@
 {
   "name": "Guardian Plugin",
-  "id": "1204941393675708447",
+  "id": "8204941393675708447",
   "api": "1.0.0",
   "main": "dist/code.js",
   "ui": "ui.html",

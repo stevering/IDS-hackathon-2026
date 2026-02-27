@@ -1254,6 +1254,13 @@
 
         connect();
     })();
+
+    // Keepalive ping: wakes up the widget every 5 s so its execution context stays alive.
+    // The widget's figma.ui.onmessage handles 'ping' when in keepalive mode; it is silently
+    // ignored by the plugin message handler when the full Guardian UI is active.
+    setInterval(function () {
+        parent.postMessage({ pluginMessage: { type: 'ping' } }, '*');
+    }, 5000);
 </script>
 </body>
 

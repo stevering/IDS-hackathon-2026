@@ -74,12 +74,14 @@ User clicks widget on canvas
 
 **Communication with the plugin** (when both are loaded):
 
-Widget UI and plugin UI share state through the webapp backend — no `figma.clientStorage` coupling:
+Two independent channels are used:
 
-```
-Widget UI  →  POST /api/figma-bridge?key=<fileKey>  →  Backend store
-Plugin UI  →  GET  /api/figma-bridge?key=<fileKey>  →  reads state
-```
+| Channel | What it carries | How |
+|---|---|---|
+| `figma.root.setSharedPluginData` | Widget connectivity status (connected / disconnected) | Direct Figma API — no backend required |
+| `/api/figma-bridge?key=<fileKey>` | Webapp-level state (AI context, selections, etc.) | HTTP calls made by the iframe webapp |
+
+The plugin writes its status to `sharedPluginData` on open and on close. The widget reads it inside `useEffect` on every re-render (triggered by any canvas interaction). Status is therefore **eventually consistent**, not real-time — see the platform limitations section in `figma-plugin/README.md` for the full explanation.
 
 ## Setup
 
@@ -125,3 +127,4 @@ No conflict: each side has its own esbuild process. The widget's `fs.watch` on `
 - **Do not edit `ui.html` at the package root** — it does not exist; the UI lives in `figma-plugin/ui.html` and is copied to `dist/ui.html` at build time.
 - The widget and plugin have **different Figma IDs** and appear as two separate items in Figma. They share `bridge.ts` and `ui.html` only at build time.
 - `figma.openPlugin()` does not exist in the widget API — that's why the combined manifest approach is used.
+- **A widget with no open UI is completely inert.** Real-time detection of the standalone plugin opening/closing is impossible. See the full platform limitations in `figma-plugin/README.md`.
