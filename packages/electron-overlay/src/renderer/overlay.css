@@ -44,7 +44,7 @@ body {
   height: 80px;
   cursor: grab;
   position: relative;
-  filter: drop-shadow(0 4px 5px rgba(109, 40, 217, 0.45));
+  filter: drop-shadow(0 0px 5px rgba(109, 40, 217, 0.45));
   animation: guardian-float 3s ease-in-out infinite;
   transition: filter 0.25s ease;
   /* Native macOS/Windows window drag — works even when app is in background */
@@ -57,7 +57,7 @@ body {
 }
 
 .guardian.hovered {
-  filter: drop-shadow(0 6px 28px rgba(109, 40, 217, 0.75));
+  filter: drop-shadow(0 0px 4px rgb(86, 237, 243));
   animation-play-state: paused;
 }
 

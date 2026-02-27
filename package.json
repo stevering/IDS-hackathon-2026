@@ -4,7 +4,7 @@
   "private": true,
   "packageManager": "pnpm@10.9.0",
   "scripts": {
-    "dev": "turbo run dev --filter=@guardian/web --filter=@guardian/mcp-server --filter=@guardian/figma-plugin --filter=@guardian/bridge --filter=@guardian/electron-overlay",
+    "dev": "turbo run dev --filter=@guardian/web --filter=@guardian/mcp-server --filter=@guardian/figma-plugin --filter=@guardian/figma-widget --filter=@guardian/bridge --filter=@guardian/electron-overlay",
     "dev:figma": "turbo run dev --filter=@guardian/figma-plugin",
     "dev:web": "turbo run dev --filter=@guardian/web",
     "dev:web:proxy": "turbo run dev:proxy --filter=@guardian/web",

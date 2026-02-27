@@ -77,7 +77,11 @@ The repository is structured as a **pnpm monorepo** managed with [Turborepo](htt
 
 ## Demonstration of Concept
 
-You can test online the application
+You can test the online application at https://preview.guardian.figdesys.com, in a limited demo mode.
+You can use the GitHub and the Figma Console Sign In button to make comparison between the design and the code.
+To make a comparison with Figma Console, you need to indicate the Figma file URL in the chat.
+
+You can go further and connect your own Figma Desktop and your own code MCP server to test the full capabilities of the application by following the instructions below.
 
 ### Prerequisites
 
@@ -87,14 +91,13 @@ You can test online the application
 ```bash
 pnpm install
 ```
-- Optional: If your code editor supports an integrated MCP server like Intellij Idea, enable it on port 3846
+- Recommended: Start your Figma Desktop and enable the MCP server in parameters (default on port 3845)
+- Optional: If your code editor supports an integrated MCP server like IntelliJ IDEA, enable it on port 3846
 - Optional: If your code editor does not support an integrated MCP server, start one like:
 ```bash
 sudo npm install -g supergateway @modelcontextprotocol/server-filesystem
 npx supergateway --stdio "mcp-server-filesystem $(pwd)" --outputTransport streamableHttp --port 3846
 ```
-- Recommended: Start your Figma Desktop and enable the MCP server in parameters (default on port 3845)
-
 
 ### Getting Started
 
@@ -116,7 +119,7 @@ pnpm dev:proxy
 ║                                                                              ║
 ╚══════════════════════════════════════════════════════════════════════════════╝
 ```
-- go to the online demo page: https://v2.guardian.figdesys.com
+- go to the online demo page: https://preview.guardian.figdesys.com
 - Click on `Configure proxy` in the side panel `parameters` panel
 - Paste the domain in the `Tunnel URL` field
 - Paste the secret in the `Secret` field
@@ -143,8 +146,15 @@ cp .env.example .env.local
 ```
 - Then change the values in the `.env.local` file as follows:
 ```bash
-XAI_API_KEY=your_xai_api_key_here
+XAI_API_KEY=XAI_API_KEY
 MCP_TUNNEL_SECRET=YOUR_PRIVATE_SECRET
+
+# Figma APP used for Oauth credentials (create one in https://www.figma.com/developers/apps)
+FIGMA_CLIENT_ID=FIGMA_CLIENT_ID
+FIGMA_CLIENT_SECRET=FIGMA_CLIENT_SECRET
+
+GITHUB_CLIENT_ID=GITHUB_CLIENT_ID
+GITHUB_CLIENT_SECRET=GITHUB_CLIENT_SECRET
 ```
 
 #### MCP of code editor

@@ -1,14 +1,22 @@
 /** Guardian mascot SVG — shared between overlay and other packages. */
 export const GUARDIAN_SVG = /* html */ `
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="100%" height="100%" aria-hidden="true">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="-18 -4 136 128" width="100%" height="100%" aria-hidden="true">
   <path class="guardian-arc" d="M 81 34 A 42 42 0 1 0 81 94"
         fill="none" stroke="#6D28D9" stroke-width="19" stroke-linecap="round"/>
   <path class="guardian-arc" d="M 72 80 L 93 80"
         fill="none" stroke="#6D28D9" stroke-width="15" stroke-linecap="round"/>
   <path d="M 76 37 A 37 37 0 1 0 76 91"
         fill="none" stroke="#A78BFA" stroke-width="5" stroke-linecap="round" opacity="0.45"/>
-  <ellipse cx="21" cy="27" rx="10" ry="13" fill="#6D28D9"/>
-  <ellipse cx="21" cy="28" rx="6"  ry="8"  fill="#DDD6FE" opacity="0.75"/>
+  <g class="hear-left">
+      <ellipse cx="21" cy="27" rx="10" ry="13" fill="#6D28D9"/>
+      <ellipse cx="21" cy="28" rx="6" ry="8" fill="#DDD6FE" opacity="0.75"/>
+  </g>
+  
+  <g class="hear-right">
+      <ellipse cx="81" cy="27" rx="10" ry="13" fill="#6D28D9"/>
+      <ellipse cx="81" cy="28" rx="6" ry="8" fill="#DDD6FE" opacity="0.75"/>
+  </g>
+  
   <path d="M 31 44 Q 40 40 49 43" fill="none" stroke="#4C1D95" stroke-width="2.5" stroke-linecap="round"/>
   <path d="M 55 43 Q 64 40 73 44" fill="none" stroke="#4C1D95" stroke-width="2.5" stroke-linecap="round"/>
   <ellipse cx="40" cy="52" rx="8" ry="9" fill="white"/>
@@ -25,8 +33,8 @@ export const GUARDIAN_SVG = /* html */ `
   </g>
   <path d="M 32 64 Q 52 78 72 64"
         fill="none" stroke="#4C1D95" stroke-width="3.5" stroke-linecap="round"/>
-  <ellipse cx="29" cy="63" rx="8" ry="4.5" fill="#C4B5FD" opacity="0.55"/>
-  <ellipse cx="75" cy="63" rx="8" ry="4.5" fill="#C4B5FD" opacity="0.55"/>
+  <ellipse cx="29" cy="63" rx="8" ry="4.5" fill="#C4B5FD" opacity="0.2"/>
+  <ellipse cx="75" cy="63" rx="8" ry="4.5" fill="#C4B5FD" opacity="0.2"/>
   <path class="guardian-star"
         d="M 87 73 L 88.3 77.7 L 93 79 L 88.3 80.3 L 87 85 L 85.7 80.3 L 81 79 L 85.7 77.7 Z"
         fill="white" opacity="0.92"/>

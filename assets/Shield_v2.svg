@@ -1,13 +1,13 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="-18 -4 136 128" width="128" height="128">
 
   <!-- === CORPS DU G : arc épais (la partie C) + barre horizontale === -->
 
   <!-- Arc principal = le C du G, centre ≈ (52, 64), rayon 42, stroke=18 -->
-  <path d="M 81 34 A 42 42 0 1 0 81 94"
+  <path class="guardian-arc" d="M 81 34 A 42 42 0 1 0 81 94"
         fill="none" stroke="#6D28D9" stroke-width="19" stroke-linecap="round"/>
 
   <!-- Barre du G : bras horizontal qui s'avance à mi-hauteur vers la droite -->
-  <path d="M 72 80 L 93 80"
+  <path class="guardian-arc" d="M 72 80 L 93 80"
         fill="none" stroke="#6D28D9" stroke-width="15" stroke-linecap="round"/>
 
   <!-- Reflet lumineux sur l'arc (sensation 3D amicale) -->
@@ -15,44 +15,47 @@
         fill="none" stroke="#A78BFA" stroke-width="5" stroke-linecap="round" opacity="0.45"/>
 
   <!-- === OREILLES arrondies sur l'arc en haut à gauche === -->
-  <ellipse cx="21" cy="27" rx="10" ry="13" fill="#6D28D9"/>
-  <ellipse cx="21" cy="28" rx="6" ry="8" fill="#DDD6FE" opacity="0.75"/>
+  <g class="hear-left">
+      <ellipse cx="21" cy="27" rx="10" ry="13" fill="#6D28D9"/>
+      <ellipse cx="21" cy="28" rx="6" ry="8" fill="#DDD6FE" opacity="0.75"/>
+  </g>
+
+  <g class="hear-right">
+      <ellipse cx="81" cy="27" rx="10" ry="13" fill="#6D28D9"/>
+      <ellipse cx="81" cy="28" rx="6" ry="8" fill="#DDD6FE" opacity="0.75"/>
+  </g>
 
   <!-- === VISAGE dans le creux du G === -->
 
   <!-- Sourcils : légèrement arqués vers l'intérieur → regard attentif / à l'écoute -->
-  <path d="M 31 44 Q 40 40 49 43"
-        fill="none" stroke="#4C1D95" stroke-width="2.5" stroke-linecap="round"/>
-  <path d="M 55 43 Q 64 40 73 44"
-        fill="none" stroke="#4C1D95" stroke-width="2.5" stroke-linecap="round"/>
-
-  <!-- Yeux : grands, ronds, chaleureux -->
+  <path d="M 31 44 Q 40 40 49 43" fill="none" stroke="#4C1D95" stroke-width="2.5" stroke-linecap="round"/>
+  <path d="M 55 43 Q 64 40 73 44" fill="none" stroke="#4C1D95" stroke-width="2.5" stroke-linecap="round"/>
   <ellipse cx="40" cy="52" rx="8" ry="9" fill="white"/>
   <ellipse cx="64" cy="52" rx="8" ry="9" fill="white"/>
-
-  <!-- Iris sombre expressif -->
-  <ellipse cx="40" cy="53.5" rx="5.5" ry="6.5" fill="#2E1065"/>
-  <ellipse cx="64" cy="53.5" rx="5.5" ry="6.5" fill="#2E1065"/>
-
-  <!-- Reflet dans les yeux -->
-  <circle cx="42" cy="51" r="2.2" fill="white"/>
-  <circle cx="66" cy="51" r="2.2" fill="white"/>
-
-  <!-- Petit reflet secondaire -->
-  <circle cx="38.5" cy="55" r="1" fill="white" opacity="0.6"/>
-  <circle cx="62.5" cy="55" r="1" fill="white" opacity="0.6"/>
+  <!-- Yeux : grands, ronds, chaleureux -->
+  <g class="eye-left">
+    <ellipse cx="40" cy="53.5" rx="5.5" ry="6.5" fill="#2E1065"/>
+    <circle cx="42" cy="51" r="2.2" fill="white"/>
+    <circle cx="38.5" cy="55" r="1" fill="white" opacity="0.6"/>
+  </g>
+  <g class="eye-right">
+    <ellipse cx="64" cy="53.5" rx="5.5" ry="6.5" fill="#2E1065"/>
+    <circle cx="66" cy="51" r="2.2" fill="white"/>
+    <circle cx="62.5" cy="55" r="1" fill="white" opacity="0.6"/>
+  </g>
 
   <!-- Sourire chaleureux et ouvert -->
   <path d="M 32 64 Q 52 78 72 64"
         fill="none" stroke="#4C1D95" stroke-width="3.5" stroke-linecap="round"/>
 
   <!-- Blush doux sur les joues -->
-  <ellipse cx="29" cy="63" rx="8" ry="4.5" fill="#C4B5FD" opacity="0.1"/>
-  <ellipse cx="75" cy="63" rx="8" ry="4.5" fill="#C4B5FD" opacity="0.1"/>
+  <ellipse cx="29" cy="63" rx="8" ry="4.5" fill="#C4B5FD" opacity="0.2"/>
+  <ellipse cx="75" cy="63" rx="8" ry="4.5" fill="#C4B5FD" opacity="0.2"/>
 
   <!-- === DÉTAIL GUARDIAN : petite étoile / insigne sur la barre du G === -->
   <!-- Forme étoile 4 branches centrée sur (87, 79) -->
-  <path d="M 87 73 L 88.3 77.7 L 93 79 L 88.3 80.3 L 87 85 L 85.7 80.3 L 81 79 L 85.7 77.7 Z"
+  <path class="guardian-star"
+        d="M 87 73 L 88.3 77.7 L 93 79 L 88.3 80.3 L 87 85 L 85.7 80.3 L 81 79 L 85.7 77.7 Z"
         fill="white" opacity="0.92"/>
 
   <!-- Petits bras ronds (présence / accueil) -->

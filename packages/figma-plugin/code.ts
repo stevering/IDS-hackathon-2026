@@ -2,6 +2,9 @@ import { sendFigpalInit, setupPageChangeListener, handleBasicMessage, buildNodeU
 
 figma.showUI(__html__, { width: 400, height: 800, title: "Guardian" });
 
+// Signal the widget badge: plugin is now open.
+figma.clientStorage.setAsync('guardianPluginStatus', JSON.stringify({ connected: true, ts: Date.now() })).catch(() => {});
+
 // Vérifier si le plugin a été déclenché depuis le widget Guardian
 figma.clientStorage.getAsync('guardianWidgetCtx').then((raw) => {
   if (raw) {
@@ -430,6 +433,11 @@ figma.ui.onmessage = async (msg: IncomingMessage): Promise<void> => {
       figma.viewport.scrollAndZoomIntoView([node as SceneNode]);
     }
     return;
+  }
+
+  // Signal the widget badge: plugin is closing.
+  if ((type as string) === 'close' || (type as string) === 'CLOSE') {
+    await figma.clientStorage.setAsync('guardianPluginStatus', JSON.stringify({ connected: false, ts: Date.now() }));
   }
 
   handleBasicMessage(msg as { type?: string; data?: unknown }, () => {});
