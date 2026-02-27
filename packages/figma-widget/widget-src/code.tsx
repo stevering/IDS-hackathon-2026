@@ -1,12 +1,18 @@
 /// <reference types="@figma/widget-typings" />
 
-import { sendFigpalInit, setupPageChangeListener, handleBasicMessage, buildNodeUrl } from '../../figma-plugin/bridge';
+import {
+  sendFigpalInit,
+  setupPageChangeListener,
+  handleBasicMessage,
+  buildNodeUrl,
+} from '../../figma-plugin/bridge';
 
 const { widget } = figma;
-const { AutoLayout, SVG, Text } = widget;
+const { AutoLayout, SVG, Text, Rectangle, useEffect, useSyncedState } = widget;
 
-// Shield_v2.svg inline — le personnage Guardian
-const SHIELD_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128">
+// ── SVG mascot ───────────────────────────────────────────────────────────────
+// viewBox shifted left by 8px so the left tentacle (cx=14) has breathing room.
+const SHIELD_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="-8 0 136 128" width="128" height="128">
   <path d="M 81 34 A 42 42 0 1 0 81 94"
         fill="none" stroke="#6D28D9" stroke-width="19" stroke-linecap="round"/>
   <path d="M 72 80 L 93 80"
@@ -37,121 +43,173 @@ const SHIELD_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128
   <ellipse cx="90" cy="97" rx="6" ry="9" fill="#6D28D9" transform="rotate(15 90 97)"/>
 </svg>`;
 
+// ── Constants ────────────────────────────────────────────────────────────────
+const STORAGE_KEY = 'guardianBridgeStatus';
+
+// ── Widget ───────────────────────────────────────────────────────────────────
+
 function GuardianWidget() {
+  // Synced state: visible to all Figma users in the file
+  const [electronConnected, setElectronConnected] = useSyncedState('electronConnected', false);
+  const [lastSeenTs, setLastSeenTs] = useSyncedState('lastSeenTs', 0);
+
+  // Read bridge connection status from clientStorage on every render.
+  // clientStorage is written by the UI (via storage-set) when the bridge connects/disconnects.
+  useEffect(() => {
+    try {
+      figma.clientStorage.getAsync(STORAGE_KEY).then((raw) => {
+        if (typeof raw !== 'string') return;
+        try {
+          const data = JSON.parse(raw) as { connected: boolean; ts: number };
+          if (data.connected !== electronConnected) setElectronConnected(!!data.connected);
+          if (data.ts !== lastSeenTs) setLastSeenTs(data.ts ?? 0);
+        } catch (parseErr) { console.error('[widget] clientStorage JSON parse failed:', parseErr instanceof Error ? parseErr.message : String(parseErr)); }
+      }).catch((err: unknown) => { console.error('[widget] clientStorage.getAsync rejected:', err instanceof Error ? err.message : String(err)); });
+    } catch (err) { console.error('[widget] useEffect clientStorage failed:', err instanceof Error ? err.message : String(err), err); }
+  });
+
+  // Status label
+  const isRecentlyConnected = electronConnected || (lastSeenTs > 0 && Date.now() - lastSeenTs < 3600_000);
+  const statusColor = electronConnected ? '#10B981' : isRecentlyConnected ? '#F59E0B' : '#6B7280';
+  const statusLabel = electronConnected
+    ? 'Electron actif'
+    : lastSeenTs > 0
+      ? 'Dernière vue'
+      : 'Non connecté';
+
+  // ── Open plugin handler (only triggered by the "Open" button) ─────────────
+  const openPlugin = () =>
+    new Promise<void>((resolve) => {
+      figma.showUI(__html__, { width: 400, height: 800, title: 'Guardian' });
+
+      // Signal the UI that it's running inside a widget (not the standalone plugin).
+      figma.ui.postMessage({ type: 'GUARDIAN_MODE', mode: 'widget', widgetId: figma.widgetId });
+
+      // Standard plugin initialisation
+      sendFigpalInit();
+
+      const sendSelection = (id: string) => {
+        const sel = figma.currentPage.selection;
+        figma.ui.postMessage({
+          type: 'selection-changed',
+          id,
+          data: {
+            nodes: sel.map((n) => ({ id: n.id, name: n.name, type: n.type })),
+            image: null,
+            nodeUrl: sel[0] ? buildNodeUrl(sel[0].id) : null,
+          },
+        });
+      };
+
+      sendSelection('init');
+      figma.on('selectionchange', () => sendSelection('auto-stream'));
+      setupPageChangeListener();
+
+      // ── Message handler for this widget context ───────────────────────────
+      figma.ui.onmessage = (msg: {
+        type?: string;
+        data?: unknown;
+        code?: string;
+        nodeId?: string;
+        id?: string;
+        requestId?: string;
+        timeout?: number;
+        key?: string;
+        value?: unknown;
+      }) => {
+        // EXECUTE_CODE — run arbitrary Figma API JS from the Electron overlay
+        if (msg.type === 'EXECUTE_CODE' && msg.code) {
+          const requestId = msg.id ?? msg.requestId;
+          try {
+            const wrapped = `(async function() {\n${msg.code}\n})()`;
+            const timeoutMs = msg.timeout ?? 5000;
+            const timeoutPromise = new Promise<never>((_, reject) =>
+              setTimeout(() => reject(new Error(`Timeout after ${timeoutMs}ms`)), timeoutMs)
+            );
+            // eslint-disable-next-line no-eval
+            Promise.race([eval(wrapped) as Promise<unknown>, timeoutPromise])
+              .then((result) =>
+                figma.ui.postMessage({ type: 'EXECUTE_CODE_RESULT', id: requestId, success: true, result })
+              )
+              .catch((err: unknown) =>
+                figma.ui.postMessage({
+                  type: 'EXECUTE_CODE_RESULT',
+                  id: requestId,
+                  success: false,
+                  error: err instanceof Error ? err.message : String(err),
+                })
+              );
+          } catch (err: unknown) {
+            figma.ui.postMessage({
+              type: 'EXECUTE_CODE_RESULT',
+              id: requestId,
+              success: false,
+              error: err instanceof Error ? err.message : String(err),
+            });
+          }
+          return;
+        }
+
+        // HIGHLIGHT_NODE — select and scroll to a node
+        if (msg.type === 'HIGHLIGHT_NODE' && msg.nodeId) {
+          const node = figma.getNodeById(msg.nodeId);
+          if (node && node.type !== 'PAGE' && node.type !== 'DOCUMENT') {
+            figma.currentPage.selection = [node as SceneNode];
+            figma.viewport.scrollAndZoomIntoView([node as SceneNode]);
+          }
+          return;
+        }
+
+        // storage-get / storage-set — needed by the BridgeClient to update
+        // guardianBridgeStatus so the widget canvas reflects connection state.
+        if (msg.type === 'storage-get' && (msg as { data?: { key?: string } }).data?.key) {
+          const key = (msg as { data: { key: string } }).data.key;
+          figma.clientStorage.getAsync(key).then((value) => {
+            figma.ui.postMessage({ type: 'storage-value', key, value: value ?? null });
+          });
+          return;
+        }
+
+        if (msg.type === 'storage-set' && (msg as { data?: { key?: string } }).data?.key) {
+          const { key, value } = (msg as { data: { key: string; value: unknown } }).data;
+          figma.clientStorage.setAsync(key, value).catch((err: unknown) => { console.error('[widget] storage-set failed:', err instanceof Error ? err.message : String(err)); });
+          return;
+        }
+
+        // resize / close / notify — handled by shared bridge helper
+        handleBasicMessage(msg as { type?: string; data?: unknown }, resolve);
+      };
+    });
+
+  // ── Render ────────────────────────────────────────────────────────────────
+  // NOTE: `effect` prop (DROP_SHADOW) crashes the widget at insertion time —
+  // widgetApi 1.0.0 does not support it on AutoLayout. Do NOT add it back.
   return (
     <AutoLayout
-      name="Guardian"
       direction="vertical"
       horizontalAlignItems="center"
-      verticalAlignItems="center"
-      padding={{ top: 16, bottom: 12, left: 20, right: 20 }}
-      spacing={6}
-      cornerRadius={20}
+      padding={16}
+      spacing={10}
+      cornerRadius={16}
       fill="#F5F3FF"
-      stroke="#DDD6FE"
-      strokeWidth={2}
-      // Clic → ouvre l'UI du plugin Guardian (même ui.html, même manifest)
-      // __html__ dans le manifest combiné = packages/figma-plugin/ui.html
-      // figma.openPlugin() n'existe pas en contexte widget — on passe par showUI directement
-      onClick={() =>
-        new Promise<void>((resolve) => {
-          figma.showUI(__html__, { width: 400, height: 800, title: 'Guardian' });
-
-          // Signal the UI that it's running inside a widget (not the standalone plugin).
-          // The BridgeClient in ui.html uses this to register as clientType 'widget'.
-          figma.ui.postMessage({ type: 'GUARDIAN_MODE', mode: 'widget', widgetId: figma.widgetId });
-
-          // ── Bridge plugin → nécessaire car code.ts ne tourne pas en contexte widget ──
-
-          sendFigpalInit();
-
-          // Sélection initiale (simplifiée — pas d'export image depuis le widget)
-          const sendSelection = (id: string) => {
-            const sel = figma.currentPage.selection;
-            figma.ui.postMessage({
-              type: 'selection-changed',
-              id,
-              data: {
-                nodes: sel.map(n => ({ id: n.id, name: n.name, type: n.type })),
-                image: null,
-                nodeUrl: sel[0] ? buildNodeUrl(sel[0].id) : null,
-              },
-            });
-          };
-
-          sendSelection('init');
-          figma.on('selectionchange', () => sendSelection('auto-stream'));
-          setupPageChangeListener();
-
-          figma.ui.onmessage = (msg: { type?: string; data?: unknown; code?: string; nodeId?: string; id?: string; requestId?: string; timeout?: number }) => {
-            // ── EXECUTE_CODE — run arbitrary Figma API JS from the Electron overlay ──
-            if (msg.type === 'EXECUTE_CODE' && msg.code) {
-              const requestId = msg.id ?? msg.requestId;
-              try {
-                const wrapped = `(async function() {\n${msg.code}\n})()`;
-                const timeoutMs = msg.timeout ?? 5000;
-                const timeoutPromise = new Promise<never>((_, reject) =>
-                  setTimeout(() => reject(new Error(`Timeout after ${timeoutMs}ms`)), timeoutMs)
-                );
-                // eslint-disable-next-line no-eval
-                Promise.race([eval(wrapped) as Promise<unknown>, timeoutPromise])
-                  .then((result) => figma.ui.postMessage({ type: 'EXECUTE_CODE_RESULT', id: requestId, success: true, result }))
-                  .catch((err: unknown) => figma.ui.postMessage({ type: 'EXECUTE_CODE_RESULT', id: requestId, success: false, error: err instanceof Error ? err.message : String(err) }));
-              } catch (err: unknown) {
-                figma.ui.postMessage({ type: 'EXECUTE_CODE_RESULT', id: requestId, success: false, error: err instanceof Error ? err.message : String(err) });
-              }
-              return;
-            }
-
-            // ── HIGHLIGHT_NODE — select and scroll to a node by ID ──
-            if (msg.type === 'HIGHLIGHT_NODE' && msg.nodeId) {
-              const node = figma.getNodeById(msg.nodeId);
-              if (node && node.type !== 'PAGE' && node.type !== 'DOCUMENT') {
-                figma.currentPage.selection = [node as SceneNode];
-                figma.viewport.scrollAndZoomIntoView([node as SceneNode]);
-              }
-              return;
-            }
-
-            handleBasicMessage(msg, resolve);
-          };
-        })
-      }
+      onClick={openPlugin}
     >
-      {/* Mascotte Guardian */}
       <SVG src={SHIELD_SVG} width={80} height={80} />
-
-      {/* Label */}
-      <Text
-        fontSize={13}
-        fontWeight="bold"
-        fill="#4C1D95"
-        fontFamily="Inter"
-        letterSpacing={0.5}
-      >
-        Guardian
-      </Text>
-
-      {/* Hint */}
-      <AutoLayout
-        direction="horizontal"
-        horizontalAlignItems="center"
-        verticalAlignItems="center"
-        spacing={4}
-        padding={{ top: 3, bottom: 3, left: 10, right: 10 }}
-        cornerRadius={10}
-        fill={{ r: 1, g: 1, b: 1, a: 0.65 }}
-      >
-        <Text fontSize={8} fill="#A78BFA" fontFamily="Inter">
-          ○ tap to open
-        </Text>
+      <Text fontSize={13} fontWeight={700} fill="#4C1D95" letterSpacing={0.5}>DS AI Guardian</Text>
+      <AutoLayout direction="horizontal" spacing={6} verticalAlignItems="center" padding={{ top: 4, bottom: 4, left: 10, right: 10 }} cornerRadius={20} fill="#EDE9FE">
+        <Rectangle width={8} height={8} cornerRadius={4} fill={statusColor} />
+        <Text fontSize={10} fill="#6D28D9">{statusLabel}</Text>
       </AutoLayout>
     </AutoLayout>
   );
 }
 
-// try-catch : widget.register est no-op en mode plugin mais peut lever
-// une exception dans certaines versions du runtime Figma
-try {
-  widget.register(GuardianWidget);
-} catch (_) { /* mode plugin — registration ignorée */ }
+// Only register in widget mode (figma.widget exists). In plugin mode widget is undefined.
+if (typeof widget?.register === 'function') {
+  try {
+    widget.register(GuardianWidget);
+  } catch (err) {
+    // Log the real error — visible in Plugins → Development → Open Console
+    console.error('[widget] widget.register failed:', err instanceof Error ? err.message : String(err), err);
+  }
+}

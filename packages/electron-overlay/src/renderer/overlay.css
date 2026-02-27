@@ -17,12 +17,25 @@ body {
   -webkit-user-select: none;
 }
 
+/* ── Root: vertical stack, mascot anchored at bottom ───────────────────────── */
 #root {
   width: 100%;
   height: 100%;
   display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+/* ── Mascot section — always at the bottom of the window ───────────────────── */
+.mascot-section {
+  width: 100%;
+  height: 100px;
+  flex-shrink: 0;
+  margin-top: auto; /* pushes mascot to bottom when panel is hidden */
+  display: flex;
   align-items: center;
   justify-content: center;
+  cursor: pointer;  /* hint that it's clickable to toggle panel */
 }
 
 /* ── Guardian mascot ────────────────────────────────────────────────────────── */
@@ -31,7 +44,7 @@ body {
   height: 80px;
   cursor: grab;
   position: relative;
-  filter: drop-shadow(0 4px 20px rgba(109, 40, 217, 0.45));
+  filter: drop-shadow(0 4px 5px rgba(109, 40, 217, 0.45));
   animation: guardian-float 3s ease-in-out infinite;
   transition: filter 0.25s ease;
   /* Native macOS/Windows window drag — works even when app is in background */
@@ -48,27 +61,34 @@ body {
   animation-play-state: paused;
 }
 
-/* State indicator dot (MCP connection) */
-.guardian::after {
-  content: "";
+/* ── MCP connection dot ─────────────────────────────────────────────────────── */
+.mcp-dot {
   position: absolute;
-  bottom: 6px;
-  right: 6px;
-  width: 8px;
-  height: 8px;
+  bottom: -2px;
+  right: -2px;
+  width: 10px;
+  height: 10px;
   border-radius: 50%;
   background: #4b5563; /* disconnected: gray */
-  border: 2px solid rgba(0, 0, 0, 0.3);
-  transition: background 0.3s ease;
+  border: 2px solid rgba(0, 0, 0, 0.25);
+  pointer-events: none;
+  transition: background 0.3s ease, box-shadow 0.3s ease;
 }
 
-.guardian.connected::after {
-  background: #10b981; /* connected: green */
-  box-shadow: 0 0 6px #10b981;
+.mcp-dot.connected {
+  background: #10b981;
+  box-shadow: 0 0 6px rgba(16, 185, 129, 0.8);
+  animation: mcp-dot-pulse 2s ease-in-out infinite;
 }
 
-.guardian.error::after {
-  background: #ef4444; /* error: red */
+.mcp-dot.reconnecting {
+  background: #f59e0b;
+  box-shadow: 0 0 6px rgba(245, 158, 11, 0.6);
+}
+
+@keyframes mcp-dot-pulse {
+  0%, 100% { transform: scale(1); opacity: 1; }
+  50%       { transform: scale(1.2); opacity: 0.85; }
 }
 
 /* ── SVG animations ─────────────────────────────────────────────────────────── */
@@ -136,7 +156,6 @@ body {
 }
 
 /* ── Figma connection dot ───────────────────────────────────────────────────── */
-/* Small dot at top-left, visible when at least one Figma client is connected.  */
 .figma-dot {
   position: absolute;
   top: -2px;
@@ -144,7 +163,7 @@ body {
   width: 10px;
   height: 10px;
   border-radius: 50%;
-  background: #6366f1; /* indigo — Figma's brand colour */
+  background: #6366f1; /* indigo — Figma brand colour */
   border: 2px solid rgba(0, 0, 0, 0.25);
   box-shadow: 0 0 6px rgba(99, 102, 241, 0.8);
   animation: figma-dot-pulse 2s ease-in-out infinite;
@@ -193,4 +212,175 @@ body {
   50% {
     transform: scale(1.15);
   }
+}
+
+/* ── Onboarding panel ────────────────────────────────────────────────────────── */
+
+.onboarding {
+  flex: 1;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  padding: 8px 8px 0 8px;
+  -webkit-app-region: no-drag;
+}
+
+.onboarding.hidden {
+  display: none;
+}
+
+.ob-card {
+  background: rgba(12, 8, 26, 0.93);
+  border: 1px solid rgba(109, 40, 217, 0.45);
+  border-radius: 18px;
+  padding: 14px 14px 12px 14px;
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+  box-shadow:
+    0 8px 40px rgba(0, 0, 0, 0.55),
+    0 0 0 1px rgba(109, 40, 217, 0.15) inset;
+}
+
+.ob-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 3px;
+}
+
+.ob-title {
+  font-family: system-ui, -apple-system, sans-serif;
+  font-size: 13px;
+  font-weight: 700;
+  color: #ede9fe;
+  letter-spacing: 0.1px;
+}
+
+.ob-close {
+  background: none;
+  border: none;
+  color: #7c3aed;
+  cursor: pointer;
+  font-size: 11px;
+  padding: 2px 6px;
+  border-radius: 6px;
+  transition: background 0.15s, color 0.15s;
+  line-height: 1;
+  -webkit-app-region: no-drag;
+}
+
+.ob-close:hover {
+  background: rgba(109, 40, 217, 0.25);
+  color: #c4b5fd;
+}
+
+.ob-subtitle {
+  font-family: system-ui, -apple-system, sans-serif;
+  font-size: 10px;
+  color: #7c3aed;
+  margin-bottom: 12px;
+  letter-spacing: 0.2px;
+}
+
+/* ── Steps ────────────────────────────────────────────────────────────────── */
+
+.ob-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.ob-step {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  transition: opacity 0.3s ease;
+}
+
+.ob-step.dimmed {
+  opacity: 0.38;
+  pointer-events: none;
+}
+
+/* Step number / checkmark indicator */
+.step-ind {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  font-size: 10px;
+  font-weight: 700;
+  font-family: system-ui, sans-serif;
+  background: rgba(109, 40, 217, 0.15);
+  border: 1.5px solid rgba(109, 40, 217, 0.35);
+  color: #a78bfa;
+  transition: background 0.3s ease, border-color 0.3s ease;
+}
+
+.step-ind.active {
+  background: rgba(109, 40, 217, 0.3);
+  border-color: #7c3aed;
+  color: #c4b5fd;
+  animation: step-pulse 2s ease-in-out infinite;
+}
+
+.step-ind.done {
+  background: #065f46;
+  border-color: #10b981;
+  color: #d1fae5;
+  animation: none;
+}
+
+@keyframes step-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(109, 40, 217, 0); }
+  50%       { box-shadow: 0 0 0 4px rgba(109, 40, 217, 0.28); }
+}
+
+.step-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.step-title {
+  font-family: system-ui, -apple-system, sans-serif;
+  font-size: 11px;
+  font-weight: 600;
+  color: #ddd6fe;
+  margin-bottom: 2px;
+}
+
+.step-desc {
+  font-family: system-ui, -apple-system, sans-serif;
+  font-size: 9px;
+  color: #8b5cf6;
+  margin-bottom: 6px;
+  line-height: 1.4;
+}
+
+.step-btn {
+  background: rgba(109, 40, 217, 0.25);
+  border: 1px solid rgba(109, 40, 217, 0.45);
+  color: #c4b5fd;
+  cursor: pointer;
+  font-size: 9px;
+  font-weight: 600;
+  font-family: system-ui, sans-serif;
+  padding: 4px 9px;
+  border-radius: 6px;
+  transition: background 0.15s ease, border-color 0.15s ease;
+  -webkit-app-region: no-drag;
+}
+
+.step-btn:hover:not(:disabled) {
+  background: rgba(109, 40, 217, 0.45);
+  border-color: #7c3aed;
+}
+
+.step-btn:disabled {
+  opacity: 0.55;
+  cursor: default;
 }

@@ -6,9 +6,13 @@ import {
   Tray,
   Menu,
   nativeImage,
+  shell,
+  systemPreferences,
 } from "electron";
 import { join } from "path";
 import { fileURLToPath } from "url";
+import { execSync } from "child_process";
+import { readFileSync, writeFileSync } from "fs";
 import { BridgeServer } from "@guardian/bridge";
 import type { ClientInfo } from "@guardian/bridge";
 
@@ -16,16 +20,42 @@ const __dirname = fileURLToPath(new URL(".", import.meta.url));
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
-const OVERLAY_SIZE = 100; // px — size of the floating mascot
+const OVERLAY_SIZE = 100; // px — compact mascot
+const PANEL_WIDTH  = 320; // px — onboarding panel width
+const PANEL_HEIGHT = 420; // px — onboarding panel height
 const MARGIN = 24;        // px — margin from screen edge
 const WS_PORT = Number(process.env["GUARDIAN_WS_PORT"] ?? 3001);
 const BRIDGE_PORT = Number(process.env["GUARDIAN_BRIDGE_PORT"] ?? 3002);
+
+// ── Persistent settings ──────────────────────────────────────────────────────
+
+interface GuardianSettings {
+  devToolsOpen: boolean;
+}
+
+function settingsPath(): string {
+  return join(app.getPath("userData"), "guardian-settings.json");
+}
+
+function loadSettings(): GuardianSettings {
+  try {
+    return { devToolsOpen: false, ...JSON.parse(readFileSync(settingsPath(), "utf-8")) };
+  } catch {
+    return { devToolsOpen: false };
+  }
+}
+
+function saveSettings(s: GuardianSettings): void {
+  try { writeFileSync(settingsPath(), JSON.stringify(s)); } catch { /* ignore */ }
+}
 
 // ── State ────────────────────────────────────────────────────────────────────
 
 let overlayWin: BrowserWindow | null = null;
 let tray: Tray | null = null;
 let isVisible = true;
+let isPanelExpanded = false;
+let devToolsOpen = false; // loaded from settings after app ready
 const bridgeServer = new BridgeServer(BRIDGE_PORT);
 
 // ── Error handling ───────────────────────────────────────────────────────────
@@ -57,6 +87,10 @@ app.whenReady().then(() => {
     app.dock.hide();
   }
 
+  // Load persisted settings
+  const settings = loadSettings();
+  devToolsOpen = settings.devToolsOpen;
+
   // Start the Figma bridge server
   bridgeServer.start();
   setupBridgeHandlers();
@@ -67,11 +101,128 @@ app.whenReady().then(() => {
   } catch (err) {
     console.error("[guardian] Tray creation failed (non-fatal):", err);
   }
+
+  startFigmaPolling();
 });
 
 app.on("window-all-closed", () => {
   // Keep the app alive even if all windows are closed (tray app pattern)
 });
+
+// ── Figma detection ──────────────────────────────────────────────────────────
+
+function isFigmaRunning(): boolean {
+  try {
+    execSync("pgrep -x Figma", { stdio: "pipe" });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+let _lastFigmaRunning = false;
+
+function startFigmaPolling(): void {
+  // Send initial status once the renderer has loaded
+  overlayWin?.webContents.on("did-finish-load", () => {
+    const running = isFigmaRunning();
+    _lastFigmaRunning = running;
+    overlayWin?.webContents.send("system-status", { figmaRunning: running });
+  });
+
+  // Poll every 3 s and only send on state change (reduces IPC noise)
+  setInterval(() => {
+    const running = isFigmaRunning();
+    if (running !== _lastFigmaRunning) {
+      _lastFigmaRunning = running;
+      overlayWin?.webContents.send("system-status", { figmaRunning: running });
+    }
+  }, 3000);
+}
+
+// ── Plugin launcher ──────────────────────────────────────────────────────────
+
+async function openFigma(): Promise<void> {
+  await shell.openExternal("figma://");
+}
+
+async function launchPlugin(): Promise<{ success: boolean; method: string; error?: string }> {
+  console.log("[guardian] launchPlugin() called");
+
+  if (process.platform !== "darwin") {
+    return { success: false, method: "unsupported", error: "macOS only" };
+  }
+
+  // Check macOS Accessibility permission — required for keystroke automation
+  const trusted = systemPreferences.isTrustedAccessibilityClient(false);
+  console.log("[guardian] Accessibility trusted:", trusted);
+
+  if (!trusted) {
+    // Prompt the user to grant permission (opens System Settings dialog)
+    systemPreferences.isTrustedAccessibilityClient(true);
+    return { success: false, method: "needs-accessibility", error: "Accessibility permission required — grant it in System Settings > Privacy > Accessibility, then retry" };
+  }
+
+  try {
+    // Just bring Figma to the foreground — keystroke injection via System Events
+    // is unreliable on Electron/Chromium apps (Figma). The renderer will show
+    // a clear Cmd+/ reminder once Figma is focused.
+    console.log("[guardian] Activating Figma…");
+    execSync(
+      `osascript -e 'tell application "Figma" to activate'`,
+      { stdio: "pipe", timeout: 3000 }
+    );
+    console.log("[guardian] Figma activated");
+    return { success: true, method: "activated" };
+  } catch (err) {
+    console.error("[guardian] Could not activate Figma:", err);
+    return { success: false, method: "failed", error: String(err) };
+  }
+}
+
+// ── Overlay resize ───────────────────────────────────────────────────────────
+
+function expandOverlay(): void {
+  if (!overlayWin || isPanelExpanded) return;
+  isPanelExpanded = true;
+  const { width, height } = screen.getPrimaryDisplay().workAreaSize;
+  overlayWin.setBounds(
+    {
+      x: width - PANEL_WIDTH - MARGIN,
+      y: height - PANEL_HEIGHT - MARGIN,
+      width: PANEL_WIDTH,
+      height: PANEL_HEIGHT,
+    },
+    true // animate
+  );
+}
+
+function toggleDevTools(): void {
+  if (!overlayWin) return;
+  devToolsOpen = !devToolsOpen;
+  saveSettings({ devToolsOpen });
+  if (devToolsOpen) {
+    overlayWin.webContents.openDevTools({ mode: "detach" });
+  } else {
+    overlayWin.webContents.closeDevTools();
+  }
+  refreshTrayMenu();
+}
+
+function collapseOverlay(): void {
+  if (!overlayWin || !isPanelExpanded) return;
+  isPanelExpanded = false;
+  const { width, height } = screen.getPrimaryDisplay().workAreaSize;
+  overlayWin.setBounds(
+    {
+      x: width - OVERLAY_SIZE - MARGIN,
+      y: height - OVERLAY_SIZE - MARGIN,
+      width: OVERLAY_SIZE,
+      height: OVERLAY_SIZE,
+    },
+    true // animate
+  );
+}
 
 // ── Bridge event handlers ─────────────────────────────────────────────────────
 
@@ -119,7 +270,8 @@ function createOverlay(): void {
     focusable: true,
 
     webPreferences: {
-      preload: join(__dirname, "../preload/index.js"),
+      // electron-vite outputs .mjs when package.json has "type":"module"
+      preload: join(__dirname, "../preload/index.mjs"),
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: false,
@@ -133,10 +285,6 @@ function createOverlay(): void {
   overlayWin.setIgnoreMouseEvents(true, { forward: true });
 
   // ── Hit-test polling ──────────────────────────────────────────────────────
-  // Poll cursor position every 50 ms and toggle setIgnoreMouseEvents so that:
-  //   • When the cursor overlaps the window → accept mouse events (enables
-  //     -webkit-app-region drag and context-menu).
-  //   • When the cursor is elsewhere → pass events through to the app below.
   let isOverWindow = false;
 
   setInterval(() => {
@@ -157,6 +305,11 @@ function createOverlay(): void {
     overlayWin.setIgnoreMouseEvents(!over, { forward: true });
     overlayWin.webContents.send("hover-change", over);
   }, 50);
+
+  // Auto-open DevTools if enabled in settings
+  overlayWin.webContents.on("did-finish-load", () => {
+    if (devToolsOpen) overlayWin?.webContents.openDevTools({ mode: "detach" });
+  });
 
   // ── Right-click context menu ──────────────────────────────────────────────
   overlayWin.webContents.on("context-menu", () => {
@@ -234,8 +387,25 @@ figma.viewport.scrollAndZoomIntoView([f]);`,
     ...(sendItems.length > 0 ? [{ type: "separator" as const }, ...sendItems] : []),
     { type: "separator" },
     {
-      label: isVisible ? "Masquer Guardian" : "Afficher Guardian",
+      label: isPanelExpanded ? "Fermer le panneau" : "⚙ Setup Figma…",
+      click: () => {
+        if (isPanelExpanded) {
+          collapseOverlay();
+          overlayWin?.webContents.send("hide-onboarding");
+        } else {
+          expandOverlay();
+          overlayWin?.webContents.send("show-onboarding");
+        }
+      },
+    },
+    {
+      label: isVisible ? "Hide Guardian" : "Afficher Guardian",
       click: () => toggleVisibility(),
+    },
+    { type: "separator" },
+    {
+      label: devToolsOpen ? "✓ DevTools (renderer)" : "DevTools (renderer)",
+      click: () => toggleDevTools(),
     },
     { label: "Quitter", click: () => app.quit() },
   ]);
@@ -280,6 +450,18 @@ function buildTrayMenu(): Menu {
       label: isVisible ? "Masquer Guardian" : "Afficher Guardian",
       click: () => toggleVisibility(),
     },
+    {
+      label: isPanelExpanded ? "Fermer le panneau" : "⚙ Setup Figma…",
+      click: () => {
+        if (isPanelExpanded) {
+          collapseOverlay();
+          overlayWin?.webContents.send("hide-onboarding");
+        } else {
+          expandOverlay();
+          overlayWin?.webContents.send("show-onboarding");
+        }
+      },
+    },
     { type: "separator" },
     { label: "Figma :", enabled: false },
     ...figmaItems,
@@ -287,6 +469,10 @@ function buildTrayMenu(): Menu {
     { label: `MCP: ws://localhost:${WS_PORT}`, enabled: false },
     { label: `Bridge: ws://localhost:${BRIDGE_PORT}`, enabled: false },
     { type: "separator" },
+    {
+      label: devToolsOpen ? "✓ DevTools (renderer)" : "DevTools (renderer)",
+      click: () => toggleDevTools(),
+    },
     { label: "Quitter", click: () => app.quit() },
   ]);
 }
@@ -316,4 +502,20 @@ ipcMain.on("bridge-send", (_event, clientId: string, msg: unknown) => {
 // Renderer → broadcast a message to all Figma clients
 ipcMain.on("bridge-broadcast", (_event, msg: unknown) => {
   bridgeServer.broadcast(msg as Parameters<typeof bridgeServer.broadcast>[0]);
+});
+
+// Onboarding panel resize
+ipcMain.on("expand-overlay", () => expandOverlay());
+ipcMain.on("collapse-overlay", () => collapseOverlay());
+
+// Figma / plugin actions (invokable from renderer)
+ipcMain.handle("open-figma", () => openFigma());
+ipcMain.handle("launch-plugin", () => launchPlugin());
+
+// Renderer console → main terminal (for debugging without opening DevTools)
+ipcMain.on("renderer-log", (_event, level: string, ...args: unknown[]) => {
+  const prefix = `[renderer/${level}]`;
+  if (level === "error") console.error(prefix, ...args);
+  else if (level === "warn") console.warn(prefix, ...args);
+  else console.log(prefix, ...args);
 });

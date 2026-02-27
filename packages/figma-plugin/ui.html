@@ -1134,6 +1134,11 @@
                     widgetId: guardianWidgetId,
                     fileKey: cachedFigmaContext?.fileKey ?? undefined,
                 }));
+                // Persist connection status so the widget canvas can display it
+                parent.postMessage({ pluginMessage: {
+                    type: 'storage-set',
+                    data: { key: 'guardianBridgeStatus', value: JSON.stringify({ connected: true, ts: Date.now() }) }
+                }}, '*');
             });
 
             ws.addEventListener('message', function (event) {
@@ -1151,6 +1156,11 @@
             ws.addEventListener('close', function () {
                 clientId = null;
                 console.log('[Guardian Bridge] Déconnecté — retry dans ' + RECONNECT_DELAY + 'ms');
+                // Persist disconnection so the widget canvas can reflect it
+                parent.postMessage({ pluginMessage: {
+                    type: 'storage-set',
+                    data: { key: 'guardianBridgeStatus', value: JSON.stringify({ connected: false, ts: Date.now() }) }
+                }}, '*');
                 scheduleReconnect();
             });
 

@@ -2,11 +2,7 @@ import { contextBridge, ipcRenderer } from "electron";
 import type { ClientInfo, FigmaMessage } from "@guardian/bridge";
 
 contextBridge.exposeInMainWorld("electronAPI", {
-  // ── Hover state (existing) ───────────────────────────────────────────────
-  /**
-   * Called by the main process when the cursor enters/leaves the overlay bounds.
-   * The renderer uses this to update the hover visual state.
-   */
+  // ── Hover state ──────────────────────────────────────────────────────────
   onHoverChange: (callback: (isOver: boolean) => void): void => {
     ipcRenderer.on("hover-change", (_event, isOver: boolean) =>
       callback(isOver)
@@ -14,10 +10,6 @@ contextBridge.exposeInMainWorld("electronAPI", {
   },
 
   // ── Bridge: Figma client list ────────────────────────────────────────────
-  /**
-   * Called by the main process whenever the list of connected Figma clients changes.
-   * Provides the full updated list on every call.
-   */
   onBridgeClients: (callback: (clients: ClientInfo[]) => void): void => {
     ipcRenderer.on("bridge-clients", (_event, clients: ClientInfo[]) =>
       callback(clients)
@@ -25,9 +17,6 @@ contextBridge.exposeInMainWorld("electronAPI", {
   },
 
   // ── Bridge: messages from Figma ─────────────────────────────────────────
-  /**
-   * Called when a Figma client sends a message (e.g. SELECTION_CHANGED, PONG, ANALYSIS_RESULT).
-   */
   onBridgeMessage: (
     callback: (clientId: string, msg: FigmaMessage) => void
   ): void => {
@@ -38,13 +27,42 @@ contextBridge.exposeInMainWorld("electronAPI", {
   },
 
   // ── Bridge: send to Figma ────────────────────────────────────────────────
-  /** Send a message to a specific Figma client by its clientId. */
   bridgeSend: (clientId: string, msg: unknown): void => {
     ipcRenderer.send("bridge-send", clientId, msg);
   },
 
-  /** Broadcast a message to all connected Figma clients. */
   bridgeBroadcast: (msg: unknown): void => {
     ipcRenderer.send("bridge-broadcast", msg);
+  },
+
+  // ── System status (Figma process detection) ──────────────────────────────
+  onSystemStatus: (callback: (status: { figmaRunning: boolean }) => void): void => {
+    ipcRenderer.on("system-status", (_event, status: { figmaRunning: boolean }) =>
+      callback(status)
+    );
+  },
+
+  // ── Onboarding panel show/hide (initiated by main) ───────────────────────
+  onShowOnboarding: (callback: () => void): void => {
+    ipcRenderer.on("show-onboarding", () => callback());
+  },
+
+  onHideOnboarding: (callback: () => void): void => {
+    ipcRenderer.on("hide-onboarding", () => callback());
+  },
+
+  // ── Figma / plugin actions ────────────────────────────────────────────────
+  openFigma: (): Promise<void> => ipcRenderer.invoke("open-figma"),
+
+  launchPlugin: (): Promise<{ success: boolean; method: string; error?: string }> =>
+    ipcRenderer.invoke("launch-plugin"),
+
+  // ── Overlay panel resize ──────────────────────────────────────────────────
+  expandOverlay: (): void => ipcRenderer.send("expand-overlay"),
+  collapseOverlay: (): void => ipcRenderer.send("collapse-overlay"),
+
+  // ── Console forwarding → main terminal ──────────────────────────────────
+  logToMain: (level: string, ...args: unknown[]): void => {
+    ipcRenderer.send("renderer-log", level, ...args);
   },
 });
