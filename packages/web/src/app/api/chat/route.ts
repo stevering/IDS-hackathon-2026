@@ -594,6 +594,24 @@ async function connectMCPs(
       mcpErrors.push(`Code MCP connection failed: ${msg}`);
     }
   }
+  // Connect Guardian MCP if enabled and URL provided
+  const guardianMcpUrl = process.env.GUARDIAN_MCP_URL;
+  if (enabledMcps.guardian !== false && guardianMcpUrl) {
+    try {
+      console.log("[Guardian] Connecting to:", guardianMcpUrl);
+      const { tools } = await getOrConnect(guardianMcpUrl, "Guardian");
+      const prefixedTools = Object.fromEntries(
+        Object.entries(tools).map(([name, tool]) => [`guardian_${name}`, tool])
+      );
+      Object.assign(allTools, wrapToolsWithRetry(prefixedTools, guardianMcpUrl, "Guardian"));
+      console.log("[Guardian] Connected successfully");
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      console.error("[Guardian] MCP connection failed:", msg);
+      mcpErrors.push(`Guardian MCP connection failed: ${msg}`);
+    }
+  }
+
   console.debug('allTools:');
   console.debug(allTools);
   return { allTools, mcpErrors };
