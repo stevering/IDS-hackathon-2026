@@ -25,8 +25,8 @@ const PANEL_WIDTH  = 320; // px — onboarding panel width
 const PANEL_HEIGHT = 420; // px — onboarding panel height
 const MESSAGE_WIDTH = 400; // px — width when showing message bubble
 const MARGIN = 24;        // px — margin from screen edge
-const WS_PORT = Number(process.env["GUARDIAN_WS_PORT"] ?? 3001);
 const BRIDGE_PORT = Number(process.env["GUARDIAN_BRIDGE_PORT"] ?? 3002);
+const CLOUD_URL = process.env["GUARDIAN_CLOUD_URL"] ?? "http://localhost:3000";
 
 // ── Persistent settings ──────────────────────────────────────────────────────
 
@@ -76,7 +76,7 @@ let lastCollapseTarget: { x: number; y: number; ts: number } | null = null;
 const COLLAPSE_ANIM_TTL = 600; // ms — comfortably longer than any macOS window anim
 
 let devToolsOpen = false; // loaded from settings after app ready
-let isMcpConnected = false; // updated via IPC from renderer's WebSocket
+let isCloudConnected = false; // updated via IPC from renderer's HTTP health check
 const bridgeServer = new BridgeServer(BRIDGE_PORT);
 
 // ── Position helpers ─────────────────────────────────────────────────────────
@@ -454,11 +454,11 @@ function createOverlay(): void {
   // Load the renderer
   if (process.env["ELECTRON_RENDERER_URL"] != null) {
     void overlayWin.loadURL(
-      `${process.env["ELECTRON_RENDERER_URL"]}?wsPort=${WS_PORT}&bridgePort=${BRIDGE_PORT}`
+      `${process.env["ELECTRON_RENDERER_URL"]}?bridgePort=${BRIDGE_PORT}&cloudUrl=${encodeURIComponent(CLOUD_URL)}`
     );
   } else {
     void overlayWin.loadFile(join(__dirname, "../renderer/index.html"), {
-      query: { wsPort: String(WS_PORT), bridgePort: String(BRIDGE_PORT) },
+      query: { bridgePort: String(BRIDGE_PORT), cloudUrl: CLOUD_URL },
     });
   }
 }
@@ -514,9 +514,9 @@ figma.viewport.scrollAndZoomIntoView([f]);`,
         ]
       : [];
 
-  const mcpLabel = isMcpConnected
-    ? `● MCP  ws:${WS_PORT}  — connecté`
-    : `○ MCP  ws:${WS_PORT}  — hors ligne`;
+  const cloudLabel = isCloudConnected
+    ? `● Guardian Cloud — connecté`
+    : `○ Guardian Cloud — hors ligne`;
 
   const bridgeLabel = clients.length > 0
     ? `● Bridge  ws:${BRIDGE_PORT}  — ${clients.length} client${clients.length > 1 ? "s" : ""}`
@@ -526,7 +526,7 @@ figma.viewport.scrollAndZoomIntoView([f]);`,
     { label: "DS AI Guardian", enabled: false },
     { type: "separator" },
     { label: "Serveurs :", enabled: false },
-    { label: mcpLabel, enabled: false },
+    { label: cloudLabel, enabled: false },
     { label: bridgeLabel, enabled: false },
     { type: "separator" },
     { label: "Figma :", enabled: false },
@@ -592,11 +592,11 @@ function buildTrayMenu(): Menu {
         }))
       : [{ label: "○ Aucun Figma connecté", enabled: false }];
 
-  const mcpLabel = isMcpConnected
-    ? `● MCP  ws:${WS_PORT}  — connecté`
-    : `○ MCP  ws:${WS_PORT}  — hors ligne`;
+  const cloudLabelTray = isCloudConnected
+    ? `● Guardian Cloud — connecté`
+    : `○ Guardian Cloud — hors ligne`;
 
-  const bridgeLabel = clients.length > 0
+  const bridgeLabelTray = clients.length > 0
     ? `● Bridge  ws:${BRIDGE_PORT}  — ${clients.length} client${clients.length > 1 ? "s" : ""}`
     : `○ Bridge  ws:${BRIDGE_PORT}  — en attente`;
 
@@ -619,8 +619,8 @@ function buildTrayMenu(): Menu {
     },
     { type: "separator" },
     { label: "Serveurs :", enabled: false },
-    { label: mcpLabel, enabled: false },
-    { label: bridgeLabel, enabled: false },
+    { label: cloudLabelTray, enabled: false },
+    { label: bridgeLabelTray, enabled: false },
     { type: "separator" },
     { label: "Figma :", enabled: false },
     ...figmaItems,
@@ -670,9 +670,9 @@ ipcMain.on("bridge-broadcast", (_event, msg: unknown) => {
 ipcMain.handle("open-figma", () => openFigma());
 ipcMain.handle("launch-plugin", () => launchPlugin());
 
-// Renderer → MCP WebSocket status (for tray / context menu display)
-ipcMain.on("mcp-status", (_event, connected: boolean) => {
-  isMcpConnected = connected;
+// Renderer → Guardian Cloud status (for tray / context menu display)
+ipcMain.on("cloud-status", (_event, connected: boolean) => {
+  isCloudConnected = connected;
   refreshTrayMenu();
 });
 

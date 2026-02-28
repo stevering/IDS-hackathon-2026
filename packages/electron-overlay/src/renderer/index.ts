@@ -13,7 +13,7 @@ interface ElectronAPI {
   onShowOnboarding: (callback: () => void) => void;
   onHideOnboarding: (callback: () => void) => void;
   onMessageSide: (callback: (side: "left" | "right") => void) => void;
-  reportMcpStatus: (connected: boolean) => void;
+  reportCloudStatus: (connected: boolean) => void;
   openFigma: () => Promise<void>;
   launchPlugin: () => Promise<{ success: boolean; method: string; error?: string }>;
   expandOverlay: () => void;
@@ -31,11 +31,7 @@ declare global {
 
 // ── Incoming MCP message shape ────────────────────────────────────────────────
 
-interface McpMessage {
-  type: "ALERT" | "CLEAR_ALERTS" | "PING";
-  count?: number;
-  text?: string;
-}
+// (MCP WebSocket removed — overlay now polls Guardian Cloud via HTTP)
 
 // ── DOM setup ─────────────────────────────────────────────────────────────────
 
@@ -140,8 +136,8 @@ badge.textContent = "0";
 const figmaDot = document.createElement("div");
 figmaDot.className = "figma-dot";
 
-const mcpDot = document.createElement("div");
-mcpDot.className = "mcp-dot";
+const cloudDot = document.createElement("div");
+cloudDot.className = "cloud-dot";
 
 // ── Status tooltip (shows on dot hover, positioned inside the window) ─────────
 
@@ -151,7 +147,7 @@ statusTooltip.className = "status-tooltip";
 mascotWrapper.appendChild(guardian);
 mascotWrapper.appendChild(badge);
 mascotWrapper.appendChild(figmaDot);
-mascotWrapper.appendChild(mcpDot);
+mascotWrapper.appendChild(cloudDot);
 mascotWrapper.appendChild(statusTooltip);
 
 // Dot hover → custom tooltip (native title= doesn't work on transparent overlays)
@@ -168,23 +164,23 @@ figmaDot.addEventListener("mouseenter", () => {
 });
 figmaDot.addEventListener("mouseleave", () => statusTooltip.classList.remove("visible"));
 
-mcpDot.addEventListener("mouseenter", () => {
-  if (mcpDot.classList.contains("connected")) {
-    statusTooltip.textContent = "MCP — connecté";
-  } else if (mcpDot.classList.contains("failed")) {
-    statusTooltip.textContent = "MCP — hors ligne";
-  } else if (mcpDot.classList.contains("reconnecting")) {
-    statusTooltip.textContent = "MCP — reconnexion";
+cloudDot.addEventListener("mouseenter", () => {
+  if (cloudDot.classList.contains("connected")) {
+    statusTooltip.textContent = "Guardian Cloud — connecté";
+  } else if (cloudDot.classList.contains("failed")) {
+    statusTooltip.textContent = "Guardian Cloud — hors ligne";
+  } else if (cloudDot.classList.contains("reconnecting")) {
+    statusTooltip.textContent = "Guardian Cloud — vérification…";
   } else {
-    statusTooltip.textContent = "MCP — en attente";
+    statusTooltip.textContent = "Guardian Cloud — en attente";
   }
   statusTooltip.classList.add("visible");
 });
-mcpDot.addEventListener("mouseleave", () => statusTooltip.classList.remove("visible"));
+cloudDot.addEventListener("mouseleave", () => statusTooltip.classList.remove("visible"));
 
 // Prevent dot clicks from bubbling up to mascotWrapper's onboarding toggle
 figmaDot.addEventListener("click", (e) => e.stopPropagation());
-mcpDot.addEventListener("click", (e) => e.stopPropagation());
+cloudDot.addEventListener("click", (e) => e.stopPropagation());
 
 // Default layout: [bubble (left)] [mascot (right)] — flipped to row-reverse for bubble-right
 mascotSection.appendChild(messageBubble);
@@ -440,80 +436,53 @@ function clearFigmaFailTimer(): void {
 // Start counting from page load
 scheduleFigmaFail();
 
-// ── MCP WebSocket (alerts from AI agent) ─────────────────────────────────────
+// ── Guardian Cloud HTTP health check ──────────────────────────────────────────
 
 const params = new URLSearchParams(window.location.search);
-const WS_PORT = Number(params.get("wsPort") ?? 3001);
-const WS_URL = `ws://localhost:${WS_PORT}`;
+const CLOUD_URL = params.get("cloudUrl") ?? "http://localhost:3000";
+const CLOUD_STATUS_URL = `${CLOUD_URL}/api/guardian/status`;
 
-let ws: WebSocket | null = null;
-let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
-let reconnectCount = 0;
-const MCP_FAIL_AFTER = 3; // consecutive failures → red dot
-let alertCount = 0;
+let cloudPollTimer: ReturnType<typeof setTimeout> | null = null;
+let cloudFailCount = 0;
+const CLOUD_FAIL_AFTER = 3; // consecutive failures → red dot
+const CLOUD_POLL_INTERVAL = 30_000; // 30 s between checks
 
-function connect(): void {
-  ws = new WebSocket(WS_URL);
-
-  ws.addEventListener("open", () => {
-    reconnectCount = 0;
-    mcpDot.classList.add("connected");
-    mcpDot.classList.remove("reconnecting", "failed");
-    ws?.send(JSON.stringify({ type: "REGISTER", client: "electron-overlay" }));
-    window.electronAPI.reportMcpStatus(true);
-  });
-
-  ws.addEventListener("message", (event: MessageEvent<string>) => {
-    try {
-      const msg = JSON.parse(event.data) as McpMessage;
-      handleMcpMessage(msg);
-    } catch {
-      // ignore malformed messages
-    }
-  });
-
-  ws.addEventListener("close", () => {
-    reconnectCount++;
-    mcpDot.classList.remove("connected");
-    if (reconnectCount >= MCP_FAIL_AFTER) {
-      mcpDot.classList.add("failed");
-      mcpDot.classList.remove("reconnecting");
+async function checkCloudStatus(): Promise<void> {
+  try {
+    const res = await fetch(CLOUD_STATUS_URL, { signal: AbortSignal.timeout(5000) });
+    if (res.ok) {
+      cloudFailCount = 0;
+      cloudDot.classList.add("connected");
+      cloudDot.classList.remove("reconnecting", "failed");
+      window.electronAPI.reportCloudStatus(true);
     } else {
-      mcpDot.classList.add("reconnecting");
-      mcpDot.classList.remove("failed");
+      throw new Error(`HTTP ${res.status}`);
     }
-    window.electronAPI.reportMcpStatus(false);
-    scheduleReconnect();
-  });
-
-  ws.addEventListener("error", () => {
-    mcpDot.classList.remove("connected");
-    // Let the close handler manage state transitions
-  });
-}
-
-function scheduleReconnect(): void {
-  if (reconnectTimer !== null) return;
-  reconnectTimer = setTimeout(() => {
-    reconnectTimer = null;
-    connect();
-  }, 3000);
-}
-
-function handleMcpMessage(msg: McpMessage): void {
-  if (msg.type === "ALERT") {
-    alertCount = msg.count ?? alertCount + 1;
-    badge.textContent = String(alertCount);
-    badge.classList.remove("hidden");
-    guardian.style.filter = "drop-shadow(0 6px 32px rgba(239,68,68,0.8))";
-    setTimeout(() => { guardian.style.filter = ""; }, 600);
-  } else if (msg.type === "CLEAR_ALERTS") {
-    alertCount = 0;
-    badge.classList.add("hidden");
+  } catch {
+    cloudFailCount++;
+    cloudDot.classList.remove("connected");
+    if (cloudFailCount >= CLOUD_FAIL_AFTER) {
+      cloudDot.classList.add("failed");
+      cloudDot.classList.remove("reconnecting");
+      window.electronAPI.reportCloudStatus(false);
+    } else {
+      cloudDot.classList.add("reconnecting");
+      cloudDot.classList.remove("failed");
+    }
   }
+  schedulePoll();
 }
 
-connect();
+function schedulePoll(): void {
+  if (cloudPollTimer !== null) return;
+  cloudPollTimer = setTimeout(() => {
+    cloudPollTimer = null;
+    void checkCloudStatus();
+  }, CLOUD_POLL_INTERVAL);
+}
+
+// Initial check shortly after load
+setTimeout(() => void checkCloudStatus(), 2000);
 
 // ── Bridge: Figma client state ────────────────────────────────────────────────
 

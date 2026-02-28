@@ -104,8 +104,8 @@ body {
   opacity: 1;
 }
 
-/* ── MCP connection dot ─────────────────────────────────────────────────────── */
-.mcp-dot {
+/* ── Guardian Cloud connection dot ─────────────────────────────────────────── */
+.cloud-dot {
   position: absolute;
   bottom: 4px;
   left: calc(50% + 3px); /* right of center pair, 6px gap between dots */
@@ -120,23 +120,23 @@ body {
   transition: background 0.3s ease, box-shadow 0.3s ease;
 }
 
-.mcp-dot.connected {
+.cloud-dot.connected {
   background: #22d3ee; /* teal/blue-green */
   box-shadow: 0 0 6px rgba(34, 211, 238, 0.8);
-  animation: mcp-dot-pulse 2s ease-in-out infinite;
+  animation: cloud-dot-pulse 2s ease-in-out infinite;
 }
 
-.mcp-dot.reconnecting {
+.cloud-dot.reconnecting {
   background: #f59e0b;
   box-shadow: 0 0 6px rgba(245, 158, 11, 0.6);
 }
 
-.mcp-dot.failed {
+.cloud-dot.failed {
   background: #ef4444; /* red — too many failed reconnects */
   box-shadow: 0 0 6px rgba(239, 68, 68, 0.6);
 }
 
-@keyframes mcp-dot-pulse {
+@keyframes cloud-dot-pulse {
   0%, 100% { transform: scale(1); opacity: 1; }
   50%       { transform: scale(1.2); opacity: 0.85; }
 }

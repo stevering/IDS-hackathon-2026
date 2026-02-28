@@ -4,6 +4,7 @@ import { useChat } from "@ai-sdk/react";
 import { DefaultChatTransport } from "ai";
 import { useState, useRef, useEffect, useMemo } from "react";
 import { useFigmaPlugin } from "./hooks/useFigmaPlugin";
+import { UserMenu } from "@/components/UserMenu";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import remarkBreaks from "remark-breaks";
@@ -1437,6 +1438,8 @@ export default function Home() {
               title={`Code MCP: ${codeConnected ? "configured" : "not configured"}`}
             />
             <span className="text-xs text-white/30 hidden sm:inline">Code</span>
+            <div className="w-px h-4 bg-white/10 mx-1 hidden sm:block" />
+            <UserMenu />
           </div>
         </header>
 

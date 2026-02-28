@@ -68,9 +68,9 @@ contextBridge.exposeInMainWorld("electronAPI", {
     ipcRenderer.on("message-side", (_event, side: "left" | "right") => callback(side));
   },
 
-  // ── MCP WebSocket status → main (for tray/context menus) ────────────────
-  reportMcpStatus: (connected: boolean): void => {
-    ipcRenderer.send("mcp-status", connected);
+  // ── Guardian Cloud status → main (for tray/context menus) ───────────────
+  reportCloudStatus: (connected: boolean): void => {
+    ipcRenderer.send("cloud-status", connected);
   },
 
   // ── Console forwarding → main terminal ──────────────────────────────────

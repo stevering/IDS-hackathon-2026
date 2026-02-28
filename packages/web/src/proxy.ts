@@ -18,6 +18,8 @@ const PUBLIC_AUTH_ROUTES = [
   "/api/auth/github-mcp/status",
   "/api/auth/set-token",
   "/api/set-oauth-result", // Allow POST without token for callback
+  "/api/guardian-auth",    // Better Auth routes (login, signup, session)
+  "/api/guardian/status",  // Health check for the overlay (no auth token)
 ];
 
 function getMcpCodeUrl(request: NextRequest): string | undefined {
@@ -34,17 +36,35 @@ function getMcpCodeUrl(request: NextRequest): string | undefined {
   return url.replace(/\/$/, '');
 }
 
+// Pages accessibles sans être connecté
+const PUBLIC_PAGES = ["/login", "/signup"];
+
 export async function proxy(request: NextRequest) {
   const { pathname, search } = request.nextUrl;
   const MCP_CODE_URL = getMcpCodeUrl(request);
 
-  // Désactiver le middleware en production
-  if (process.env.NODE_ENV === "production") {
+  // ── Auth guard : pages protégées ──────────────────────────────────────────
+  // S'applique en dev ET en prod, avant toute autre logique.
+  const isApiOrStatic =
+    pathname.startsWith("/api/") ||
+    pathname.startsWith("/_next/") ||
+    pathname.startsWith("/favicon");
+
+  if (!isApiOrStatic && !PUBLIC_PAGES.some((p) => pathname.startsWith(p))) {
+    const sessionToken = request.cookies.get("better-auth.session_token");
+    if (!sessionToken) {
+      return NextResponse.redirect(new URL("/login", request.url));
+    }
+  }
+
+  // Désactiver le reste du middleware en production (proxy dev-only)
+  // Et ne pas appliquer le check X-Auth-Token aux pages (uniquement aux routes /api/)
+  if (process.env.NODE_ENV === "production" || !pathname.startsWith("/api/")) {
     return NextResponse.next();
   }
 
   // Skip auth check for public auth routes (browser redirects don't have custom headers)
-  const isPublicAuthRoute = PUBLIC_AUTH_ROUTES.some(route => 
+  const isPublicAuthRoute = PUBLIC_AUTH_ROUTES.some(route =>
     pathname === route || pathname.startsWith(`${route}/`)
   );
   
@@ -193,8 +213,7 @@ export async function proxy(request: NextRequest) {
 
 export const config = {
   matcher: [
-    "/proxy-local/code/:path*",
-    "/proxy-local/figma/:path*",
-    "/api/:path*",
+    // Pages applicatives (auth guard)
+    "/((?!_next/static|_next/image|favicon.ico).*)",
   ]
 };
