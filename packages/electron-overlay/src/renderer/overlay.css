@@ -77,17 +77,48 @@ body {
   animation-play-state: paused;
 }
 
+/* ── Status tooltip (appears on dot hover, inside the 100px window) ─────────── */
+.status-tooltip {
+  position: absolute;
+  bottom: 18px; /* just above the dot pair */
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(10, 6, 22, 0.95);
+  border: 1px solid rgba(109, 40, 217, 0.45);
+  border-radius: 6px;
+  padding: 2px 8px;
+  font-family: system-ui, -apple-system, sans-serif;
+  font-size: 9px;
+  font-weight: 600;
+  color: #c4b5fd;
+  white-space: nowrap;
+  max-width: 92px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  pointer-events: none;
+  -webkit-app-region: no-drag;
+  opacity: 0;
+  transition: opacity 0.12s ease;
+  z-index: 10;
+}
+
+.status-tooltip.visible {
+  opacity: 1;
+}
+
 /* ── MCP connection dot ─────────────────────────────────────────────────────── */
 .mcp-dot {
   position: absolute;
-  bottom: -2px;
-  right: -2px;
+  bottom: 4px;
+  left: calc(50% + 3px); /* right of center pair, 6px gap between dots */
   width: 10px;
   height: 10px;
   border-radius: 50%;
   background: #4b5563; /* disconnected: gray */
   border: 2px solid rgba(0, 0, 0, 0.25);
-  pointer-events: none;
+  -webkit-app-region: no-drag;
+  cursor: default;
+  z-index: 1;
   transition: background 0.3s ease, box-shadow 0.3s ease;
 }
 
@@ -174,8 +205,8 @@ body {
 /* ── Figma connection dot ───────────────────────────────────────────────────── */
 .figma-dot {
   position: absolute;
-  top: -2px;
-  left: -2px;
+  bottom: 4px;
+  left: calc(50% - 13px); /* left of center pair: 10px dot + 3px gap */
   width: 10px;
   height: 10px;
   border-radius: 50%;
@@ -183,7 +214,9 @@ body {
   border: 2px solid rgba(0, 0, 0, 0.25);
   box-shadow: 0 0 6px rgba(99, 102, 241, 0.8);
   animation: figma-dot-pulse 2s ease-in-out infinite;
-  pointer-events: none;
+  -webkit-app-region: no-drag;
+  cursor: default;
+  z-index: 1;
 }
 
 .figma-dot.hidden {

@@ -13,6 +13,7 @@ interface ElectronAPI {
   onShowOnboarding: (callback: () => void) => void;
   onHideOnboarding: (callback: () => void) => void;
   onMessageSide: (callback: (side: "left" | "right") => void) => void;
+  reportMcpStatus: (connected: boolean) => void;
   openFigma: () => Promise<void>;
   launchPlugin: () => Promise<{ success: boolean; method: string; error?: string }>;
   expandOverlay: () => void;
@@ -144,10 +145,40 @@ const mcpDot = document.createElement("div");
 mcpDot.className = "mcp-dot";
 mcpDot.title = "Agent IA non connecté";
 
+// ── Status tooltip (shows on dot hover, positioned inside the window) ─────────
+
+const statusTooltip = document.createElement("div");
+statusTooltip.className = "status-tooltip";
+
 mascotWrapper.appendChild(guardian);
 mascotWrapper.appendChild(badge);
 mascotWrapper.appendChild(figmaDot);
 mascotWrapper.appendChild(mcpDot);
+mascotWrapper.appendChild(statusTooltip);
+
+// Dot hover → custom tooltip (native title= doesn't work on transparent overlays)
+figmaDot.addEventListener("mouseenter", () => {
+  const count = figmaClients.length;
+  statusTooltip.textContent = count > 0
+    ? `Figma — ${count} client${count > 1 ? "s" : ""}`
+    : "Figma — connecté";
+  statusTooltip.classList.add("visible");
+});
+figmaDot.addEventListener("mouseleave", () => statusTooltip.classList.remove("visible"));
+
+mcpDot.addEventListener("mouseenter", () => {
+  statusTooltip.textContent = mcpDot.classList.contains("connected")
+    ? "MCP — connecté"
+    : mcpDot.classList.contains("reconnecting")
+      ? "MCP — reconnexion…"
+      : "MCP — hors ligne";
+  statusTooltip.classList.add("visible");
+});
+mcpDot.addEventListener("mouseleave", () => statusTooltip.classList.remove("visible"));
+
+// Prevent dot clicks from bubbling up to mascotWrapper's onboarding toggle
+figmaDot.addEventListener("click", (e) => e.stopPropagation());
+mcpDot.addEventListener("click", (e) => e.stopPropagation());
 
 // Default layout: [bubble (left)] [mascot (right)] — flipped to row-reverse for bubble-right
 mascotSection.appendChild(messageBubble);
@@ -393,6 +424,7 @@ function connect(): void {
     mcpDot.classList.remove("reconnecting");
     mcpDot.title = "Agent IA connecté";
     ws?.send(JSON.stringify({ type: "REGISTER", client: "electron-overlay" }));
+    window.electronAPI.reportMcpStatus(true);
   });
 
   ws.addEventListener("message", (event: MessageEvent<string>) => {
@@ -408,6 +440,7 @@ function connect(): void {
     mcpDot.classList.remove("connected");
     mcpDot.classList.add("reconnecting");
     mcpDot.title = "Agent IA — reconnexion…";
+    window.electronAPI.reportMcpStatus(false);
     scheduleReconnect();
   });
 

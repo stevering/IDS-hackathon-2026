@@ -76,6 +76,7 @@ let lastCollapseTarget: { x: number; y: number; ts: number } | null = null;
 const COLLAPSE_ANIM_TTL = 600; // ms — comfortably longer than any macOS window anim
 
 let devToolsOpen = false; // loaded from settings after app ready
+let isMcpConnected = false; // updated via IPC from renderer's WebSocket
 const bridgeServer = new BridgeServer(BRIDGE_PORT);
 
 // ── Position helpers ─────────────────────────────────────────────────────────
@@ -513,10 +514,22 @@ figma.viewport.scrollAndZoomIntoView([f]);`,
         ]
       : [];
 
+  const mcpLabel = isMcpConnected
+    ? `● MCP  ws:${WS_PORT}  — connecté`
+    : `○ MCP  ws:${WS_PORT}  — hors ligne`;
+
+  const bridgeLabel = clients.length > 0
+    ? `● Bridge  ws:${BRIDGE_PORT}  — ${clients.length} client${clients.length > 1 ? "s" : ""}`
+    : `○ Bridge  ws:${BRIDGE_PORT}  — en attente`;
+
   return Menu.buildFromTemplate([
     { label: "DS AI Guardian", enabled: false },
     { type: "separator" },
-    { label: "Figma Connections :", enabled: false },
+    { label: "Serveurs :", enabled: false },
+    { label: mcpLabel, enabled: false },
+    { label: bridgeLabel, enabled: false },
+    { type: "separator" },
+    { label: "Figma :", enabled: false },
     ...figmaItems,
     ...(sendItems.length > 0 ? [{ type: "separator" as const }, ...sendItems] : []),
     { type: "separator" },
@@ -533,7 +546,7 @@ figma.viewport.scrollAndZoomIntoView([f]);`,
       },
     },
     {
-      label: isVisible ? "Hide Guardian" : "Afficher Guardian",
+      label: isVisible ? "Masquer Guardian" : "Afficher Guardian",
       click: () => toggleVisibility(),
     },
     { type: "separator" },
@@ -579,6 +592,14 @@ function buildTrayMenu(): Menu {
         }))
       : [{ label: "○ Aucun Figma connecté", enabled: false }];
 
+  const mcpLabel = isMcpConnected
+    ? `● MCP  ws:${WS_PORT}  — connecté`
+    : `○ MCP  ws:${WS_PORT}  — hors ligne`;
+
+  const bridgeLabel = clients.length > 0
+    ? `● Bridge  ws:${BRIDGE_PORT}  — ${clients.length} client${clients.length > 1 ? "s" : ""}`
+    : `○ Bridge  ws:${BRIDGE_PORT}  — en attente`;
+
   return Menu.buildFromTemplate([
     {
       label: isVisible ? "Masquer Guardian" : "Afficher Guardian",
@@ -597,11 +618,12 @@ function buildTrayMenu(): Menu {
       },
     },
     { type: "separator" },
+    { label: "Serveurs :", enabled: false },
+    { label: mcpLabel, enabled: false },
+    { label: bridgeLabel, enabled: false },
+    { type: "separator" },
     { label: "Figma :", enabled: false },
     ...figmaItems,
-    { type: "separator" },
-    { label: `MCP: ws://localhost:${WS_PORT}`, enabled: false },
-    { label: `Bridge: ws://localhost:${BRIDGE_PORT}`, enabled: false },
     { type: "separator" },
     {
       label: devToolsOpen ? "✓ DevTools (renderer)" : "DevTools (renderer)",
@@ -647,6 +669,12 @@ ipcMain.on("bridge-broadcast", (_event, msg: unknown) => {
 // Figma / plugin actions (invokable from renderer)
 ipcMain.handle("open-figma", () => openFigma());
 ipcMain.handle("launch-plugin", () => launchPlugin());
+
+// Renderer → MCP WebSocket status (for tray / context menu display)
+ipcMain.on("mcp-status", (_event, connected: boolean) => {
+  isMcpConnected = connected;
+  refreshTrayMenu();
+});
 
 // Renderer console → main terminal (for debugging without opening DevTools)
 ipcMain.on("renderer-log", (_event, level: string, ...args: unknown[]) => {

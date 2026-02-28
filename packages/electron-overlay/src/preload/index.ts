@@ -68,6 +68,11 @@ contextBridge.exposeInMainWorld("electronAPI", {
     ipcRenderer.on("message-side", (_event, side: "left" | "right") => callback(side));
   },
 
+  // ── MCP WebSocket status → main (for tray/context menus) ────────────────
+  reportMcpStatus: (connected: boolean): void => {
+    ipcRenderer.send("mcp-status", connected);
+  },
+
   // ── Console forwarding → main terminal ──────────────────────────────────
   logToMain: (level: string, ...args: unknown[]): void => {
     ipcRenderer.send("renderer-log", level, ...args);
