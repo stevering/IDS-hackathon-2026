@@ -157,6 +157,58 @@ GITHUB_CLIENT_ID=GITHUB_CLIENT_ID
 GITHUB_CLIENT_SECRET=GITHUB_CLIENT_SECRET
 ```
 
+#### Guardian Auth — Database setup (fresh install)
+
+Guardian Auth uses [Better Auth](https://www.better-auth.com/) backed by a PostgreSQL database (Vercel Postgres / Neon).
+
+**1. Provision a database**
+
+In the [Vercel dashboard](https://vercel.com/dashboard):
+- Go to **Storage** → **Create** → **Neon**
+- Follow the wizard (Hobby plan is free)
+- Once created, go to the database page → **`.env.local`** tab → copy `DATABASE_URL`
+
+**2. Add the required env vars to `.env.local`**
+
+```bash
+# Neon / Vercel Postgres connection string
+DATABASE_URL=postgres://...
+
+# Random secret used to sign auth tokens (generate one below)
+BETTER_AUTH_SECRET=<generated>
+
+# Public URL of the web app (used for cookie domain + OAuth callbacks)
+BETTER_AUTH_URL=http://localhost:3000        # dev
+# BETTER_AUTH_URL=https://your-domain.com   # prod
+```
+
+Generate a strong secret:
+```bash
+openssl rand -base64 32
+```
+
+**3. Run the database migration**
+
+Better Auth manages its own tables (`user`, `session`, `account`, …). Run the migration once after any schema change:
+
+```bash
+cd packages/web
+dotenv-run -- npx @better-auth/cli migrate
+```
+
+> `dotenv-run` is required so that the CLI picks up `DATABASE_URL` from `.env.local`.
+> If `dotenv-run` is not installed globally: `npx dotenv-run -- npx @better-auth/cli migrate`
+
+**4. Dev vs prod database (Neon branching)**
+
+To avoid pointing your local dev environment at the production database, create a separate branch in Neon:
+
+- In the Neon dashboard → your project → **Branches** → **Create branch** (name it `dev`)
+- Copy the `DATABASE_URL` of the `dev` branch
+- Use it in your local `.env.local`; keep the `main` branch URL for the Vercel production environment variable
+
+This way, schema experiments and test accounts never touch production data.
+
 #### MCP of code editor
 
 - If your code editor supports an integrated MCP server like IntelliJ IDEA, enable it on port 3846

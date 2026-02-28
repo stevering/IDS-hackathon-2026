@@ -476,20 +476,20 @@ function buildContextMenu(): Menu {
           }${c.fileKey ? "  ·  " + c.fileKey.slice(0, 8) : ""}`,
           enabled: false,
         }))
-      : [{ label: "○ Aucun client Figma connecté", enabled: false }];
+      : [{ label: "○ No Figma client connected", enabled: false }];
 
   const sendItems: Electron.MenuItemConstructorOptions[] =
     clients.length > 0
       ? [
           {
-            label: "Envoyer vers Figma…",
+            label: "Send to Figma…",
             submenu: [
               {
-                label: "Analyser la sélection",
+                label: "Analyze selection",
                 click: () => bridgeServer.broadcast({ type: "TRIGGER_ANALYSIS" }),
               },
               {
-                label: "Créer un Frame test",
+                label: "Create a test Frame",
                 click: () =>
                   bridgeServer.broadcast({
                     type: "EXECUTE_CODE",
@@ -515,26 +515,26 @@ figma.viewport.scrollAndZoomIntoView([f]);`,
       : [];
 
   const cloudLabel = isCloudConnected
-    ? `● Guardian Cloud — connecté`
-    : `○ Guardian Cloud — hors ligne`;
+    ? `● Guardian Cloud — connected`
+    : `○ Guardian Cloud — offline`;
 
   const bridgeLabel = clients.length > 0
     ? `● Bridge  ws:${BRIDGE_PORT}  — ${clients.length} client${clients.length > 1 ? "s" : ""}`
-    : `○ Bridge  ws:${BRIDGE_PORT}  — en attente`;
+    : `○ Bridge  ws:${BRIDGE_PORT}  — waiting`;
 
   return Menu.buildFromTemplate([
     { label: "DS AI Guardian", enabled: false },
     { type: "separator" },
-    { label: "Serveurs :", enabled: false },
+    { label: "Servers:", enabled: false },
     { label: cloudLabel, enabled: false },
     { label: bridgeLabel, enabled: false },
     { type: "separator" },
-    { label: "Figma :", enabled: false },
+    { label: "Figma:", enabled: false },
     ...figmaItems,
     ...(sendItems.length > 0 ? [{ type: "separator" as const }, ...sendItems] : []),
     { type: "separator" },
     {
-      label: isPanelExpanded ? "Fermer le panneau" : "⚙ Setup Figma…",
+      label: isPanelExpanded ? "Close panel" : "⚙ Setup Figma…",
       click: () => {
         if (isPanelExpanded) {
           collapseOverlay();
@@ -546,7 +546,7 @@ figma.viewport.scrollAndZoomIntoView([f]);`,
       },
     },
     {
-      label: isVisible ? "Masquer Guardian" : "Afficher Guardian",
+      label: isVisible ? "Hide Guardian" : "Show Guardian",
       click: () => toggleVisibility(),
     },
     { type: "separator" },
@@ -554,7 +554,7 @@ figma.viewport.scrollAndZoomIntoView([f]);`,
       label: devToolsOpen ? "✓ DevTools (renderer)" : "DevTools (renderer)",
       click: () => toggleDevTools(),
     },
-    { label: "Quitter", click: () => app.quit() },
+    { label: "Quit", click: () => app.quit() },
   ]);
 }
 
@@ -590,23 +590,23 @@ function buildTrayMenu(): Menu {
           }`,
           enabled: false,
         }))
-      : [{ label: "○ Aucun Figma connecté", enabled: false }];
+      : [{ label: "○ No Figma connected", enabled: false }];
 
   const cloudLabelTray = isCloudConnected
-    ? `● Guardian Cloud — connecté`
-    : `○ Guardian Cloud — hors ligne`;
+    ? `● Guardian Cloud — connected`
+    : `○ Guardian Cloud — offline`;
 
   const bridgeLabelTray = clients.length > 0
     ? `● Bridge  ws:${BRIDGE_PORT}  — ${clients.length} client${clients.length > 1 ? "s" : ""}`
-    : `○ Bridge  ws:${BRIDGE_PORT}  — en attente`;
+    : `○ Bridge  ws:${BRIDGE_PORT}  — waiting`;
 
   return Menu.buildFromTemplate([
     {
-      label: isVisible ? "Masquer Guardian" : "Afficher Guardian",
+      label: isVisible ? "Hide Guardian" : "Show Guardian",
       click: () => toggleVisibility(),
     },
     {
-      label: isPanelExpanded ? "Fermer le panneau" : "⚙ Setup Figma…",
+      label: isPanelExpanded ? "Close panel" : "⚙ Setup Figma…",
       click: () => {
         if (isPanelExpanded) {
           collapseOverlay();
@@ -618,18 +618,18 @@ function buildTrayMenu(): Menu {
       },
     },
     { type: "separator" },
-    { label: "Serveurs :", enabled: false },
+    { label: "Servers:", enabled: false },
     { label: cloudLabelTray, enabled: false },
     { label: bridgeLabelTray, enabled: false },
     { type: "separator" },
-    { label: "Figma :", enabled: false },
+    { label: "Figma:", enabled: false },
     ...figmaItems,
     { type: "separator" },
     {
       label: devToolsOpen ? "✓ DevTools (renderer)" : "DevTools (renderer)",
       click: () => toggleDevTools(),
     },
-    { label: "Quitter", click: () => app.quit() },
+    { label: "Quit", click: () => app.quit() },
   ]);
 }
 

@@ -18,7 +18,7 @@ const nextConfig: NextConfig = {
     },
     async rewrites() {
         if (!isDev) {
-            return []; // Retourne une liste vide en production
+            return []; // Returns an empty list in production
         }
 
         return [
@@ -26,7 +26,7 @@ const nextConfig: NextConfig = {
                 source: '/proxy-local/figma/:path*',
                 destination: 'http://127.0.0.1:3845/:path*',
             },
-            // Proxy Code MCP géré par src/middleware.ts
+            // Code MCP Proxy handled by src/middleware.ts
         ];
     },
 };

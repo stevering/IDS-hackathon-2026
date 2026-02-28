@@ -12,17 +12,22 @@ const nextConfig: NextConfig = {
             {
                 source: "/:path*",
                 headers: [
-                    {
-                        key: "Cross-Origin-Opener-Policy",
-                        value: "same-origin-allow-popups",
-                    },
+                    { key: "Cross-Origin-Opener-Policy", value: "same-origin-allow-popups" },
+                    // Prevents MIME sniffing
+                    { key: "X-Content-Type-Options", value: "nosniff" },
+                    // Limits information sent in the Referer
+                    { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
+                    // Disables unused features
+                    { key: "Permissions-Policy", value: "camera=(), microphone=(), geolocation=()" },
+                    // NB: X-Frame-Options intentionally absent — the app is loaded in
+                    // an iframe by the Figma plugin. HSTS handled by Vercel in prod.
                 ],
             },
         ];
     },
     async rewrites() {
         if (!isDev) {
-            return []; // Retourne une liste vide en production
+            return []; // Returns an empty list in production
         }
 
         return [
@@ -30,7 +35,7 @@ const nextConfig: NextConfig = {
                 source: '/proxy-local/figma/:path*',
                 destination: 'http://127.0.0.1:3845/:path*',
             },
-            // Proxy Code MCP géré par src/middleware.ts
+            // Code MCP Proxy handled by src/middleware.ts
         ];
     },
 };

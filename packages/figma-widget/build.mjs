@@ -1,18 +1,18 @@
 /**
- * Build combiné Guardian Widget + Plugin
+ * Combined Guardian Widget + Plugin build
  *
- * Produit dist/code.js qui contient :
- *   - le code widget (widget.register → actif en contexte widget)
- *   - le code plugin (figma.showUI + handlers → actif en contexte plugin)
+ * Produces dist/code.js containing:
+ *   - widget code (widget.register → active in widget context)
+ *   - plugin code (figma.showUI + handlers → active in plugin context)
  *
- * Le code plugin vient de packages/figma-plugin/ (source de vérité).
- * Produit également dist/ui.html (copié depuis figma-plugin/ui.html).
+ * Plugin code comes from packages/figma-plugin/ (source of truth).
+ * Also produces dist/ui.html (copied from figma-plugin/ui.html).
  *
  * Build  : node build.mjs
  * Watch  : node build.mjs --watch
- *   → esbuild surveille widget-src/
- *   → tsc --watch surveille figma-plugin/code.ts
- *   → toute modification (widget ou plugin) reconstruit dist/code.js
+ *   → esbuild watches widget-src/
+ *   → tsc --watch watches figma-plugin/code.ts
+ *   → any change (widget or plugin) rebuilds dist/code.js
  */
 
 import { execSync } from 'child_process';
@@ -27,14 +27,14 @@ const isWatch = process.argv.includes('--watch');
 
 mkdirSync('dist', { recursive: true });
 
-// ── Fonction de fusion ──────────────────────────────────────────────────────
+// ── Merge function ──────────────────────────────────────────────────────
 function merge(widgetCode) {
   const pluginCode = readFileSync(resolve(pluginDir, 'dist/code.js'), 'utf8');
   const merged = `\
-// ── Widget (widget.register — no-op en mode plugin) ────────────────────────
+// ── Widget (widget.register — no-op in plugin mode) ────────────────────────
 ${widgetCode}
 
-// ── Plugin (showUI + handlers — uniquement en mode plugin) ──────────────────
+// ── Plugin (showUI + handlers — only in plugin mode) ──────────────────
 if (typeof figma.openPlugin === 'function') {
 ${pluginCode}
 }
@@ -43,7 +43,7 @@ ${pluginCode}
   copyFileSync(resolve(pluginDir, 'ui.html'), 'dist/ui.html');
 }
 
-// ── Build unique ────────────────────────────────────────────────────────────
+// ── Single build ────────────────────────────────────────────────────────────
 if (!isWatch) {
   console.log('[Guardian Widget] Building plugin (esbuild)…');
   execSync('node build.mjs', { stdio: 'inherit', cwd: pluginDir });
@@ -64,20 +64,20 @@ if (!isWatch) {
   process.exit(0);
 }
 
-// ── Mode watch ──────────────────────────────────────────────────────────────
+// ── Watch mode ──────────────────────────────────────────────────────────────
 console.log('[Guardian Widget] Watch mode');
 console.log('[Guardian Widget] Tip: run `pnpm dev` in figma-plugin/ in parallel to watch plugin changes.');
 
-// 1. Compiler le plugin une fois au démarrage (s'assure que dist/code.js existe et est à jour).
-//    Le widget ne spawne PAS tsc --watch : si figma-plugin/pnpm dev tourne en parallèle,
-//    c'est lui qui écrit dist/code.js → pas de conflit entre deux tsc sur le même fichier.
+// 1. Compile the plugin once at startup (ensures dist/code.js exists and is up to date).
+//    The widget does NOT spawn tsc --watch: if figma-plugin/pnpm dev runs in parallel,
+//    it writes dist/code.js → no conflict between two tsc on the same file.
 console.log('[Guardian Widget] Initial plugin build (esbuild)…');
 execSync('node build.mjs', { stdio: 'inherit', cwd: pluginDir });
 
-// Cache du dernier widget compilé (pour re-fusionner quand le plugin change)
+// Cache of the last compiled widget (to re-merge when the plugin changes)
 let lastWidgetCode = null;
 
-// 2. esbuild watch : reconstruit le widget à chaque changement dans widget-src/
+// 2. esbuild watch: rebuilds the widget on every change in widget-src/
 const ctx = await esbuild.context({
   entryPoints: ['widget-src/code.tsx'],
   bundle: true,
@@ -100,14 +100,14 @@ const ctx = await esbuild.context({
 });
 await ctx.watch();
 
-// 3. fs.watch sur figma-plugin/dist/ : réagit si figma-plugin/pnpm dev tourne en parallèle
+// 3. fs.watch on figma-plugin/dist/: reacts if figma-plugin/pnpm dev runs in parallel
 mkdirSync(resolve(pluginDir, 'dist'), { recursive: true });
 watch(resolve(pluginDir, 'dist'), { recursive: false }, (_, filename) => {
   if (filename !== 'code.js' || !lastWidgetCode) return;
   try {
     merge(lastWidgetCode);
     console.log(`[Guardian Widget] ${new Date().toLocaleTimeString()} plugin rebuilt → dist/code.js`);
-  } catch { /* code.js en cours d'écriture par tsc, sera re-déclenché */ }
+  } catch { /* code.js being written by tsc, will be re-triggered */ }
 });
 
 process.on('SIGINT', () => {

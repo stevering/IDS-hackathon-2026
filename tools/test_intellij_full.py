@@ -7,7 +7,7 @@ MCP_BASE_URL = "http://127.0.0.1:64342"
 SSE_URL = f"{MCP_BASE_URL}/sse"
 
 def listen_sse(session, url):
-    print(f"[THREAD] Écoute du flux SSE...")
+    print(f"[THREAD] Listening to SSE stream...")
     try:
         response = session.get(url, stream=True, timeout=10)
         for line in response.iter_lines():
@@ -16,7 +16,7 @@ def listen_sse(session, url):
                 if decoded.startswith('data:'):
                     data = decoded[5:].strip()
                     try:
-                        # Tenter de parser le JSON si c'est une réponse RPC
+                        # Try to parse the JSON if it's an RPC response
                         parsed = json.loads(data)
                         print(f"\n[SSE RECEIVE] {json.dumps(parsed, indent=2)}")
                     except:
@@ -27,8 +27,8 @@ def listen_sse(session, url):
 def test_full_mcp():
     session = requests.Session()
     
-    # 1. Connexion initiale pour avoir le sessionId
-    print("[1] Connexion SSE...")
+    # 1. Initial connection to get the sessionId
+    print("[1] SSE connection...")
     resp = session.get(SSE_URL, stream=True)
     post_url = None
     for line in resp.iter_lines():
@@ -40,12 +40,12 @@ def test_full_mcp():
                 break
     
     if not post_url:
-        print("Échec récupération post_url")
+        print("Failed to retrieve post_url")
         return
 
     print(f"Post URL: {post_url}")
     
-    # Lancer l'écouteur en background
+    # Launch the listener in background
     t = threading.Thread(target=listen_sse, args=(session, SSE_URL), daemon=True)
     t.start()
     
@@ -70,9 +70,9 @@ def test_full_mcp():
         "jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}
     })
     
-    # Attendre les réponses
+    # Wait for responses
     time.sleep(3)
-    print("\n--- Fin du test ---")
+    print("\n--- End of test ---")
 
 if __name__ == "__main__":
     test_full_mcp()

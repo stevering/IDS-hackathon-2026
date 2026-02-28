@@ -4,9 +4,9 @@ import { getBaseUrl } from "./get-base-url";
 
 export { getBaseUrl } from "./get-base-url";
 
-// Pour la découverte OAuth (sans /mcp)
+// For OAuth discovery (without /mcp)
 const MCP_FIGMA_OAUTH_URL = "https://mcp.figma.com";
-// Pour la connexion MCP (avec /mcp)
+// For MCP connection (with /mcp)
 const MCP_FIGMA_SERVER_URL = "https://mcp.figma.com/mcp";
 
 const COOKIE_TOKENS = "figma_mcp_tokens";

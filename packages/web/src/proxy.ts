@@ -3,8 +3,8 @@ import type { NextRequest } from "next/server";
 
 const PROXY_PREFIX = "/proxy-local/code";
 
-// Routes d'auth Figma MCP qui ne doivent pas être protégées par X-Auth-Token
-// car elles sont accédées via redirection navigateur
+// Figma MCP auth routes that should not be protected by X-Auth-Token
+// because they are accessed via browser redirect
 const PUBLIC_AUTH_ROUTES = [
   "/api/auth/figma-mcp",
   "/api/auth/figma-mcp/callback",
@@ -32,19 +32,19 @@ function getMcpCodeUrl(request: NextRequest): string | undefined {
 
   const url = headerUrl || envUrl;
   if (!url) return undefined;
-  // Retourne l'URL complète (avec le path) sans le trailing slash
+  // Return the full URL (with path) without the trailing slash
   return url.replace(/\/$/, '');
 }
 
-// Pages accessibles sans être connecté
+// Pages accessible without being logged in
 const PUBLIC_PAGES = ["/login", "/signup"];
 
 export async function proxy(request: NextRequest) {
   const { pathname, search } = request.nextUrl;
   const MCP_CODE_URL = getMcpCodeUrl(request);
 
-  // ── Auth guard : pages protégées ──────────────────────────────────────────
-  // S'applique en dev ET en prod, avant toute autre logique.
+  // ── Auth guard: protected pages ──────────────────────────────────────────
+  // Applies in dev AND prod, before any other logic.
   const isApiOrStatic =
     pathname.startsWith("/api/") ||
     pathname.startsWith("/_next/") ||
@@ -57,8 +57,8 @@ export async function proxy(request: NextRequest) {
     }
   }
 
-  // Désactiver le reste du middleware en production (proxy dev-only)
-  // Et ne pas appliquer le check X-Auth-Token aux pages (uniquement aux routes /api/)
+  // Disable the rest of the middleware in production (proxy dev-only)
+  // And don't apply the X-Auth-Token check to pages (only to /api/ routes)
   if (process.env.NODE_ENV === "production" || !pathname.startsWith("/api/")) {
     return NextResponse.next();
   }
@@ -73,7 +73,7 @@ export async function proxy(request: NextRequest) {
     return NextResponse.next();
   }
 
-  // Vérification du secret NEXT_PUBLIC_MCP_TUNNEL_SECRET pour toutes les requêtes
+  // Verify the NEXT_PUBLIC_MCP_TUNNEL_SECRET for all requests
   const expectedSecret = process.env.NEXT_PUBLIC_MCP_TUNNEL_SECRET;
   const providedSecret = request.headers.get("X-Auth-Token");
 
@@ -87,14 +87,14 @@ export async function proxy(request: NextRequest) {
   }
 
   if (providedSecret !== expectedSecret) {
-    console.error("[Middleware] X-Auth-Token invalid or missing", providedSecret, 'expectedSecret', expectedSecret);
+    console.error("[Middleware] X-Auth-Token invalid or missing");
     return NextResponse.json(
       { error: "Unauthorized" },
       { status: 401 }
     );
   }
 
-  // Proxy pour le MCP Code
+  // Proxy for MCP Code
   if (pathname.startsWith(`${PROXY_PREFIX}/`)) {
     if (!MCP_CODE_URL) {
       console.error("[Proxy Middleware] MCP_CODE_URL not configured");
@@ -106,14 +106,14 @@ export async function proxy(request: NextRequest) {
 
     const targetPath = pathname.replace(`${PROXY_PREFIX}/`, "");
 
-    // Parser l'URL de base pour extraire origin et pathname
+    // Parse the base URL to extract origin and pathname
     const baseUrlObj = new URL(MCP_CODE_URL);
     const baseOrigin = baseUrlObj.origin;
-    const basePathname = baseUrlObj.pathname.replace(/\/$/, ''); // Enlever trailing slash
+    const basePathname = baseUrlObj.pathname.replace(/\/$/, ''); // Remove trailing slash
 
-    // Construire l'URL cible :
-    // - Si l'URL configurée se termine par /mcp ou /sse, on ajoute le targetPath
-    // - Sinon (URL custom comme /mcp3), on forward vers l'URL de base sans ajouter de path
+    // Build the target URL:
+    // - If the configured URL ends with /mcp or /sse, append the targetPath
+    // - Otherwise (custom URL like /mcp3), forward to the base URL without appending a path
     const isStandardMcpPath = basePathname.endsWith('/mcp') || basePathname.endsWith('/sse');
     const baseLastSegment = basePathname.split('/').pop();
     const shouldAppendTargetPath = isStandardMcpPath && targetPath && targetPath !== baseLastSegment;
@@ -125,7 +125,7 @@ export async function proxy(request: NextRequest) {
     console.log(`[Proxy Middleware] ${request.method} ${targetPath || '(root)'} -> ${targetUrl}`);
 
     try {
-      // Pour SSE (GET sur sse)
+      // For SSE (GET on sse)
       if (targetPath === "sse" && request.method === "GET") {
         const encoder = new TextEncoder();
         const decoder = new TextDecoder();
@@ -151,9 +151,9 @@ export async function proxy(request: NextRequest) {
                 const { done, value } = await reader.read();
                 if (done) break;
                 
-                // Décoder et modifier le contenu pour remapper les URLs
+                // Decode and modify content to remap URLs
                 const text = decoder.decode(value, { stream: true });
-                // Remplacer toute URL relative "/xxx" par "/proxy-local/code/xxx"
+                // Replace any relative URL "/xxx" with "/proxy-local/code/xxx"
                 const modifiedText = text.replace(
                   /data:\s(\/[^\s\n\r]*)/g,
                   `data: ${PROXY_PREFIX}$1`
@@ -179,7 +179,7 @@ export async function proxy(request: NextRequest) {
         });
       }
 
-      // Pour les autres requêtes (messages, etc.)
+      // For other requests (messages, etc.)
       const response = await fetch(targetUrl, {
         method: request.method,
         headers: {
@@ -213,7 +213,7 @@ export async function proxy(request: NextRequest) {
 
 export const config = {
   matcher: [
-    // Pages applicatives (auth guard)
+    // Application pages (auth guard)
     "/((?!_next/static|_next/image|favicon.ico).*)",
   ]
 };

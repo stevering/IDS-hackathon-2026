@@ -1,16 +1,16 @@
-# Problème MCP : roots/list timeout
+# MCP Issue: roots/list timeout
 
-## Architecture actuelle
+## Current Architecture
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │                              WEBAPP (Next.js)                               │
 │  ┌─────────────────────────────────────────────────────────────────────┐   │
 │  │  @ai-sdk/mcp (createMCPClient)                                      │   │
-│  │  - Timeout connexion: 30s (augmenté)                                │   │
-│  │  - Timeout outils: 60s (augmenté)                                   │   │
+│  │  - Connection timeout: 30s (increased)                              │   │
+│  │  - Tools timeout: 60s (increased)                                   │   │
 │  │                                                                     │   │
-│  │  ❌ NE RÉPOND PAS à `roots/list` (pas implémenté côté client)       │   │
+│  │  ❌ DOES NOT RESPOND to `roots/list` (not implemented client-side)  │   │
 │  └─────────────────────────────────────────────────────────────────────┘   │
 │                              │                                              │
 │                              │ HTTP/StreamableHTTP                          │
@@ -24,17 +24,17 @@
                                │
                                ▼
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│                           SERVEUR MCP (local)                               │
+│                           MCP SERVER (local)                                │
 │  ┌─────────────────────────────────────────────────────────────────────┐   │
 │  │  supergateway --outputTransport streamableHttp --port 3846          │   │
 │  │                                                                     │   │
 │  │  ┌─────────────────────────────────────────────────────────────┐   │   │
 │  │  │  mcp-server-filesystem $(pwd)                               │   │   │
 │  │  │                                                             │   │   │
-│  │  │  📤 ENVOIE: {"method":"roots/list","id":0}                    │   │   │
-│  │  │       (attend une réponse du client)                        │   │   │
+│  │  │  📤 SENDS: {"method":"roots/list","id":0}                    │   │   │
+│  │  │       (waits for a client response)                         │   │   │
 │  │  │                                                             │   │   │
-│  │  │  ⏱️ Timeout après X secondes → Erreur -32001                │   │   │
+│  │  │  ⏱️ Timeout after X seconds → Error -32001                  │   │   │
 │  │  │                                                             │   │   │
 │  │  │  "Failed to request initial roots from client"              │   │   │
 │  │  └─────────────────────────────────────────────────────────────┘   │   │
@@ -43,20 +43,20 @@
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
 
-## Le problème en détail
+## The Problem in Detail
 
-### 1. Qu'est-ce que `roots/list` ?
+### 1. What is `roots/list`?
 
-Dans le protocole MCP (Model Context Protocol), `roots/list` est une requête **serveur → client** :
-- Le **serveur MCP** demande au **client** la liste des "roots" (points d'entrée du filesystem)
-- C'est une fonctionnalité optionnelle pour que le serveur connaisse les répertoires autorisés
+In the MCP (Model Context Protocol), `roots/list` is a **server → client** request:
+- The **MCP server** asks the **client** for the list of "roots" (filesystem entry points)
+- It's an optional feature for the server to know which directories are allowed
 
-### 2. Pourquoi ça timeout ?
+### 2. Why does it timeout?
 
 ```
-Séquence d'initialisation MCP :
+MCP initialization sequence:
 ┌─────────┐                              ┌─────────┐
-│ Client  │                              │ Serveur │
+│ Client  │                              │ Server  │
 │ @ai-sdk │                              │filesystem│
 └────┬────┘                              └────┬────┘
      │                                         │
@@ -69,96 +69,96 @@ Séquence d'initialisation MCP :
      │  3. notifications/initialized           │
      │ ───────────────────────────────────────>│
      │                                         │
-     │  4. roots/list  (requête serveur)       │
+     │  4. roots/list  (server request)        │
      │ <───────────────────────────────────────│
-     │     ⬅️ LE CLIENT NE RÉPOND PAS !        │
+     │     ⬅️ THE CLIENT DOES NOT RESPOND!     │
      │                                         │
-     │     [X secondes...]                     │
+     │     [X seconds...]                      │
      │                                         │
      │  5. Request timed out (-32001)          │
-     │ ──(erreur interne serveur)─────────────>│
+     │ ──(internal server error)──────────────>│
 ```
 
-### 3. Pourquoi le client ne répond pas ?
+### 3. Why doesn't the client respond?
 
-Le SDK `@ai-sdk/mcp` côté client :
-- Est conçu pour appeler des **outils** du serveur
-- N'implémente pas la gestion des **requêtes serveur → client** comme `roots/list`
-- C'est une limitation connue du SDK
+The `@ai-sdk/mcp` SDK on the client side:
+- Is designed to call server **tools**
+- Does not implement handling of **server → client** requests like `roots/list`
+- This is a known SDK limitation
 
-## Conséquences
+## Consequences
 
 ```
 ┌────────────────────────────────────────────────────────────┐
-│                    IMPACT SUR LE SYSTÈME                    │
+│                    SYSTEM IMPACT                            │
 ├────────────────────────────────────────────────────────────┤
 │                                                            │
-│  1. Timeout serveur MCP (non bloquant mais bruyant)        │
-│     → Logs d'erreur "Failed to request initial roots"      │
+│  1. MCP server timeout (non-blocking but noisy)            │
+│     → Error logs "Failed to request initial roots"         │
 │                                                            │
-│  2. Latence d'initialisation augmentée                     │
-│     → Le serveur attend le timeout avant de continuer      │
+│  2. Increased initialization latency                       │
+│     → The server waits for timeout before continuing       │
 │                                                            │
-│  3. Risque de "context canceled" côté Next.js              │
-│     → Si le timeout > timeout Cloudflare/Next.js           │
-│     → La requête HTTP est coupée brutalement               │
+│  3. Risk of "context canceled" on the Next.js side         │
+│     → If timeout > Cloudflare/Next.js timeout              │
+│     → The HTTP request is abruptly cut off                 │
 │                                                            │
 └────────────────────────────────────────────────────────────┘
 ```
 
-## Solutions possibles
+## Possible Solutions
 
-### Solution 1 : Augmenter les timeouts (✅ FAIT)
+### Solution 1: Increase timeouts (✅ DONE)
 ```typescript
 // src/app/api/chat/route.ts
-const TOOL_TIMEOUT_MS = 60_000;        // avant: 30_000
-const CONNECTION_TIMEOUT_MS = 30_000;  // avant: 10_000
+const TOOL_TIMEOUT_MS = 60_000;        // before: 30_000
+const CONNECTION_TIMEOUT_MS = 30_000;  // before: 10_000
 ```
-**Effet** : Donne plus de temps, mais ne résout pas le problème fondamental.
+**Effect**: Gives more time, but doesn't fix the underlying problem.
 
 ---
 
-### Solution 2 : Passer en mode SSE (recommandé si problème persiste)
+### Solution 2: Switch to SSE mode (recommended if issue persists)
 ```bash
-# Au lieu de streamableHttp
+# Instead of streamableHttp
 supergateway --stdio "mcp-server-filesystem $(pwd)" --outputTransport sse --port 3846
 ```
-**Pourquoi** : Le mode SSE de supergateway ne semble pas envoyer `roots/list`.
+**Why**: supergateway's SSE mode doesn't seem to send `roots/list`.
 
 ---
 
-### Solution 3 : Wrapper qui répond à roots/list
+### Solution 3: Wrapper that responds to roots/list
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│  WRAPPER MCP (stdin/stdout)                                 │
+│  MCP WRAPPER (stdin/stdout)                                  │
 │                                                             │
 │  ┌─────────────────┐      ┌─────────────────────────────┐  │
 │  │ supergateway    │◄────►│ mcp-server-filesystem       │  │
-│  │ streamableHttp  │      │ (vrai serveur)              │  │
+│  │ streamableHttp  │      │ (actual server)             │  │
 │  └─────────────────┘      └─────────────────────────────┘  │
 │         ▲                                                   │
 │         │                                                   │
 │  ┌─────────────────┐                                       │
-│  │ WRAPPER         │  Intercepte `roots/list`              │
-│  │ - Lit stdin     │  → Répond immédiatement:              │
-│  │ - Parse JSON-RPC│    {"roots": []}                      │
-│  │ - Forward reste │                                       │
+│  │ WRAPPER         │  Intercepts `roots/list`              │
+│  │ - Reads stdin   │  → Responds immediately:              │
+│  │ - Parses JSON-RPC│   {"roots": []}                      │
+│  │ - Forwards rest │                                       │
 │  └─────────────────┘                                       │
 └─────────────────────────────────────────────────────────────┘
 ```
 
 ---
 
-### Solution 4 : Modifier supergateway ou le serveur filesystem
-- Fork supergateway pour ajouter une option `--skip-roots-list`
-- Ou modifier `@modelcontextprotocol/server-filesystem` pour rendre `roots/list` optionnel
+### Solution 4: Modify supergateway or the filesystem server
+- Fork supergateway to add a `--skip-roots-list` option
+- Or modify `@modelcontextprotocol/server-filesystem` to make `roots/list` optional
 
-**Inconvénient** : Nécessite de maintenir un fork.
+**Downside**: Requires maintaining a fork.
 
 ---
 
-## Recommandation
+## Recommendation
 
-1. **Tester d'abord** avec les timeouts augmentés (Solution 1 ✅)
-2. **Si problème persiste** → Passer en mode SSE (Solution 2)
-3. **Si besoin de streamableHttp** → Créer le wrapper (Solution 3)
+1. **Test first** with increased timeouts (Solution 1 ✅)
+2. **If issue persists** → Switch to SSE mode (Solution 2)
+3. **If streamableHttp is needed** → Create the wrapper (Solution 3)

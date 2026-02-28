@@ -18,10 +18,11 @@ export default function LoginPage() {
     const { error } = await authClient.signIn.email({ email, password });
 
     if (error) {
-      setError(error.message ?? "Connexion échouée");
+      // Generic message to prevent account enumeration
+      setError("Incorrect email or password");
       setLoading(false);
     } else {
-      // Hard navigation — fonctionne aussi dans les iframes sandboxées (Figma plugin)
+      // Hard navigation — also works in sandboxed iframes (Figma plugin)
       window.location.href = "/";
     }
   }
@@ -32,7 +33,7 @@ export default function LoginPage() {
         <div className="mb-8 text-center">
           <div className="text-3xl mb-2">🛡</div>
           <h1 className="text-xl font-semibold">DS AI Guardian</h1>
-          <p className="text-sm text-white/50 mt-1">Connectez-vous à votre compte</p>
+          <p className="text-sm text-white/50 mt-1">Sign in to your account</p>
         </div>
 
         <form onSubmit={handleSubmit} className="flex flex-col gap-3">
@@ -46,7 +47,7 @@ export default function LoginPage() {
           />
           <input
             type="password"
-            placeholder="Mot de passe"
+            placeholder="Password"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
             required
@@ -62,14 +63,14 @@ export default function LoginPage() {
             disabled={loading}
             className="w-full py-2.5 rounded-lg bg-white text-black text-sm font-medium disabled:opacity-40 transition-opacity mt-1"
           >
-            {loading ? "Connexion…" : "Se connecter"}
+            {loading ? "Signing in…" : "Sign in"}
           </button>
         </form>
 
         <p className="text-center text-sm text-white/40 mt-6">
-          Pas encore de compte ?{" "}
+          Don&apos;t have an account?{" "}
           <Link href="/signup" className="text-white/70 hover:text-white transition-colors">
-            S&apos;inscrire
+            Sign up
           </Link>
         </p>
       </div>

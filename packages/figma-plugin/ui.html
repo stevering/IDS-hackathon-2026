@@ -635,7 +635,7 @@
     // Saved URL data from clientStorage: { url, fileName, fileKey }
     let savedUrlData = null;
 
-    console.log('[FigPal UI] Script démarré. inFigmaPlugin =', inFigmaPlugin);
+    console.log('[FigPal UI] Script started. inFigmaPlugin =', inFigmaPlugin);
 
     const mainHeaderEl = document.getElementById('main-header');
     const mainHeaderTooltipEl = document.getElementById('main-header-tooltip');
@@ -686,31 +686,31 @@
         }, '*');
     }
 
-    // 🛡️ Bouclier → toggle mini ↔ expanded, sans toucher la conversation
+    // 🛡️ Shield → toggle mini ↔ expanded, without touching the conversation
     document.getElementById('main-header-figure').addEventListener('click', (e) => {
         e.stopPropagation();
         setMinimized(!document.body.classList.contains('minimized'));
     });
 
-    // Texte du message → expand seulement (pas d'inject, pas de minimize)
+    // Message text → expand only (no inject, no minimize)
     mainHeaderTooltipText.addEventListener('click', (e) => {
         e.stopPropagation();
         if (document.body.classList.contains('minimized')) setMinimized(false);
     });
 
     // Main header: toggle mini ↔ expanded
-    // Si un message est visible → expand seulement (jamais minimize)
+    // If a message is visible → expand only (never minimize)
     mainHeaderEl.addEventListener('click', () => {
         const isMini = document.body.classList.contains('minimized');
         if (mainHeaderEl.classList.contains('has-message')) {
             if (isMini) setMinimized(false);
-            // expanded + has-message → on reste agrandi
+            // expanded + has-message → stay expanded
         } else {
             setMinimized(!isMini);
         }
     });
 
-    // Hover sur le header → pause le timer du message
+    // Hover on header → pause the message timer
     mainHeaderEl.addEventListener('mouseenter', () => {
         if (mainHeaderEl.classList.contains('has-message')) clearTimeout(tooltipTimer);
     });
@@ -720,7 +720,7 @@
         }
     });
 
-    // ⭐ Étoile → conversation vierge + expand si besoin + inject message + auto-analyse
+    // ⭐ Star → blank conversation + expand if needed + inject message + auto-analyze
     mainHeaderAnalyzeBtn.addEventListener('click', (e) => {
         e.stopPropagation();
         if (document.body.classList.contains('minimized')) setMinimized(false);
@@ -764,7 +764,7 @@
             fileName: fileName || 'Figma File',
             fileUrl: `https://www.figma.com/design/${fileKey}/`,
         };
-        console.log('[FigPal UI] URL Figma appliquée :', cachedFigmaContext);
+        console.log('[FigPal UI] Figma URL applied:', cachedFigmaContext);
         sendToWebview(cachedFigmaContext);
         try { window.top.postMessage({ source: 'figpal-plugin', ...cachedFigmaContext }, '*'); } catch (e) {}
         urlBtn.classList.add('has-url');
@@ -917,7 +917,7 @@
 
     // Request Figma context on startup (plugin mode — gets fileName from figma.root.name)
     if (inFigmaPlugin) {
-        console.log('[FigPal UI] Mode plugin → requestAndSendFigmaContext dans 500ms');
+        console.log('[FigPal UI] Plugin mode → requestAndSendFigmaContext in 500ms');
         setTimeout(requestAndSendFigmaContext, 500);
     }
 
@@ -925,7 +925,7 @@
         isConnected = connected;
         statusEl.className = connected ? 'status-indicator connected' : 'status-indicator';
         statusEl.querySelector('span').textContent = connected ? 'Connected' : 'Connecting...';
-        // Notifie le widget Guardian du statut backend pour mettre à jour son badge
+        // Notify the Guardian widget of the backend status to update its badge
         parent.postMessage({ pluginMessage: {
             type: 'BACKEND_STATUS',
             status: connected ? 'connected' : 'error',
@@ -946,7 +946,7 @@
     }
 
     webviewIframe.onload = function () {
-        console.log('[FigPal UI] iframe webapp chargée → requestAndSendFigmaContext dans 800ms');
+        console.log('[FigPal UI] iframe webapp loaded → requestAndSendFigmaContext in 800ms');
         setTimeout(passAuthTokensToIframe, 500);
         setTimeout(requestAndSendFigmaContext, 800);
     };
@@ -974,7 +974,7 @@
             return;
         }
 
-        // Première communication depuis la webapp (ou l'extension) → connected
+        // First communication from the webapp (or extension) → connected
         if (!isConnected && data && (data.source === 'figpal-webapp' || data.source === 'figpal-extension')) {
             updateConnectionStatus(true);
         }
@@ -1003,7 +1003,7 @@
                 if (!savedUrlData) savedUrlData = { url: '', fileName: '', fileKey: null };
                 savedUrlData.url = msg.value;
                 savedUrlData.fileKey = extractFileKey(msg.value);
-                console.log('[FigPal UI] URL restaurée :', msg.value);
+                console.log('[FigPal UI] URL restored:', msg.value);
                 // Check coherence once we have both values
                 applySavedUrlIfCoherent();
             }
@@ -1013,7 +1013,7 @@
         if (msg.type === 'storage-value' && msg.key === FIGMA_FNAME_KEY) {
             if (!savedUrlData) savedUrlData = { url: '', fileName: '', fileKey: null };
             savedUrlData.fileName = msg.value || '';
-            console.log('[FigPal UI] fileName restauré :', msg.value);
+            console.log('[FigPal UI] fileName restored:', msg.value);
             applySavedUrlIfCoherent();
             return;
         }
@@ -1080,13 +1080,13 @@
                 mainAvatar.style.backgroundImage = '';
             }
 
-            // Tooltip: à chaque nouvelle sélection (mini ou agrandi)
+            // Tooltip: on each new selection (mini or expanded)
             if (msg.type === 'selection-changed'
                 && Array.isArray(nodes) && nodes.length > 0) {
                 showMiniTooltip(nodes[0]?.name || '');
             }
 
-            // Cache la sélection pour le panneau config
+            // Cache the selection for the config panel
             if (msg.type === 'selection-changed') {
                 cachedSelection = msg.data || null;
                 if (configPanel.classList.contains('open')) updateSelectionDisplay();
@@ -1147,7 +1147,7 @@
             }
 
             ws.addEventListener('open', function () {
-                console.log('[Guardian Bridge] Connecté à Electron (:' + BRIDGE_PORT + ')');
+                console.log('[Guardian Bridge] Connected to Electron (:' + BRIDGE_PORT + ')');
                 ws.send(JSON.stringify({
                     type: 'REGISTER',
                     clientType: guardianClientType,
@@ -1166,7 +1166,7 @@
                     const msg = JSON.parse(event.data);
                     if (msg.type === 'REGISTERED') {
                         clientId = msg.clientId;
-                        console.log('[Guardian Bridge] Enregistré comme', clientId);
+                        console.log('[Guardian Bridge] Registered as', clientId);
                         return;
                     }
                     handleElectronMessage(msg);
@@ -1175,7 +1175,7 @@
 
             ws.addEventListener('close', function () {
                 clientId = null;
-                console.log('[Guardian Bridge] Déconnecté — retry dans ' + RECONNECT_DELAY + 'ms');
+                console.log('[Guardian Bridge] Disconnected — retry in ' + RECONNECT_DELAY + 'ms');
                 // Persist disconnection so the widget canvas can reflect it
                 parent.postMessage({ pluginMessage: {
                     type: 'storage-set',

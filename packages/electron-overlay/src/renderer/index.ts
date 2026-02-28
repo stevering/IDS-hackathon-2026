@@ -108,7 +108,7 @@ bubbleContent.appendChild(messageText);
 
 const messageAction = document.createElement("button");
 messageAction.className = "message-action";
-messageAction.title = "Analyser avec Guardian";
+messageAction.title = "Analyze with Guardian";
 messageAction.innerHTML = `
   <svg viewBox="0 0 24 24" fill="currentColor" xmlns="http://www.w3.org/2000/svg">
     <path d="M12 2.5c0 0 .9 4 2.8 5.5C16.7 9.5 21 9.5 21 9.5s-4.3.1-6.2 1.6C12.9 12.5 12 16.5 12 16.5s-.9-4-2.8-5.5C7.3 9.6 3 9.5 3 9.5s4.3 0 6.2-1.5C11.1 6.5 12 2.5 12 2.5z"/>
@@ -166,13 +166,13 @@ figmaDot.addEventListener("mouseleave", () => statusTooltip.classList.remove("vi
 
 cloudDot.addEventListener("mouseenter", () => {
   if (cloudDot.classList.contains("connected")) {
-    statusTooltip.textContent = "Guardian Cloud — connecté";
+    statusTooltip.textContent = "Guardian Cloud — connected";
   } else if (cloudDot.classList.contains("failed")) {
-    statusTooltip.textContent = "Guardian Cloud — hors ligne";
+    statusTooltip.textContent = "Guardian Cloud — offline";
   } else if (cloudDot.classList.contains("reconnecting")) {
-    statusTooltip.textContent = "Guardian Cloud — vérification…";
+    statusTooltip.textContent = "Guardian Cloud — checking…";
   } else {
-    statusTooltip.textContent = "Guardian Cloud — en attente";
+    statusTooltip.textContent = "Guardian Cloud — waiting";
   }
   statusTooltip.classList.add("visible");
 });

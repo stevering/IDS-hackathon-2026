@@ -9,12 +9,12 @@ import path from 'path';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const webRoot = path.resolve(__dirname, '..');  // apps/web/
 
-// Génère le secret
+// Generate the secret
 const MCP_TUNNEL_SECRET = randomBytes(32).toString('base64');
 process.env.MCP_TUNNEL_SECRET = MCP_TUNNEL_SECRET;
 process.env.NEXT_PUBLIC_MCP_TUNNEL_SECRET = MCP_TUNNEL_SECRET;
 
-// Lance le tunnel cloudflared
+// Launch the cloudflared tunnel
 const tunnel = spawn('npx', [
   'cloudflared',
   'tunnel',
@@ -24,7 +24,7 @@ const tunnel = spawn('npx', [
   stdio: ['ignore', 'pipe', 'pipe']
 });
 
-// Filtre la sortie du tunnel
+// Filter the tunnel output
 tunnel.stdout.on('data', (data) => {
   const lines = data.toString().split('\n');
   for (const line of lines) {
@@ -46,7 +46,7 @@ tunnel.stderr.on('data', (data) => {
       line.includes('trycloudflare.com') ||
       /ERR|error|Error|FATAL/i.test(line)
     ) {
-      // Extraction de l'URL trycloudflare.com
+      // Extract the trycloudflare.com URL
       const urlMatch = line.match(/https:\/\/[a-z0-9\-]+\.trycloudflare\.com/);
       if (urlMatch) {
         console.log(line);
@@ -78,7 +78,7 @@ tunnel.on('error', (err) => {
   process.exit(1);
 });
 
-// Lance Next.js
+// Launch Next.js
 const nextDev = spawn('npx', ['next', 'dev'], {
   cwd: webRoot,
   stdio: 'inherit',

@@ -1,6 +1,6 @@
 /**
  * Build Guardian Plugin (standalone)
- * Utilise esbuild pour bundler code.ts + bridge.ts → dist/code.js
+ * Uses esbuild to bundle code.ts + bridge.ts → dist/code.js
  */
 
 import * as esbuild from 'esbuild';

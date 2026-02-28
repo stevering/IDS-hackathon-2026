@@ -13,21 +13,21 @@ figma.on('close', () => {
   figma.root.setSharedPluginData('guardian', 'pluginStatus', JSON.stringify({ connected: false, ts: Date.now() }));
 });
 
-// Vérifier si le plugin a été déclenché depuis le widget Guardian
+// Check if the plugin was triggered from the Guardian widget
 figma.clientStorage.getAsync('guardianWidgetCtx').then((raw) => {
   if (raw) {
     try {
       const ctx = JSON.parse(raw as string);
       figma.ui.postMessage({ type: 'FROM_WIDGET', context: ctx });
-    } catch (_) { /* ctx corrompu, on ignore */ }
+    } catch (_) { /* corrupted ctx, ignore */ }
     figma.clientStorage.deleteAsync('guardianWidgetCtx');
   }
 });
 
-console.log("Commande :", figma.command);
+console.log("Command:", figma.command);
 
 if (figma.command === 'guardian-analyze') {
-  figma.notify("Guardian lancé via guardian-analyze !", { timeout: 3000 });
+  figma.notify("Guardian launched via guardian-analyze!", { timeout: 3000 });
 }
 
 // ─── GLOBALS ─────────────────────────────────────────────────────────
@@ -295,8 +295,8 @@ async function sendVariablesData(id?: string): Promise<void> {
 figma.ui.onmessage = async (msg: IncomingMessage): Promise<void> => {
   const { type } = msg;
 
-  // Le plugin écrit son statut backend dans clientStorage pour que le widget
-  // puisse mettre à jour son badge au prochain clic
+  // The plugin writes its backend status to clientStorage so the widget
+  // can update its badge on the next click
   if ((type as string) === 'BACKEND_STATUS') {
     const { status, text } = msg as unknown as { status: string; text: string };
     figma.clientStorage.setAsync('guardianBackendStatus', JSON.stringify({ status, text }));

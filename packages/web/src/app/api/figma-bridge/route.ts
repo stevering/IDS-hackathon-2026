@@ -1,14 +1,14 @@
 /**
  * /api/figma-bridge
  *
- * Pont de communication entre le widget Figma et le plugin Figma.
- * Les deux écrivent/lisent ici via fetch — sans passer par figma.clientStorage.
+ * Communication bridge between the Figma widget and the Figma plugin.
+ * Both write/read here via fetch — without going through figma.clientStorage.
  *
- * Clé recommandée : fileKey (ID du fichier Figma) pour isoler par document.
+ * Recommended key: fileKey (Figma file ID) to isolate per document.
  *
- * GET  /api/figma-bridge?key=<key>          → lit l'état courant
- * POST /api/figma-bridge  { key, data }     → écrit un état
- * DELETE /api/figma-bridge?key=<key>        → supprime l'état
+ * GET  /api/figma-bridge?key=<key>          → reads the current state
+ * POST /api/figma-bridge  { key, data }     → writes a state
+ * DELETE /api/figma-bridge?key=<key>        → deletes the state
  */
 
 import { NextResponse } from 'next/server';
@@ -18,14 +18,14 @@ type BridgeEntry = {
   updatedAt: number;
 };
 
-// globalThis pour survivre aux rechargements de modules Turbopack en dev
+// globalThis to survive Turbopack module reloads in dev
 const g = globalThis as typeof globalThis & {
   __figmaBridgeStore?: Record<string, BridgeEntry>;
 };
 if (!g.__figmaBridgeStore) g.__figmaBridgeStore = {};
 const store = g.__figmaBridgeStore;
 
-const TTL_MS = 5 * 60 * 1000; // 5 min — purge les entrées stales
+const TTL_MS = 5 * 60 * 1000; // 5 min — purge stale entries
 
 function purge() {
   const now = Date.now();

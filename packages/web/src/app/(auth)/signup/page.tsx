@@ -19,7 +19,12 @@ export default function SignupPage() {
     const { error } = await authClient.signUp.email({ email, password, name });
 
     if (error) {
-      setError(error.message ?? "Inscription échouée");
+      const msg = error.message?.toLowerCase() ?? "";
+      // Don't expose whether the account already exists (enumeration) → neutral message
+      const userMsg = msg.includes("password")
+        ? "Password must be at least 8 characters"
+        : "Unable to create account, please try again";
+      setError(userMsg);
       setLoading(false);
     } else {
       window.location.href = "/";
@@ -32,13 +37,13 @@ export default function SignupPage() {
         <div className="mb-8 text-center">
           <div className="text-3xl mb-2">🛡</div>
           <h1 className="text-xl font-semibold">DS AI Guardian</h1>
-          <p className="text-sm text-white/50 mt-1">Créez votre compte</p>
+          <p className="text-sm text-white/50 mt-1">Create your account</p>
         </div>
 
         <form onSubmit={handleSubmit} className="flex flex-col gap-3">
           <input
             type="text"
-            placeholder="Nom"
+            placeholder="Name"
             value={name}
             onChange={(e) => setName(e.target.value)}
             required
@@ -54,7 +59,7 @@ export default function SignupPage() {
           />
           <input
             type="password"
-            placeholder="Mot de passe"
+            placeholder="Password"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
             required
@@ -71,14 +76,14 @@ export default function SignupPage() {
             disabled={loading}
             className="w-full py-2.5 rounded-lg bg-white text-black text-sm font-medium disabled:opacity-40 transition-opacity mt-1"
           >
-            {loading ? "Création…" : "Créer mon compte"}
+            {loading ? "Creating…" : "Create my account"}
           </button>
         </form>
 
         <p className="text-center text-sm text-white/40 mt-6">
-          Déjà un compte ?{" "}
+          Already have an account?{" "}
           <Link href="/login" className="text-white/70 hover:text-white transition-colors">
-            Se connecter
+            Sign in
           </Link>
         </p>
       </div>

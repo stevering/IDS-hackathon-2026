@@ -220,11 +220,11 @@ class ProxyHandler(BaseHTTPRequestHandler):
 if __name__ == '__main__':
     PORT = 3000
     server = HTTPServer(('127.0.0.1', PORT), ProxyHandler)
-    print(f"🚀 Proxy serveur sur http://127.0.0.1:{PORT}")
+    print(f"🚀 Proxy server on http://127.0.0.1:{PORT}")
     print(f"   Figma MCP: {ProxyHandler.FIGMA_MCP_URL}")
     print(f"   Storybook MCP: {ProxyHandler.STORYBOOK_MCP_URL}")
-    print("Ctrl+C pour arrêter...")
+    print("Ctrl+C to stop...")
     try:
         server.serve_forever()
     except KeyboardInterrupt:
-        print("\n✋ Serveur arrêté")
+        print("\n✋ Server stopped")

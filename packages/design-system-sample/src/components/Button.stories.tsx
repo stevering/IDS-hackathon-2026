@@ -36,7 +36,7 @@ export const DangerSmall: Story = {
   args: { variant: 'Danger', size: 'Small', label: 'Danger S' },
 };
 
-// TOUS les combos Figma (3x2x3 = 18)
+// ALL Figma combos (3x2x3 = 18)
 export const AllVariants: Story = {
   render: () => (
     <div className="grid grid-cols-3 gap-4 p-8 max-w-4xl">

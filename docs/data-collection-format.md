@@ -78,12 +78,12 @@ The format is designed to be **forward-compatible** (new fields can be added wit
           {
             "type": "missing_default",
             "severity": "medium",
-            "description": "Default manquant en code.",
-            "recommendation": "Ajouter default=\"medium\""
+            "description": "Missing default in code.",
+            "recommendation": "Add default=\"medium\""
           }
         ],
         "verdict": "DRIFT_DETECTED",
-        "summary": "Great finding! 1 opportunité détectée."
+        "summary": "Great finding! 1 opportunity detected."
       },
       "raw_tools_calls": [ ... ]                // Raw MCP tool calls and responses (for replay/debug)
     }
@@ -91,7 +91,7 @@ The format is designed to be **forward-compatible** (new fields can be added wit
 
   "feedback": {
     "type": "up" | "down" | "neutral",         // Required after 👍/👎 UI action
-    "comment": "Manque le default sur size" | null,
+    "comment": "Missing default on size" | null,
     "corrected_response": null | { ... }       // Optional: human-corrected assistant content (very high value)
   },
 

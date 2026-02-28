@@ -131,7 +131,7 @@ function QCMBlock({ choices, onSelect, disabled }: { choices: string[]; onSelect
 function parseStructuredContent(text: string, isStreamingMsg: boolean = false): StructuredSegment[] {
   const segments: StructuredSegment[] = [];
 
-  // Nettoyer les balises orphelines avant parsing (hors streaming)
+  // Clean orphaned tags before parsing (outside streaming)
   let cleanedText = text;
   if (!isStreamingMsg) {
     cleanedText = cleanOrphanedTags(text);
@@ -177,7 +177,7 @@ function parseStructuredContent(text: string, isStreamingMsg: boolean = false): 
     mcpErrorBlocks.push({ index: match.index, length: match[0].length, errorText: match[1].trim() });
   }
 
-  // Parser les statuts MCP - ne garder que le dernier
+  // Parse MCP statuses - keep only the last one
   const mcpStatusRegex = /\[MCP_STATUS:(\w+)\]/g;
   let lastMcpStatus: { index: number; length: number; status: "connecting" | "connected" | "error" } | null = null;
   while ((match = mcpStatusRegex.exec(cleanedText)) !== null) {
@@ -188,7 +188,7 @@ function parseStructuredContent(text: string, isStreamingMsg: boolean = false): 
     mcpStatusBlocks.push(lastMcpStatus);
   }
 
-  // Retirer les balises MCP du texte pour ne pas les afficher
+  // Remove MCP tags from text to avoid displaying them
   cleanedText = cleanedText
     .replace(/\[MCP_STATUS:\w+\]/g, "")
     .replace(/\[MCP_ERROR_BLOCK\][\s\S]*?\[\/MCP_ERROR_BLOCK\]/g, "");
@@ -251,13 +251,13 @@ function parseStructuredContent(text: string, isStreamingMsg: boolean = false): 
 }
 
 /**
- * Supprime les balises orphelines (ouvrantes sans fermante ou fermantes sans ouvrante)
- * pour éviter qu'elles s'affichent dans le chat.
+ * Removes orphaned tags (opening without closing or closing without opening)
+ * to prevent them from being displayed in the chat.
  */
 function cleanOrphanedTags(text: string): string {
   let cleaned = text;
 
-  // Détecter les balises DETAILS_START sans fermeture
+  // Detect DETAILS_START tags without closing
   const detailsOpens = [...cleaned.matchAll(/<!-- DETAILS_START -->/g)];
   const detailsCloses = [...cleaned.matchAll(/<!-- DETAILS_END -->/g)].map(m => m.index!);
 
@@ -265,12 +265,12 @@ function cleanOrphanedTags(text: string): string {
     const openIdx = match.index!;
     const hasMatchingClose = detailsCloses.some(closeIdx => closeIdx > openIdx);
     if (!hasMatchingClose) {
-      // Supprimer la balise ouvrante orpheline
+      // Remove the orphaned opening tag
       cleaned = cleaned.replace(/<!-- DETAILS_START -->/, "");
     }
   }
 
-  // Détecter les balises DETAILS_END sans ouverture
+  // Detect DETAILS_END tags without opening
   const detailsOpensAfterClean = [...cleaned.matchAll(/<!-- DETAILS_START -->/g)].map(m => m.index!);
   const detailsClosesAfterClean = [...cleaned.matchAll(/<!-- DETAILS_END -->/g)];
 
@@ -278,12 +278,12 @@ function cleanOrphanedTags(text: string): string {
     const closeIdx = match.index!;
     const hasMatchingOpen = detailsOpensAfterClean.some(openIdx => openIdx < closeIdx);
     if (!hasMatchingOpen) {
-      // Supprimer la balise fermante orpheline
+      // Remove the orphaned closing tag
       cleaned = cleaned.replace(/<!-- DETAILS_END -->/, "");
     }
   }
 
-  // Détecter les balises QCM_START sans fermeture
+  // Detect QCM_START tags without closing
   const qcmOpens = [...cleaned.matchAll(/<!-- QCM_START -->/g)];
   const qcmCloses = [...cleaned.matchAll(/<!-- QCM_END -->/g)].map(m => m.index!);
 
@@ -291,12 +291,12 @@ function cleanOrphanedTags(text: string): string {
     const openIdx = match.index!;
     const hasMatchingClose = qcmCloses.some(closeIdx => closeIdx > openIdx);
     if (!hasMatchingClose) {
-      // Supprimer la balise ouvrante orpheline et son contenu jusqu'à la fin
+      // Remove the orphaned opening tag and its content until the end
       cleaned = cleaned.replace(/<!-- QCM_START -->[\s\S]*$/, "");
     }
   }
 
-  // Détecter les balises QCM_END sans ouverture
+  // Detect QCM_END tags without opening
   const qcmOpensAfterClean = [...cleaned.matchAll(/<!-- QCM_START -->/g)].map(m => m.index!);
   const qcmClosesAfterClean = [...cleaned.matchAll(/<!-- QCM_END -->/g)];
 
@@ -304,7 +304,7 @@ function cleanOrphanedTags(text: string): string {
     const closeIdx = match.index!;
     const hasMatchingOpen = qcmOpensAfterClean.some(openIdx => openIdx < closeIdx);
     if (!hasMatchingOpen) {
-      // Supprimer la balise fermante orpheline
+      // Remove the orphaned closing tag
       cleaned = cleaned.replace(/<!-- QCM_END -->/, "");
     }
   }
@@ -332,7 +332,7 @@ function ToolCallBlock({ toolName, input, output, isError }: { toolName: string;
   const hasMore = totalLines > visibleLines;
   const displayedText = totalLines > CHUNK ? outputLines.slice(0, visibleLines).join("\n") : outputText;
 
-  // Pour web_search, indiquer que la recherche est faite automatiquement par le modèle
+  // For web_search, indicate that the search is done automatically by the model
   const isWebSearch = toolName === "web_search";
   const hasInput = input && Object.keys(input).length > 0;
 
@@ -629,7 +629,7 @@ export default function Home() {
   const [southleftOAuth, setSouthleftOAuth] = useState(false);
   const [githubOAuth, setGithubOAuth] = useState(false);
   const [pendingAgentMessage, setPendingAgentMessage] = useState<string | null>(null);
-  // Ref stable vers sendMessage — déclaré tôt pour être accessible dans handleMessage
+  // Stable ref to sendMessage — declared early to be accessible in handleMessage
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const sendMessageEarlyRef = useRef<((msg: { text: string }) => void) | null>(null);
   const [input, setInput] = useState("");
@@ -1009,11 +1009,11 @@ export default function Home() {
   const messagesRef = useRef(messages);
   messagesRef.current = messages;
 
-  // Brancher le ref stable (déclaré tôt) sur sendMessage maintenant qu'il est disponible
+  // Wire the stable ref (declared early) to sendMessage now that it's available
   sendMessageEarlyRef.current = sendMessage;
 
   // Inject fake agent message from plugin mini-mode tooltip
-  // (l'envoi du message user est déclenché séparément via trigger-user-analysis)
+  // (user message sending is triggered separately via trigger-user-analysis)
   useEffect(() => {
     if (pendingAgentMessage !== null) {
       const text = pendingAgentMessage;
@@ -1069,7 +1069,7 @@ export default function Home() {
   const figmaConnected = figmaOAuth || figmaAccessToken.trim().length > 0 || (figmaMcpUrl?.trim().length ?? 0) > 0;
   const codeConnected = (codeProjectPath?.trim().length ?? 0) > 0;
 
-  // Fonction pour détecter le mode de connexion MCP
+  // Function to detect the MCP connection mode
   const getMcpConnectionMode = (url: string): { mode: 'direct' | 'proxy-local' | 'proxy-online'; label: string; color: string } => {
     if (!url) return { mode: 'direct', label: 'Not configured', color: 'text-white/40' };
 
@@ -1570,18 +1570,18 @@ export default function Home() {
                       </div>
                     );
                   }
-                  // Tool calls typés du Responses API (ex: tool-web_search)
+                  // Typed tool calls from the Responses API (e.g.: tool-web_search)
                   if (part.type?.startsWith("tool-")) {
                     const toolName = part.type.replace("tool-", "");
                     const p = part as { type: string; toolCallId: string; state: string; input?: Record<string, unknown>; output?: unknown; errorText?: string; providerExecuted?: boolean };
 
-                    // Si le provider a exécuté le tool mais qu'on n'a pas reçu output-available,
-                    // on considère que c'est terminé quand on reçoit du texte après
+                    // If the provider executed the tool but we haven't received output-available,
+                    // we consider it done when we receive text after
                     const hasTextAfter = m.parts?.slice(i + 1).some((nextPart: { type?: string }) => nextPart.type === "text");
                     const isProviderExecuted = (p as unknown as { providerExecuted?: boolean }).providerExecuted === true;
 
-                    // Si providerExecuted=true, le tool est terminé (exécuté côté serveur par xAI)
-                    // On n'attend pas output-available qui n'arrive jamais pour les tools natifs xAI
+                    // If providerExecuted=true, the tool is done (executed server-side by xAI)
+                    // We don't wait for output-available which never arrives for native xAI tools
                     if (isProviderExecuted || p.state === "output-available") {
                       return (
                         <ToolCallBlock
@@ -1625,30 +1625,30 @@ export default function Home() {
                   if (part.type === "dynamic-tool") {
                     const p = part as { type: string; toolName: string; state: string; input?: Record<string, unknown>; output?: { content?: { type: string; text: string }[]; structuredContent?: unknown; isError?: boolean }; errorText?: string; providerExecuted?: boolean };
 
-                    // Si le provider a exécuté le tool mais qu'on n'a pas reçu output-available,
-                    // on considère que c'est terminé quand on reçoit du texte après
+                    // If the provider executed the tool but we haven't received output-available,
+                    // we consider it done when we receive text after
                     const hasTextAfter = m.parts?.slice(i + 1).some((nextPart: { type?: string }) => nextPart.type === "text");
                     const isProviderExecuted = p.providerExecuted === true;
 
-                    // Si providerExecuted=true, le tool est terminé (exécuté côté serveur par xAI)
-                    // On n'attend pas output-available qui n'arrive jamais pour les tools natifs xAI
+                    // If providerExecuted=true, the tool is done (executed server-side by xAI)
+                    // We don't wait for output-available which never arrives for native xAI tools
                     if (isProviderExecuted || p.state === "output-available") {
                       return (
                         <ToolCallBlock
                           key={i}
                           toolName={p.toolName}
                           input={p.input}
-                          output={p.output || { content: [{ type: "text", text: "Résultat intégré dans la réponse" }] }}
+                          output={p.output || { content: [{ type: "text", text: "Result integrated in the response" }] }}
                           isError={p.output?.isError}
                         />
                       );
                     }
 
-                    // Gérer tous les états possibles des tool calls
+                    // Handle all possible tool call states
                     switch (p.state) {
                       case "input-streaming":
                       case "input-available":
-                        // Tool call en cours d'exécution
+                        // Tool call in progress
                         return <ToolCallProgress key={i} toolName={p.toolName} />;
                       case "output-available":
                         return (
@@ -1873,8 +1873,8 @@ export default function Home() {
                     const baseUrl = tunnelUrl.trim().replace(/\/$/, '');
                     setFigmaMcpUrl(`${baseUrl}/proxy-local/figma/mcp`);
                     setCodeProjectPath(`${baseUrl}/proxy-local/code/mcp`);
-                    // Garder les URLs locales pour envoyer les headers X-MCP-*-URL
-                    // Le serveur utilisera ces headers pour forwarder vers les bonnes URLs
+                    // Keep local URLs to send X-MCP-*-URL headers
+                    // The server will use these headers to forward to the correct URLs
                   } else {
                     if (localFigmaMcpUrl.trim()) {
                       setFigmaMcpUrl(process.env.NEXT_PUBLIC_PROXY_LOCAL_FIGMA_MCP);
