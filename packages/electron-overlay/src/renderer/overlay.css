@@ -81,20 +81,18 @@ body {
 .status-tooltip {
   position: absolute;
   bottom: 18px; /* just above the dot pair */
-  left: 50%;
-  transform: translateX(-50%);
+  left: 4px;
+  right: 4px;
   background: rgba(10, 6, 22, 0.95);
   border: 1px solid rgba(109, 40, 217, 0.45);
   border-radius: 6px;
-  padding: 2px 8px;
+  padding: 3px 6px;
   font-family: system-ui, -apple-system, sans-serif;
   font-size: 9px;
   font-weight: 600;
   color: #c4b5fd;
-  white-space: nowrap;
-  max-width: 92px;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  white-space: normal;
+  text-align: center;
   pointer-events: none;
   -webkit-app-region: no-drag;
   opacity: 0;
@@ -114,7 +112,7 @@ body {
   width: 10px;
   height: 10px;
   border-radius: 50%;
-  background: #4b5563; /* disconnected: gray */
+  background: #4b5563; /* idle: gray */
   border: 2px solid rgba(0, 0, 0, 0.25);
   -webkit-app-region: no-drag;
   cursor: default;
@@ -123,14 +121,19 @@ body {
 }
 
 .mcp-dot.connected {
-  background: #10b981;
-  box-shadow: 0 0 6px rgba(16, 185, 129, 0.8);
+  background: #22d3ee; /* teal/blue-green */
+  box-shadow: 0 0 6px rgba(34, 211, 238, 0.8);
   animation: mcp-dot-pulse 2s ease-in-out infinite;
 }
 
 .mcp-dot.reconnecting {
   background: #f59e0b;
   box-shadow: 0 0 6px rgba(245, 158, 11, 0.6);
+}
+
+.mcp-dot.failed {
+  background: #ef4444; /* red — too many failed reconnects */
+  box-shadow: 0 0 6px rgba(239, 68, 68, 0.6);
 }
 
 @keyframes mcp-dot-pulse {
@@ -210,17 +213,23 @@ body {
   width: 10px;
   height: 10px;
   border-radius: 50%;
-  background: #6366f1; /* indigo — Figma brand colour */
+  background: #4b5563; /* idle: gray */
   border: 2px solid rgba(0, 0, 0, 0.25);
-  box-shadow: 0 0 6px rgba(99, 102, 241, 0.8);
-  animation: figma-dot-pulse 2s ease-in-out infinite;
   -webkit-app-region: no-drag;
   cursor: default;
   z-index: 1;
+  transition: background 0.3s ease, box-shadow 0.3s ease;
 }
 
-.figma-dot.hidden {
-  display: none;
+.figma-dot.connected {
+  background: #22d3ee; /* teal/blue-green */
+  box-shadow: 0 0 6px rgba(34, 211, 238, 0.8);
+  animation: figma-dot-pulse 2s ease-in-out infinite;
+}
+
+.figma-dot.failed {
+  background: #ef4444; /* red — plugin not reachable */
+  box-shadow: 0 0 6px rgba(239, 68, 68, 0.6);
 }
 
 @keyframes figma-dot-pulse {

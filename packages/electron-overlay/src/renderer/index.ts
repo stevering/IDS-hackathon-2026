@@ -138,12 +138,10 @@ badge.className = "alert-badge hidden";
 badge.textContent = "0";
 
 const figmaDot = document.createElement("div");
-figmaDot.className = "figma-dot hidden";
-figmaDot.title = "Plugin Figma connecté";
+figmaDot.className = "figma-dot";
 
 const mcpDot = document.createElement("div");
 mcpDot.className = "mcp-dot";
-mcpDot.title = "Agent IA non connecté";
 
 // ── Status tooltip (shows on dot hover, positioned inside the window) ─────────
 
@@ -158,20 +156,28 @@ mascotWrapper.appendChild(statusTooltip);
 
 // Dot hover → custom tooltip (native title= doesn't work on transparent overlays)
 figmaDot.addEventListener("mouseenter", () => {
-  const count = figmaClients.length;
-  statusTooltip.textContent = count > 0
-    ? `Figma — ${count} client${count > 1 ? "s" : ""}`
-    : "Figma — connecté";
+  if (figmaDot.classList.contains("connected")) {
+    const count = figmaClients.length;
+    statusTooltip.textContent = `Figma — ${count} client${count > 1 ? "s" : ""}`;
+  } else if (figmaDot.classList.contains("failed")) {
+    statusTooltip.textContent = "Figma — plugin introuvable";
+  } else {
+    statusTooltip.textContent = "Figma — en attente";
+  }
   statusTooltip.classList.add("visible");
 });
 figmaDot.addEventListener("mouseleave", () => statusTooltip.classList.remove("visible"));
 
 mcpDot.addEventListener("mouseenter", () => {
-  statusTooltip.textContent = mcpDot.classList.contains("connected")
-    ? "MCP — connecté"
-    : mcpDot.classList.contains("reconnecting")
-      ? "MCP — reconnexion…"
-      : "MCP — hors ligne";
+  if (mcpDot.classList.contains("connected")) {
+    statusTooltip.textContent = "MCP — connecté";
+  } else if (mcpDot.classList.contains("failed")) {
+    statusTooltip.textContent = "MCP — hors ligne";
+  } else if (mcpDot.classList.contains("reconnecting")) {
+    statusTooltip.textContent = "MCP — reconnexion";
+  } else {
+    statusTooltip.textContent = "MCP — en attente";
+  }
   statusTooltip.classList.add("visible");
 });
 mcpDot.addEventListener("mouseleave", () => statusTooltip.classList.remove("visible"));
@@ -406,6 +412,34 @@ function hideMessage(): void {
   }, 240);
 }
 
+// ── Figma dot state helpers ───────────────────────────────────────────────────
+
+const FIGMA_FAIL_TIMEOUT = 15_000; // 15 s without any plugin → red
+let figmaFailTimer: ReturnType<typeof setTimeout> | null = null;
+
+function setFigmaDotState(state: "idle" | "connected" | "failed"): void {
+  figmaDot.classList.toggle("connected", state === "connected");
+  figmaDot.classList.toggle("failed",    state === "failed");
+}
+
+function scheduleFigmaFail(): void {
+  if (figmaFailTimer !== null) return;
+  figmaFailTimer = setTimeout(() => {
+    figmaFailTimer = null;
+    setFigmaDotState("failed");
+  }, FIGMA_FAIL_TIMEOUT);
+}
+
+function clearFigmaFailTimer(): void {
+  if (figmaFailTimer !== null) {
+    clearTimeout(figmaFailTimer);
+    figmaFailTimer = null;
+  }
+}
+
+// Start counting from page load
+scheduleFigmaFail();
+
 // ── MCP WebSocket (alerts from AI agent) ─────────────────────────────────────
 
 const params = new URLSearchParams(window.location.search);
@@ -414,15 +448,17 @@ const WS_URL = `ws://localhost:${WS_PORT}`;
 
 let ws: WebSocket | null = null;
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+let reconnectCount = 0;
+const MCP_FAIL_AFTER = 3; // consecutive failures → red dot
 let alertCount = 0;
 
 function connect(): void {
   ws = new WebSocket(WS_URL);
 
   ws.addEventListener("open", () => {
+    reconnectCount = 0;
     mcpDot.classList.add("connected");
-    mcpDot.classList.remove("reconnecting");
-    mcpDot.title = "Agent IA connecté";
+    mcpDot.classList.remove("reconnecting", "failed");
     ws?.send(JSON.stringify({ type: "REGISTER", client: "electron-overlay" }));
     window.electronAPI.reportMcpStatus(true);
   });
@@ -437,17 +473,22 @@ function connect(): void {
   });
 
   ws.addEventListener("close", () => {
+    reconnectCount++;
     mcpDot.classList.remove("connected");
-    mcpDot.classList.add("reconnecting");
-    mcpDot.title = "Agent IA — reconnexion…";
+    if (reconnectCount >= MCP_FAIL_AFTER) {
+      mcpDot.classList.add("failed");
+      mcpDot.classList.remove("reconnecting");
+    } else {
+      mcpDot.classList.add("reconnecting");
+      mcpDot.classList.remove("failed");
+    }
     window.electronAPI.reportMcpStatus(false);
     scheduleReconnect();
   });
 
   ws.addEventListener("error", () => {
     mcpDot.classList.remove("connected");
-    mcpDot.classList.add("reconnecting");
-    mcpDot.title = "Agent IA non connecté";
+    // Let the close handler manage state transitions
   });
 }
 
@@ -480,13 +521,12 @@ function updateFigmaState(clients: ClientInfo[]): void {
   figmaClients = clients;
   const hasClients = clients.length > 0;
 
-  figmaDot.classList.toggle("hidden", !hasClients);
   guardian.classList.toggle("figma-connected", hasClients);
 
   if (hasClients) {
-    const types = clients.map((c) => c.clientType).join(", ");
-    figmaDot.title = `Figma connecté (${types})`;
-    guardian.style.filter = "drop-shadow(0 4px 20px rgba(99,102,241,0.9))";
+    clearFigmaFailTimer();
+    setFigmaDotState("connected");
+    guardian.style.filter = "drop-shadow(0 4px 20px rgba(34,211,238,0.7))";
     setTimeout(() => { guardian.style.filter = ""; }, 800);
 
     // Step 3 complete — bridge connected!
@@ -506,6 +546,8 @@ function updateFigmaState(clients: ClientInfo[]): void {
       }
     }
   } else {
+    setFigmaDotState("idle");
+    scheduleFigmaFail();
     step3Done = false;
     updateAllSteps();
     const desc = document.getElementById("step-3-desc");
