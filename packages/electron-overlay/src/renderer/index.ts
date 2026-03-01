@@ -152,7 +152,9 @@ mascotWrapper.appendChild(statusTooltip);
 
 // Dot hover → custom tooltip (native title= doesn't work on transparent overlays)
 figmaDot.addEventListener("mouseenter", () => {
-  if (figmaDot.classList.contains("connected")) {
+  if (figmaDot.classList.contains("unauthenticated")) {
+    statusTooltip.textContent = "Figma — sign in to Guardian";
+  } else if (figmaDot.classList.contains("connected")) {
     const count = figmaClients.length;
     statusTooltip.textContent = `Figma — ${count} client${count > 1 ? "s" : ""}`;
   } else if (figmaDot.classList.contains("failed")) {
@@ -413,9 +415,12 @@ function hideMessage(): void {
 const FIGMA_FAIL_TIMEOUT = 15_000; // 15 s without any plugin → red
 let figmaFailTimer: ReturnType<typeof setTimeout> | null = null;
 
-function setFigmaDotState(state: "idle" | "connected" | "failed"): void {
-  figmaDot.classList.toggle("connected", state === "connected");
-  figmaDot.classList.toggle("failed",    state === "failed");
+let figmaAuthenticated = true; // assumed true until plugin reports otherwise
+
+function setFigmaDotState(state: "idle" | "connected" | "failed" | "unauthenticated"): void {
+  figmaDot.classList.toggle("connected",       state === "connected");
+  figmaDot.classList.toggle("failed",          state === "failed");
+  figmaDot.classList.toggle("unauthenticated", state === "unauthenticated");
 }
 
 function scheduleFigmaFail(): void {
@@ -494,7 +499,7 @@ function updateFigmaState(clients: ClientInfo[]): void {
 
   if (hasClients) {
     clearFigmaFailTimer();
-    setFigmaDotState("connected");
+    setFigmaDotState(figmaAuthenticated ? "connected" : "unauthenticated");
     guardian.style.filter = "drop-shadow(0 4px 20px rgba(34,211,238,0.7))";
     setTimeout(() => { guardian.style.filter = ""; }, 800);
 
@@ -546,7 +551,17 @@ if (window.electronAPI) {
   });
 
   window.electronAPI.onBridgeMessage((clientId, msg) => {
+    if (msg.type === "AUTH_STATE") {
+      figmaAuthenticated = msg.authenticated;
+      if (figmaClients.length > 0) {
+        setFigmaDotState(figmaAuthenticated ? "connected" : "unauthenticated");
+      }
+      return;
+    }
+
     if (msg.type === "SELECTION_CHANGED") {
+      // Don't show selection bubbles when the plugin user is not authenticated
+      if (!figmaAuthenticated) return;
       const count = msg.nodes?.length ?? 0;
       if (count > 0) {
         // Indigo glow on selection change

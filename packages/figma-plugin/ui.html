@@ -5,6 +5,7 @@
     <meta charset="UTF-8">
     <style>
         :root {
+            /* ── Dark theme (default) ─────────────────────────── */
             --figma-bg: #2C2C2C;
             --figma-bg-hover: #383838;
             --figma-bg-active: #4B4B4B;
@@ -21,6 +22,22 @@
             --figma-shadow: rgba(0, 0, 0, 0.3);
             --radius: 6px;
             --radius-sm: 4px;
+            /* Background shown while the webapp iframe loads */
+            --iframe-bg: #0a0a0a;
+        }
+
+        /* ── Light theme ──────────────────────────────────────── */
+        :root.theme-light {
+            --figma-bg: #FFFFFF;
+            --figma-bg-hover: #F0F0F0;
+            --figma-bg-active: #E5E5E5;
+            --figma-surface: #F5F5F5;
+            --figma-border: #DEDEDE;
+            --figma-text: #1A1A1A;
+            --figma-text-muted: #6B6B6B;
+            --figma-text-disabled: #A0A0A0;
+            --figma-shadow: rgba(0, 0, 0, 0.1);
+            --iframe-bg: #fafafa;
         }
 
         * {
@@ -125,6 +142,11 @@
         /* ── Minimized mode ─────────────────────────────────── */
         body.minimized .header,
         body.minimized .content {
+            display: none;
+        }
+
+        /* ── Unauthenticated mode: hide selection header + plugin params ─── */
+        body.unauthenticated .header {
             display: none;
         }
 
@@ -272,7 +294,7 @@
             flex: 1;
             display: flex;
             flex-direction: column;
-            background: #1a1a1a;
+            background: var(--iframe-bg);
             border-radius: var(--radius-sm);
             overflow: hidden;
         }
@@ -282,7 +304,7 @@
             width: 100%;
             height: 100%;
             border: none;
-            background: white;
+            background: var(--iframe-bg);
         }
 
         .empty-state {
@@ -516,10 +538,35 @@
             display: none;
         }
 
+        /* ── Theme toggle button ─────────────────────────────── */
+        .theme-toggle-btn {
+            flex-shrink: 0;
+            width: 26px;
+            height: 26px;
+            border: 1px solid var(--figma-border);
+            background: var(--figma-surface);
+            color: var(--figma-text-muted);
+            border-radius: var(--radius-sm);
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 13px;
+            line-height: 1;
+            padding: 0;
+            transition: background 0.15s, color 0.15s, border-color 0.15s;
+        }
+
+        .theme-toggle-btn:hover {
+            background: var(--figma-bg-active);
+            color: var(--figma-text);
+            border-color: var(--figma-text-disabled);
+        }
+
     </style>
 </head>
 
-<body>
+<body class="unauthenticated">
 <!-- Main header (expanded mode) — shield + message area, click to minimize -->
 <div class="main-header" id="main-header">
     <div class="main-header-figure" id="main-header-figure"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="100%" height="100%"><path d="M 81 34 A 42 42 0 1 0 81 94" fill="none" stroke="#6D28D9" stroke-width="19" stroke-linecap="round"/><path d="M 72 80 L 93 80" fill="none" stroke="#6D28D9" stroke-width="15" stroke-linecap="round"/><path d="M 76 37 A 37 37 0 1 0 76 91" fill="none" stroke="#A78BFA" stroke-width="5" stroke-linecap="round" opacity="0.45"/><ellipse cx="21" cy="27" rx="10" ry="13" fill="#6D28D9"/><ellipse cx="21" cy="28" rx="6" ry="8" fill="#DDD6FE" opacity="0.75"/><path d="M 31 44 Q 40 40 49 43" fill="none" stroke="#4C1D95" stroke-width="2.5" stroke-linecap="round"/><path d="M 55 43 Q 64 40 73 44" fill="none" stroke="#4C1D95" stroke-width="2.5" stroke-linecap="round"/><ellipse cx="40" cy="52" rx="8" ry="9" fill="white"/><ellipse cx="64" cy="52" rx="8" ry="9" fill="white"/><ellipse cx="40" cy="53.5" rx="5.5" ry="6.5" fill="#2E1065"/><ellipse cx="64" cy="53.5" rx="5.5" ry="6.5" fill="#2E1065"/><circle cx="42" cy="51" r="2.2" fill="white"/><circle cx="66" cy="51" r="2.2" fill="white"/><circle cx="38.5" cy="55" r="1" fill="white" opacity="0.6"/><circle cx="62.5" cy="55" r="1" fill="white" opacity="0.6"/><path d="M 32 64 Q 52 78 72 64" fill="none" stroke="#4C1D95" stroke-width="3.5" stroke-linecap="round"/><ellipse cx="29" cy="63" rx="8" ry="4.5" fill="#C4B5FD" opacity="0.55"/><ellipse cx="75" cy="63" rx="8" ry="4.5" fill="#C4B5FD" opacity="0.55"/><path d="M 87 73 L 88.3 77.7 L 93 79 L 88.3 80.3 L 87 85 L 85.7 80.3 L 81 79 L 85.7 77.7 Z" fill="white" opacity="0.92"/><ellipse cx="14" cy="67" rx="6" ry="9" fill="#6D28D9" transform="rotate(-25 14 67)"/><ellipse cx="90" cy="97" rx="6" ry="9" fill="#6D28D9" transform="rotate(15 90 97)"/></svg></div>
@@ -537,6 +584,7 @@
             Guardian watches your selection for design system inconsistencies &amp; design-code issues.
         </div>
     </div>
+    <button class="theme-toggle-btn" id="theme-toggle-btn" title="Theme: System">🖥️</button>
 </div>
 
 <div class="plugin-panel-area">
@@ -618,6 +666,10 @@
     const FIGMA_URL_KEY = 'figpal_file_url';
     const FIGMA_FNAME_KEY = 'figpal_file_name';
     const FIGMA_URL_RE = /figma\.com\/(design|file|board)\/([^\/\?]+)/;
+    const THEME_KEY = 'guardianTheme';
+    const THEME_CYCLE = ['system', 'dark', 'light'];
+    const THEME_ICONS = { system: '🖥️', dark: '🌙', light: '☀️' };
+    const THEME_LABELS = { system: 'System', dark: 'Dark', light: 'Light' };
 
     // clientStorage helpers (go through code.js — localStorage unavailable in data: URLs)
     function storageGet(key) {
@@ -634,6 +686,73 @@
     let cachedSelection = null; // { nodes, image, nodeUrl }
     // Saved URL data from clientStorage: { url, fileName, fileKey }
     let savedUrlData = null;
+
+    // ── Theme state ────────────────────────────────────────
+    let currentTheme = 'system'; // 'dark' | 'light' | 'system'
+
+    function getEffectiveTheme(theme) {
+        if (theme === 'system') {
+            return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+        }
+        return theme;
+    }
+
+    function applyTheme(theme) {
+        currentTheme = theme;
+        const effective = getEffectiveTheme(theme);
+        document.documentElement.classList.toggle('theme-light', effective === 'light');
+        const btn = document.getElementById('theme-toggle-btn');
+        if (btn) {
+            btn.textContent = THEME_ICONS[theme];
+            btn.title = 'Theme: ' + THEME_LABELS[theme] + ' — click to cycle';
+        }
+        // Send to webapp (if loaded)
+        sendToWebview({ type: 'set-theme', theme: effective });
+    }
+
+    // Apply system default immediately (before storage restore)
+    applyTheme('system');
+
+    // Respond to OS theme changes when in system mode
+    window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', function () {
+        if (currentTheme === 'system') applyTheme('system');
+    });
+
+    // ── Auth state ─────────────────────────────────────────
+    let isAuthenticated = false;
+    let loginPromptTimer = null;
+
+    function applyAuthState(authenticated) {
+        isAuthenticated = authenticated;
+        document.body.classList.toggle('unauthenticated', !authenticated);
+        // Notify the Electron overlay via bridge
+        document.dispatchEvent(new CustomEvent('guardian-auth-state', { detail: { authenticated } }));
+        if (!authenticated) {
+            scheduleLoginPrompt();
+        } else {
+            clearLoginPrompt();
+        }
+    }
+
+    function scheduleLoginPrompt() {
+        clearLoginPrompt();
+        // Fire once every ~60s (45–75s window for randomness)
+        const delay = 45000 + Math.random() * 30000;
+        loginPromptTimer = setTimeout(function () {
+            loginPromptTimer = null;
+            if (!isAuthenticated) {
+                parent.postMessage({ pluginMessage: { type: 'notify-login-prompt' } }, '*');
+                scheduleLoginPrompt();
+            }
+        }, delay);
+    }
+
+    function clearLoginPrompt() {
+        if (loginPromptTimer) {
+            clearTimeout(loginPromptTimer);
+            loginPromptTimer = null;
+        }
+    }
 
     console.log('[FigPal UI] Script started. inFigmaPlugin =', inFigmaPlugin);
 
@@ -900,6 +1019,17 @@
     // Restore saved URL on startup (two separate plain-string keys)
     storageGet(FIGMA_URL_KEY);
     storageGet(FIGMA_FNAME_KEY);
+    // Restore saved theme
+    storageGet(THEME_KEY);
+
+    // Theme toggle button: cycle system → dark → light → system
+    document.getElementById('theme-toggle-btn').addEventListener('click', function (e) {
+        e.stopPropagation();
+        const idx = THEME_CYCLE.indexOf(currentTheme);
+        const next = THEME_CYCLE[(idx + 1) % THEME_CYCLE.length];
+        applyTheme(next);
+        storageSet(THEME_KEY, next);
+    });
 
     // ── Connection & messaging ────────────────────────────
     function passAuthTokensToIframe() {
@@ -947,6 +1077,10 @@
 
     webviewIframe.onload = function () {
         console.log('[FigPal UI] iframe webapp loaded → requestAndSendFigmaContext in 800ms');
+        // Apply current theme to the newly loaded iframe immediately
+        setTimeout(function () {
+            sendToWebview({ type: 'set-theme', theme: getEffectiveTheme(currentTheme) });
+        }, 50);
         setTimeout(passAuthTokensToIframe, 500);
         setTimeout(requestAndSendFigmaContext, 800);
     };
@@ -998,6 +1132,14 @@
         if (!msg) return;
 
         // Handle clientStorage read responses (two separate keys)
+        if (msg.type === 'storage-value' && msg.key === THEME_KEY) {
+            const saved = msg.value;
+            if (saved && THEME_CYCLE.includes(saved)) {
+                applyTheme(saved);
+            }
+            return;
+        }
+
         if (msg.type === 'storage-value' && msg.key === FIGMA_URL_KEY) {
             if (msg.value && typeof msg.value === 'string') {
                 if (!savedUrlData) savedUrlData = { url: '', fileName: '', fileKey: null };
@@ -1020,6 +1162,12 @@
 
         if (msg.type === 'selection-change-triggered') {
             parent.postMessage({ pluginMessage: { type: 'get-selection', id: 'auto-stream' } }, '*');
+        }
+
+        // Login prompt button clicked in Figma notification → maximize plugin
+        if (msg.type === 'login-prompt-clicked') {
+            if (document.body.classList.contains('minimized')) setMinimized(false);
+            return;
         }
 
         // Handle Figma file context response
@@ -1068,6 +1216,11 @@
             const nodes = msg.data?.nodes;
             const image = msg.data?.image;
 
+            // When not authenticated: ignore all selection UI updates
+            if (!isAuthenticated && msg.type === 'selection-changed') {
+                return;
+            }
+
             if (Array.isArray(nodes)) {
                 selectionStats.innerHTML = nodes.length > 0
                     ? `<strong>${nodes.length}</strong> ${nodes.length === 1 ? 'layer' : 'layers'} selected`
@@ -1106,6 +1259,10 @@
 
     window.addEventListener('message', (event) => {
         if (event.data && event.data.source === 'figpal-webapp') {
+            if (event.data.type === 'AUTH_STATE') {
+                applyAuthState(!!event.data.authenticated);
+                return;
+            }
             if (event.data.type === 'request-figma-context') {
                 if (cachedFigmaContext) {
                     sendToWebview(cachedFigmaContext);
@@ -1271,8 +1428,8 @@
                 return;
             }
 
-            // Mirror selection changes to the Electron overlay
-            if (msg.type === 'selection-changed') {
+            // Mirror selection changes to the Electron overlay (only when authenticated)
+            if (msg.type === 'selection-changed' && isAuthenticated) {
                 send({
                     type: 'SELECTION_CHANGED',
                     nodes: (msg.data?.nodes ?? []).map(function (n) {
@@ -1282,6 +1439,11 @@
                 });
             }
         };
+
+        // Forward auth state changes to the Electron overlay
+        document.addEventListener('guardian-auth-state', function (e) {
+            send({ type: 'AUTH_STATE', authenticated: e.detail.authenticated });
+        });
 
         connect();
     })();

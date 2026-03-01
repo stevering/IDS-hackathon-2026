@@ -232,6 +232,11 @@ body {
   box-shadow: 0 0 6px rgba(239, 68, 68, 0.6);
 }
 
+.figma-dot.unauthenticated {
+  background: #f59e0b; /* orange — plugin open but not signed in */
+  box-shadow: 0 0 6px rgba(245, 158, 11, 0.6);
+}
+
 @keyframes figma-dot-pulse {
   0%, 100% { transform: scale(1); opacity: 1; }
   50%       { transform: scale(1.2); opacity: 0.85; }

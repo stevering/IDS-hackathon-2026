@@ -39,12 +39,18 @@ export interface PongMessage {
   type: 'PONG';
 }
 
+export interface AuthStateMessage {
+  type: 'AUTH_STATE';
+  authenticated: boolean;
+}
+
 /** Figma plugin UI → BridgeServer (Electron) */
 export type FigmaMessage =
   | RegisterMessage
   | SelectionChangedMessage
   | AnalysisResultMessage
-  | PongMessage;
+  | PongMessage
+  | AuthStateMessage;
 
 // ── Messages: Electron → Figma ────────────────────────────────────────────────
 

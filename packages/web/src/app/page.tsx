@@ -709,6 +709,13 @@ export default function Home() {
   const isFigmaPluginRef = useRef(isFigmaPlugin);
   isFigmaPluginRef.current = isFigmaPlugin;
 
+  // Notify the Figma plugin that the user is authenticated
+  useEffect(() => {
+    try {
+      window.parent.postMessage({ source: "figpal-webapp", type: "AUTH_STATE", authenticated: true }, "*");
+    } catch (_) {}
+  }, []);
+
   // Sync figmaContext from hook → local state used by the rest of the component
   useEffect(() => {
     if (figmaContext) {

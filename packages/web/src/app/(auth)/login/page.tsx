@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import Link from "next/link";
 import { authClient } from "@/lib/auth-client";
 
@@ -9,6 +9,13 @@ export default function LoginPage() {
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+
+  // Notify the Figma plugin that the user is not authenticated
+  useEffect(() => {
+    try {
+      window.parent.postMessage({ source: "figpal-webapp", type: "AUTH_STATE", authenticated: false }, "*");
+    } catch (_) {}
+  }, []);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();

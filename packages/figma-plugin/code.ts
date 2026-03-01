@@ -340,6 +340,19 @@ figma.ui.onmessage = async (msg: IncomingMessage): Promise<void> => {
     figma.notify(msg.data.message ?? 'FigPal notification');
   }
 
+  if ((type as string) === 'notify-login-prompt') {
+    figma.notify('Sign in to Guardian to analyze your designs 🛡️', {
+      timeout: 8000,
+      button: {
+        text: 'Sign in',
+        action: () => {
+          figma.ui.postMessage({ type: 'login-prompt-clicked' });
+          return false;
+        },
+      },
+    });
+  }
+
   if (type === 'GET_VARIABLES') {
     await sendVariablesData(msg.id);
   }
