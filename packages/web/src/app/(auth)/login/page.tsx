@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react";
 import Link from "next/link";
-import { authClient } from "@/lib/auth-client";
+import { createClient } from "@/lib/supabase/client";
 
 export default function LoginPage() {
   const [email, setEmail] = useState("");
@@ -22,7 +22,8 @@ export default function LoginPage() {
     setError(null);
     setLoading(true);
 
-    const { error } = await authClient.signIn.email({ email, password });
+    const supabase = createClient();
+    const { error } = await supabase.auth.signInWithPassword({ email, password });
 
     if (error) {
       // Generic message to prevent account enumeration

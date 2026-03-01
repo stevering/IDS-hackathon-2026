@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
+import { createServerClient } from "@supabase/ssr";
 
 const PROXY_PREFIX = "/proxy-local/code";
 
@@ -18,7 +19,6 @@ const PUBLIC_AUTH_ROUTES = [
   "/api/auth/github-mcp/status",
   "/api/auth/set-token",
   "/api/set-oauth-result", // Allow POST without token for callback
-  "/api/guardian-auth",    // Better Auth routes (login, signup, session)
   "/api/guardian/status",  // Health check for the overlay (no auth token)
 ];
 
@@ -51,10 +51,43 @@ export async function proxy(request: NextRequest) {
     pathname.startsWith("/favicon");
 
   if (!isApiOrStatic && !PUBLIC_PAGES.some((p) => pathname.startsWith(p))) {
-    const sessionToken = request.cookies.get("better-auth.session_token");
-    if (!sessionToken) {
+    let response = NextResponse.next({ request });
+
+    const supabase = createServerClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+      {
+        cookies: {
+          getAll() {
+            return request.cookies.getAll();
+          },
+          setAll(cookiesToSet) {
+            cookiesToSet.forEach(({ name, value }) =>
+              request.cookies.set(name, value)
+            );
+            response = NextResponse.next({ request });
+            cookiesToSet.forEach(({ name, value, options }) =>
+              response.cookies.set(name, value, {
+                ...options,
+                sameSite: "none",
+                secure: true,
+                httpOnly: true,
+                path: "/",
+              })
+            );
+          },
+        },
+      }
+    );
+
+    // getUser() valide le JWT côté Supabase Auth — plus sûr que de lire le cookie brut.
+    const { data: { user } } = await supabase.auth.getUser();
+
+    if (!user) {
       return NextResponse.redirect(new URL("/login", request.url));
     }
+
+    return response;
   }
 
   // Disable the rest of the middleware in production (proxy dev-only)

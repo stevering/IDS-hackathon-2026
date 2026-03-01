@@ -2,13 +2,23 @@
 
 import { useState, useRef, useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { authClient } from "@/lib/auth-client";
+import { createClient } from "@/lib/supabase/client";
+import { type User } from "@supabase/supabase-js";
 
 export function UserMenu() {
-  const { data: session } = authClient.useSession();
+  const [user, setUser] = useState<User | null>(null);
   const [open, setOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
   const router = useRouter();
+
+  useEffect(() => {
+    const supabase = createClient();
+    supabase.auth.getUser().then(({ data }) => setUser(data.user));
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      setUser(session?.user ?? null);
+    });
+    return () => subscription.unsubscribe();
+  }, []);
 
   // Close on outside click
   useEffect(() => {
@@ -21,15 +31,17 @@ export function UserMenu() {
     return () => document.removeEventListener("mousedown", handleClick);
   }, [open]);
 
-  if (!session?.user) return null;
+  if (!user) return null;
 
-  const { name, email } = session.user;
+  const name = user.user_metadata?.name as string | undefined;
+  const email = user.email;
   const initials = name
     ? name.split(" ").map((w: string) => w[0]).join("").slice(0, 2).toUpperCase()
     : email?.[0]?.toUpperCase() ?? "?";
 
   async function handleSignOut() {
-    await authClient.signOut();
+    const supabase = createClient();
+    await supabase.auth.signOut();
     router.push("/login");
   }
 

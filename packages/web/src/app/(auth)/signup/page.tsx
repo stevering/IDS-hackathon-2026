@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { authClient } from "@/lib/auth-client";
+import { createClient } from "@/lib/supabase/client";
 
 export default function SignupPage() {
   const [email, setEmail] = useState("");
@@ -16,7 +16,12 @@ export default function SignupPage() {
     setError(null);
     setLoading(true);
 
-    const { error } = await authClient.signUp.email({ email, password, name });
+    const supabase = createClient();
+    const { error } = await supabase.auth.signUp({
+      email,
+      password,
+      options: { data: { name } },
+    });
 
     if (error) {
       const msg = error.message?.toLowerCase() ?? "";
