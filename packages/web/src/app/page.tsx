@@ -3,6 +3,8 @@
 import { useChat } from "@ai-sdk/react";
 import { DefaultChatTransport } from "ai";
 import { useState, useRef, useEffect, useMemo } from "react";
+import Link from "next/link";
+import { PROVIDERS } from "@/lib/providers";
 import { useFigmaPlugin } from "./hooks/useFigmaPlugin";
 import { UserMenu } from "@/components/UserMenu";
 import ReactMarkdown, { type Components } from "react-markdown";
@@ -633,7 +635,11 @@ export default function Home() {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const sendMessageEarlyRef = useRef<((msg: { text: string }) => void) | null>(null);
   const [input, setInput] = useState("");
-  const [selectedModel, setSelectedModel] = useState<"grok-4-1-fast-reasoning" | "grok-4-1-fast-non-reasoning">("grok-4-1-fast-non-reasoning");
+  // selectedModel: "provider/model-id" for BYOK (e.g. "openai/gpt-4o"),
+  // or legacy bare string for free-tier XAI (e.g. "grok-4-1-fast-non-reasoning")
+  const [selectedModel, setSelectedModel] = useState<string>("grok-4-1-fast-non-reasoning");
+  const [byokKeys, setByokKeys] = useState<{ provider: string; is_default: boolean }[]>([]);
+  const [gatewayModels, setGatewayModels] = useState<{ id: string; name: string; owned_by: string; tags: string[] }[]>([]);
   const [selectedNode, setSelectedNode] = useState<{ nodes: unknown[]; image: string | null; nodeUrl: string | null } | null>(null);
   const [figmaPluginContext, setFigmaPluginContext] = useState<{ fileKey: string; fileName: string; fileUrl: string; currentPage?: { id: string; name: string } | null; pages?: { id: string; name: string }[]; currentUser?: { id: string; name: string } | null } | null>(null);
   const [selectionGlow, setSelectionGlow] = useState(false);
@@ -673,6 +679,44 @@ export default function Home() {
   useEffect(() => {
     localStorage.setItem('guardian-enabled-mcps', JSON.stringify(enabledMcps));
   }, [enabledMcps]);
+
+  // Load user's BYOK keys on mount to drive model selector
+  useEffect(() => {
+    fetch("/api/user/api-keys")
+      .then((r) => r.ok ? r.json() : { keys: [] })
+      .then(async (d) => {
+        const keys: { provider: string; is_default: boolean }[] = d.keys ?? [];
+        setByokKeys(keys);
+
+        // If user has a gateway key, fetch the full model catalog from Vercel AI Gateway
+        const hasGateway = keys.some((k) => k.provider === "gateway");
+        if (hasGateway) {
+          try {
+            const gwRes = await fetch("/api/gateway-models");
+            if (gwRes.ok) {
+              const gwData = await gwRes.json();
+              setGatewayModels(gwData.models ?? []);
+              // Auto-select first gateway model if default key is gateway
+              const defaultKey = keys.find((k) => k.is_default);
+              if (defaultKey?.provider === "gateway" && gwData.models?.length > 0) {
+                setSelectedModel(gwData.models[0].id);
+              }
+              return;
+            }
+          } catch { /* ignore, fall through to local catalog */ }
+        }
+
+        // Auto-select based on local catalog for direct provider keys
+        const defaultKey = keys.find((k) => k.is_default);
+        if (defaultKey) {
+          const provider = PROVIDERS.find((p) => p.id === defaultKey.provider);
+          if (provider && provider.models.length > 0) {
+            setSelectedModel(`${provider.id}/${provider.models[0].id}`);
+          }
+        }
+      })
+      .catch(() => {});
+  }, []);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -1461,6 +1505,52 @@ export default function Home() {
                 I can compare your Figma design system components with their
                 code implementation to detect property and variant drift.
               </p>
+
+              {/* Free tier onboarding notice */}
+              {byokKeys.length === 0 && (
+                <div className="mb-6 w-full max-w-sm rounded-xl bg-white/[0.04] border border-white/[0.08] p-4 text-left">
+                  <div className="flex items-start gap-3">
+                    <div className="mt-0.5 shrink-0 w-7 h-7 rounded-full bg-violet-600/20 border border-violet-500/30 flex items-center justify-center text-sm">
+                      ✨
+                    </div>
+                    <div className="min-w-0">
+                      <p className="text-sm font-medium text-white/80 mb-1">You&apos;re on the free tier</p>
+                      <p className="text-xs text-white/40 leading-relaxed mb-3">
+                        You get 100 AI messages per month on us. Each message uses the platform&apos;s AI model.
+                      </p>
+                      <div className="space-y-2">
+                        <p className="text-[11px] text-white/50 font-medium uppercase tracking-wider">Want unlimited access?</p>
+                        <div className="space-y-1.5 text-xs text-white/40">
+                          <div className="flex items-start gap-2">
+                            <span className="shrink-0 mt-0.5">1.</span>
+                            <span>
+                              Create a free{" "}
+                              <a href="https://vercel.com/ai-gateway" target="_blank" rel="noopener noreferrer" className="text-violet-400 hover:text-violet-300 underline underline-offset-2">
+                                Vercel AI Gateway
+                              </a>{" "}
+                              account — one key to access 100+ AI models
+                            </span>
+                          </div>
+                          <div className="flex items-start gap-2">
+                            <span className="shrink-0 mt-0.5">2.</span>
+                            <span>Or add your own OpenAI, Anthropic, or Google API key</span>
+                          </div>
+                        </div>
+                        <Link
+                          href="/account"
+                          className="inline-flex items-center gap-1.5 mt-2 px-3 py-1.5 rounded-lg bg-violet-600/20 border border-violet-500/30 text-xs text-violet-300 hover:bg-violet-600/30 transition-colors"
+                        >
+                          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                            <path d="M12 5v14M5 12h14" />
+                          </svg>
+                          Add an API key
+                        </Link>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+
               <div className="space-y-2 text-sm text-white/30">
                 <p>Try asking:</p>
                 <button
@@ -1733,24 +1823,61 @@ export default function Home() {
           onSubmit={onSubmit}
           className="px-3 sm:px-4 py-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))] glass-input-bar"
         >
-          <div className="flex items-center gap-2 mb-2">
-            <span className="text-xs text-white/40">Model:</span>
-            <div className="flex rounded-md overflow-hidden border border-white/10">
-              <button
-                type="button"
-                onClick={() => setSelectedModel("grok-4-1-fast-reasoning")}
-                className={`px-3 py-1 text-xs transition-colors cursor-pointer ${selectedModel === "grok-4-1-fast-reasoning" ? "bg-blue-600 text-white" : "bg-white/5 text-white/50 hover:bg-white/10"}`}
-              >
-                Reasoning
-              </button>
-              <button
-                type="button"
-                onClick={() => setSelectedModel("grok-4-1-fast-non-reasoning")}
-                className={`px-3 py-1 text-xs transition-colors cursor-pointer ${selectedModel === "grok-4-1-fast-non-reasoning" ? "bg-blue-600 text-white" : "bg-white/5 text-white/50 hover:bg-white/10"}`}
-              >
-                Non-Reasoning
-              </button>
-            </div>
+          {/* Model selector */}
+          <div className="flex items-center gap-2 mb-2 flex-wrap">
+            {byokKeys.length === 0 ? (
+              /* Free tier — no BYOK keys */
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-white/30 bg-white/5 border border-white/10 px-2 py-1 rounded-md">
+                  Free tier · Grok
+                </span>
+                <Link
+                  href="/account"
+                  className="text-xs text-violet-400 hover:text-violet-300 transition-colors underline underline-offset-2"
+                >
+                  Add API key
+                </Link>
+              </div>
+            ) : (
+              /* BYOK — model picker */
+              <div className="flex items-center gap-1.5">
+                <span className="text-xs text-white/40">Model:</span>
+                <select
+                  value={selectedModel}
+                  onChange={(e) => setSelectedModel(e.target.value)}
+                  className="text-xs bg-white/5 border border-white/10 rounded-md px-2 py-1 text-white/80 focus:outline-none focus:border-white/30 cursor-pointer max-w-[220px]"
+                >
+                  {byokKeys.some((k) => k.provider === "gateway") && gatewayModels.length > 0 ? (
+                    /* Gateway key — dynamic model list from Vercel AI Gateway, grouped by provider */
+                    Object.entries(
+                      gatewayModels.reduce<Record<string, typeof gatewayModels>>((acc, m) => {
+                        (acc[m.owned_by] ??= []).push(m);
+                        return acc;
+                      }, {})
+                    ).map(([provider, models]) => (
+                      <optgroup key={provider} label={provider.charAt(0).toUpperCase() + provider.slice(1)}>
+                        {models.map((m) => (
+                          <option key={m.id} value={m.id}>
+                            {m.name}{m.tags.includes("reasoning") ? " ✦" : ""}
+                          </option>
+                        ))}
+                      </optgroup>
+                    ))
+                  ) : (
+                    /* Direct provider keys — local catalog */
+                    byokKeys.map((key) => {
+                      const provider = PROVIDERS.find((p) => p.id === key.provider);
+                      return provider?.models.map((m) => (
+                        <option key={`${provider.id}/${m.id}`} value={`${provider.id}/${m.id}`}>
+                          {provider.name} · {m.name}{m.supportsReasoning ? " ✦" : ""}
+                        </option>
+                      ));
+                    })
+                  )}
+                </select>
+                <span className="text-[10px] text-white/20" title="✦ = supports reasoning">✦ reasoning</span>
+              </div>
+            )}
           </div>
           <div className="flex gap-2">
             <textarea

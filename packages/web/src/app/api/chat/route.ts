@@ -1,5 +1,12 @@
 import { xai } from "@ai-sdk/xai";
-import { streamText, stepCountIs, convertToModelMessages } from "ai";
+import { createOpenAI } from "@ai-sdk/openai";
+import { createAnthropic } from "@ai-sdk/anthropic";
+import { createGoogleGenerativeAI } from "@ai-sdk/google";
+import { createGateway } from "@ai-sdk/gateway";
+import { streamText, stepCountIs, convertToModelMessages, type LanguageModel } from "ai";
+import { createClient as createSupabaseUserClient } from "@/lib/supabase/server";
+import { createServiceClient } from "@/lib/supabase/service";
+import { FREE_TIER_MODEL } from "@/lib/providers";
 import { createMCPClient, type MCPClient } from "@ai-sdk/mcp";
 import { GUARDIAN_SYSTEM_PROMPT } from "@/lib/system-prompt";
 import { cookies } from "next/headers";
@@ -35,6 +42,95 @@ const MAX_STEPS = 20; // Maximum number of steps for the stream (limit to preven
 
 const encoder = new TextEncoder();
 
+type ResolvedModel = {
+  model: LanguageModel;
+  isFreeTier: boolean;
+  supportsWebSearch: boolean;
+};
+
+/**
+ * Resolve the AI model to use for a given request.
+ *
+ * Priority (BYOK system):
+ *  1. User has a `gateway` key → Vercel AI Gateway with their key + requested model
+ *  2. User has a direct key for the requested provider → use that SDK
+ *  3. No keys → platform free tier (XAI or AI_GATEWAY_API_KEY + FREE_TIER_MODEL)
+ *
+ * requestedModel format: "provider/model-id" (e.g. "openai/gpt-4o")
+ * Legacy format: no slash → treated as XAI grok model.
+ */
+async function resolveModel(
+  userId: string | null | undefined,
+  requestedModel: string | undefined,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  supabase: any
+): Promise<ResolvedModel> {
+  const modelStr = requestedModel ?? "";
+  const slashIdx = modelStr.indexOf("/");
+  const requestedProvider = slashIdx > -1 ? modelStr.slice(0, slashIdx) : null;
+  const requestedModelId = slashIdx > -1 ? modelStr.slice(slashIdx + 1) : modelStr;
+
+  // ── Free tier (not logged in or legacy XAI model string) ──────────────────
+  if (!userId || !requestedProvider) {
+    return resolveFreeTier(userId);
+  }
+
+  // ── Check user's Vercel AI Gateway key first ──────────────────────────────
+  const { data: gatewaySecret } = await supabase.rpc("get_api_key", { p_provider: "gateway" });
+  if (gatewaySecret) {
+    const gw = createGateway({ apiKey: gatewaySecret });
+    return { model: gw(modelStr), isFreeTier: false, supportsWebSearch: false };
+  }
+
+  // ── Check user's direct provider key ──────────────────────────────────────
+  const { data: providerSecret } = await supabase.rpc("get_api_key", { p_provider: requestedProvider });
+  if (providerSecret) {
+    const model = buildDirectProviderModel(requestedProvider, requestedModelId, providerSecret);
+    if (model) return { model, isFreeTier: false, supportsWebSearch: false };
+  }
+
+  // ── No matching key → fall back to free tier ──────────────────────────────
+  return resolveFreeTier(userId);
+}
+
+function buildDirectProviderModel(provider: string, modelId: string, apiKey: string): LanguageModel | null {
+  switch (provider) {
+    case "openai":
+      return createOpenAI({ apiKey })(modelId);
+    case "anthropic":
+      return createAnthropic({ apiKey })(modelId);
+    case "google":
+      return createGoogleGenerativeAI({ apiKey })(modelId);
+    case "xai":
+      return xai(modelId);
+    default:
+      return null;
+  }
+}
+
+async function resolveFreeTier(userId: string | null | undefined): Promise<ResolvedModel> {
+  // Always track usage for authenticated free-tier users, regardless of which platform model is used
+  if (userId) {
+    const serviceClient = createServiceClient();
+    void Promise.resolve(serviceClient.rpc("increment_usage", { p_user_id: userId }))
+      .then(() => { console.log("[FreeTier] Usage incremented for user:", userId); })
+      .catch((e: unknown) => { console.error("[FreeTier] Failed to increment usage:", e); });
+  }
+
+  const platformGatewayKey = process.env.AI_GATEWAY_API_KEY;
+  if (platformGatewayKey) {
+    const gw = createGateway({ apiKey: platformGatewayKey });
+    return { model: gw(FREE_TIER_MODEL), isFreeTier: true, supportsWebSearch: false };
+  }
+
+  // Fallback: platform XAI key
+  return {
+    model: xai.responses("grok-4-1-fast-non-reasoning"),
+    isFreeTier: true,
+    supportsWebSearch: true,
+  };
+}
+
 // Utility function to encode an SSE message in AI SDK format
 function encodeSSEMessage(type: string, data: Record<string, unknown>): string {
   return `data: ${JSON.stringify({ type, ...data })}
@@ -47,7 +143,7 @@ function createKeepaliveStream(
   mcpConnectionPromise: Promise<{ allTools: Record<string, unknown>; mcpErrors: string[] }>,
   modelMessages: Awaited<ReturnType<typeof convertToModelMessages>>,
   system: string,
-  model: string
+  resolvedModel: ResolvedModel
 ): ReadableStream {
   const encoder = new TextEncoder();
 
@@ -121,12 +217,12 @@ function createKeepaliveStream(
 
           // Now start streamText with MCP tools
          const result = streamText({
-           model: xai.responses(model === "grok-4-1-fast-non-reasoning" ? "grok-4-1-fast-non-reasoning" : "grok-4-1-fast-reasoning"),
+           model: resolvedModel.model,
            system,
            messages: modelMessages,
            tools: {
              ...mcpResult.allTools,
-             web_search: xai.tools.webSearch(),
+             ...(resolvedModel.supportsWebSearch ? { web_search: xai.tools.webSearch() } : {}),
            } as Parameters<typeof streamText>[0]["tools"],
             stopWhen: stepCountIs(MAX_STEPS),
            onStepFinish: (step) => {
@@ -620,6 +716,11 @@ async function connectMCPs(
 export async function POST(req: Request) {
   const { messages, figmaMcpUrl, figmaAccessToken, codeProjectPath, figmaOAuth, model, selectedNode, tunnelSecret, enabledMcps, figmaPluginContext } = await req.json();
 
+  // Resolve the AI model (BYOK or free tier)
+  const supabase = await createSupabaseUserClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  const resolvedModel = await resolveModel(user?.id, model, supabase);
+
   // Get X-MCP-Code-URL header to resolve relative proxy URLs
   console.log("[Header] X-MCP-Code-URL:", req.headers.get("X-MCP-Code-URL"));
   console.log("[Code] codeProjectPath from body:", codeProjectPath);
@@ -714,9 +815,9 @@ RULES:
   );
 
   // Use keepalive stream for async MCP connection with live feedback
-  console.log('[Chat] Starting async keepalive stream for MCP connection');
+  console.log('[Chat] Starting async keepalive stream for MCP connection, isFreeTier:', resolvedModel.isFreeTier);
   return new Response(
-    createKeepaliveStream(mcpConnectionPromise, modelMessages, system, model || "grok-4-1-fast-non-reasoning"),
+    createKeepaliveStream(mcpConnectionPromise, modelMessages, system, resolvedModel),
     {
       headers: {
         'Content-Type': 'text/event-stream',

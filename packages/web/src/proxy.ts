@@ -20,6 +20,8 @@ const PUBLIC_AUTH_ROUTES = [
   "/api/auth/set-token",
   "/api/set-oauth-result", // Allow POST without token for callback
   "/api/guardian/status",  // Health check for the overlay (no auth token)
+  "/api/user",             // User API (BYOK keys + usage) — protected by Supabase auth
+  "/api/gateway-models",   // Public Vercel AI Gateway model catalog (no auth needed)
 ];
 
 function getMcpCodeUrl(request: NextRequest): string | undefined {
@@ -71,7 +73,7 @@ export async function proxy(request: NextRequest) {
                 ...options,
                 sameSite: "none",
                 secure: true,
-                httpOnly: true,
+                // Pas de httpOnly: Supabase doit pouvoir lire ses propres cookies côté client
                 path: "/",
               })
             );

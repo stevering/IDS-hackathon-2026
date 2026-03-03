@@ -27,9 +27,11 @@ export async function createClient() {
             cookiesToSet.forEach(({ name, value, options }) =>
               cookieStore.set(name, value, {
                 ...options,
+                // SameSite=None + Secure requis pour les iframes cross-origin (Figma plugin).
+                // Ne pas mettre httpOnly: les cookies Supabase doivent être lisibles
+                // par le client JS (createBrowserClient) pour que getUser() fonctionne.
                 sameSite: "none",
                 secure: true,
-                httpOnly: true,
                 path: "/",
               })
             );
