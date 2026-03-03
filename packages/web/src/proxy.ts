@@ -50,7 +50,8 @@ export async function proxy(request: NextRequest) {
   const isApiOrStatic =
     pathname.startsWith("/api/") ||
     pathname.startsWith("/_next/") ||
-    pathname.startsWith("/favicon");
+    pathname.startsWith("/favicon") ||
+    pathname.startsWith("/proxy-local/"); // proxy endpoints — not HTML pages, handled by next.config rewrites or middleware proxy logic
 
   if (!isApiOrStatic && !PUBLIC_PAGES.some((p) => pathname.startsWith(p))) {
     let response = NextResponse.next({ request });
