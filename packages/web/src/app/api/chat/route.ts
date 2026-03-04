@@ -330,6 +330,7 @@ type CachedMCP = {
   client: MCPClient;
   tools: Record<string, unknown>;
   connectedAt: number;
+  tokenFingerprint?: string;
 };
 
 const globalCache = globalThis as unknown as {
@@ -437,21 +438,31 @@ async function getOrConnectWithAuth(url: string, label: string, authProvider: im
 
 /**
  * Like getOrConnectWithAuth but skips health checks and age eviction entirely.
- * Use for session-based OAuth MCPs (e.g. Southleft figma-console) where any
- * reconnection creates a new session_id, losing the authenticated Figma session
- * and forcing the user to redo the OAuth flow.
- * The connection is reused until it fails on an actual tool call.
+ * Use for stateless OAuth MCPs (e.g. Southleft figma-console /mcp) where the
+ * Bearer token is used directly for API calls.
+ * Invalidates the cache when the OAuth token changes (e.g. user re-authenticated).
  */
 async function getOrConnectWithAuthSession(url: string, label: string, authProvider: import("@ai-sdk/mcp").OAuthClientProvider, headers?: Record<string, string>): Promise<CachedMCP> {
+  const currentToken = (await authProvider.tokens?.())?.access_token;
+  const currentFingerprint = currentToken ? currentToken.substring(0, 20) : undefined;
+
   const cached = mcpClients.get(url);
 
   if (cached) {
-    console.log(`[${label}] Reusing cached session (age ${Math.round((Date.now() - cached.connectedAt) / 1000)}s) — no healthcheck. NOTE: if you saw "NO OAUTH / NO AUTH" above in a previous request, this cached session may be unauthenticated.`);
-    return cached;
+    // If the token changed (user re-authenticated), evict and reconnect
+    if (cached.tokenFingerprint && currentFingerprint && cached.tokenFingerprint !== currentFingerprint) {
+      console.log(`[${label}] Token changed (was ${cached.tokenFingerprint}… → now ${currentFingerprint}…) — evicting cached session.`);
+      await evict(url);
+    } else {
+      console.log(`[${label}] Reusing cached session (age ${Math.round((Date.now() - cached.connectedAt) / 1000)}s, token ${currentFingerprint ?? "unknown"}…).`);
+      return cached;
+    }
   }
 
-  console.log(`[${label}] No cached session found — creating new authenticated connection.`);
-  return connectMCPWithAuth(url, label, authProvider, headers);
+  console.log(`[${label}] Creating new authenticated connection.`);
+  const entry = await connectMCPWithAuth(url, label, authProvider, headers);
+  entry.tokenFingerprint = currentFingerprint;
+  return entry;
 }
 
 /**
