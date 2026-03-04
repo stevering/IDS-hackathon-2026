@@ -30,6 +30,11 @@ export async function createSouthleftMcpOAuthProvider(
     path: "/",
   };
 
+  // In-memory flags so the retry inside auth() sees the cleared state
+  // even though cookieStore is an immutable snapshot.
+  let tokensInvalidated = false;
+  let clientInvalidated = false;
+
   return {
     get redirectUrl() {
       return redirectUrl;
@@ -46,6 +51,7 @@ export async function createSouthleftMcpOAuthProvider(
     },
 
     async tokens(): Promise<OAuthTokens | undefined> {
+      if (tokensInvalidated) return undefined;
       const raw = cookieStore.get(COOKIE_TOKENS)?.value;
       if (!raw) return undefined;
       try {
@@ -62,7 +68,22 @@ export async function createSouthleftMcpOAuthProvider(
       });
     },
 
+    async invalidateCredentials(scope: 'all' | 'client' | 'tokens' | 'verifier'): Promise<void> {
+      if (scope === 'all' || scope === 'tokens') {
+        tokensInvalidated = true;
+        setCookies?.(COOKIE_TOKENS, '', { ...cookieOptions, maxAge: 0 });
+      }
+      if (scope === 'all' || scope === 'client') {
+        clientInvalidated = true;
+        setCookies?.(COOKIE_CLIENT_INFO, '', { ...cookieOptions, maxAge: 0 });
+      }
+      if (scope === 'all' || scope === 'verifier') {
+        setCookies?.(COOKIE_CODE_VERIFIER, '', { ...cookieOptions, maxAge: 0 });
+      }
+    },
+
     async clientInformation(): Promise<OAuthClientInformation | undefined> {
+      if (clientInvalidated) return undefined;
       const raw = cookieStore.get(COOKIE_CLIENT_INFO)?.value;
       if (raw) {
         try {

@@ -44,13 +44,24 @@ export interface AuthStateMessage {
   authenticated: boolean;
 }
 
+/** Result of an EXECUTE_CODE request sent back from the plugin to the BridgeServer. */
+export interface ExecuteCodeResultMessage {
+  type: 'EXECUTE_CODE_RESULT';
+  /** Matches the id sent in the original ExecuteCodeMessage. */
+  id?: string;
+  success: boolean;
+  result?: unknown;
+  error?: string;
+}
+
 /** Figma plugin UI → BridgeServer (Electron) */
 export type FigmaMessage =
   | RegisterMessage
   | SelectionChangedMessage
   | AnalysisResultMessage
   | PongMessage
-  | AuthStateMessage;
+  | AuthStateMessage
+  | ExecuteCodeResultMessage;
 
 // ── Messages: Electron → Figma ────────────────────────────────────────────────
 

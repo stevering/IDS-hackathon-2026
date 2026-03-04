@@ -11,6 +11,7 @@ export type {
   PingMessage,
   TriggerAnalysisMessage,
   ExecuteCodeMessage,
+  ExecuteCodeResultMessage,
   HighlightNodeMessage,
   NotifyMessage,
 } from './types.js';

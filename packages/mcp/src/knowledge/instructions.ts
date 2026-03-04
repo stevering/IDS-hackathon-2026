@@ -131,6 +131,44 @@ You have access to **Guardian MCP** tools (prefixed \`guardian_\`). These tools 
 - Use \`guardian_surface_pattern\` when a pattern appears in 3+ places
 - Use \`guardian_document_gap\` to build a case for a DS extension request
 - Use \`guardian_list_skills\` + \`guardian_run_skill\` for Figma Plugin API operations
+- Use \`guardian_figma_execute\` to run arbitrary Figma Plugin API code directly in the open plugin
+
+### guardian_figma_execute — Execution Strategy (MANDATORY)
+**Always break work into small, focused steps.** Never send one large block of code that does everything at once.
+Each call should do ONE logical thing (create a frame, add a text node, apply a style, etc.).
+After each call:
+- If \`success: true\` → verify (see step 5 below), then proceed to the next step automatically.
+- If \`success: false\` → stop, diagnose, fix, retry before continuing.
+
+This step-by-step approach makes errors easy to locate and fix, and keeps each execution fast and predictable.
+
+### guardian_figma_execute — Error Recovery (MANDATORY)
+When \`guardian_figma_execute\` returns \`success: false\`:
+1. **Think** — read the \`error\` field carefully. It contains the exception message and stack trace. Identify which line/call caused the failure.
+2. **Diagnose** — common causes: wrong API (e.g. \`RectangleNode\` has no \`appendChild\`, use a \`Frame\` instead), missing \`await\`, invalid property value, non-existent node ID.
+3. **Fix** — correct the code. Do NOT ask the user; fix it yourself.
+4. **Retry** — call \`guardian_figma_execute\` again with the corrected code.
+5. **Verify** — after a successful call, always verify the result using a **different tool** (not \`guardian_figma_execute\` again). Use \`guardian_run_skill\` with \`get_selection_context\` or \`get_node_variables\` to inspect the created/modified node, or use a Figma MCP read tool (\`figma_get_design_context\`, \`figma_get_metadata\`) if a node ID was returned. Confirm that the node exists, has the expected properties, and looks correct before reporting success to the user.
+6. **Continue** — once verification passes, carry on with the rest of the task.
+Never give up after a single failure. If two consecutive attempts fail, explain the error to the user and propose a solution.
+
+### figmaconsole — Authentication Error Diagnosis (MANDATORY)
+When a \`figmaconsole_\` tool returns \`"error": "authentication_required"\`, follow this decision tree:
+
+**Case 1 — Response contains \`auth_url\` with \`session_id\`** (most common):
+This means the current SSE session has not completed the per-session Figma REST API authentication.
+→ Tell the user: *"Please open this URL in your browser to authenticate this session with Figma: [auth_url from the error]"*
+→ Once they complete it, retry the tool call immediately — it will work for the rest of this session.
+→ This is normal and expected the first time any REST API tool is called in a new session.
+
+**Case 2 — Response has \`auth_url\` but user says they already completed it**:
+The most likely cause is a Figma account mismatch — the account they used to complete the OAuth does not have access to the file.
+→ Tell the user: *"The Figma account you authenticated with doesn't have access to this file. Make sure you're using the same Figma account that owns or has access to the file."*
+
+**Case 3 — No \`auth_url\` in the response**:
+The SSE connection itself is unauthenticated. Ask the user to reconnect via the Figma Console button in settings.
+
+Never diagnose \`FIGMA_ACCESS_TOKEN\` env var — that does not apply to Figma Console MCP (it uses session OAuth only).
 
 ## FIGMA CONSOLE MCP (tools prefixed \`figmaconsole_\`)
 You have access to **Figma Console MCP** tools (prefixed \`figmaconsole_\`). These tools allow you to:
@@ -138,6 +176,7 @@ You have access to **Figma Console MCP** tools (prefixed \`figmaconsole_\`). The
 - Manipulate the canvas, create or modify nodes, apply styles, and run arbitrary Figma Plugin API code.
 - Use these tools when the user asks to **modify**, **create**, or **script** something directly in Figma, or when the standard Figma MCP read-only tools are insufficient.
 - These tools are complementary to the Figma MCP tools (\`figma_\`): use \`figma_\` for reading/inspecting and \`figmaconsole_\` for executing code in Figma.
+
 
 **CRITICAL — \`fileUrl\` parameter is MANDATORY for ALL \`figmaconsole_\` tools:**
 - Every call to a \`figmaconsole_\` tool MUST include the \`fileUrl\` parameter.

@@ -358,19 +358,62 @@ figma.ui.onmessage = async (msg: IncomingMessage): Promise<void> => {
   }
 
   // ============================================================================
-  // EXECUTE_CODE - Arbitrary code execution (Transplanted from Southleft)
+  // EXECUTE_CODE - Arbitrary code execution
   // ============================================================================
   if (type === 'EXECUTE_CODE') {
     const requestId = msg.id ?? msg.requestId;
+
+    const sendResult = (payload: { success: boolean; result?: unknown; error?: string }): void => {
+      try {
+        figma.ui.postMessage({ type: 'EXECUTE_CODE_RESULT', id: requestId, ...payload });
+      } catch {
+        // Fallback: result contained non-serializable values — send stringified version
+        figma.ui.postMessage({
+          type: 'EXECUTE_CODE_RESULT',
+          id: requestId,
+          success: false,
+          error: `Result could not be serialized: ${String(payload.result ?? payload.error)}`,
+        });
+      }
+    };
+
     try {
-      console.log('FigPal Bridge: Executing code...');
-      const wrappedCode = `(async function() {\n${msg.code}\n})()`;
+      // Wrap the user code in its own try/catch INSIDE the async IIFE.
+      // Figma's plugin sandbox sometimes intercepts rejected Promises before they
+      // reach our outer catch block, resulting in a silent success with result=undefined.
+      // By catching inside the IIFE and returning a sentinel object, errors are always
+      // surfaced as return values rather than Promise rejections.
+      //
+      // Special case: if the code is itself an async IIFE — (async () => { ... })() —
+      // our wrapper must use `return await` to capture its result. Without it, the IIFE
+      // runs fire-and-forget and the outer function returns undefined.
+      const codeBody = msg.code.trim();
+      const isAsyncIIFE =
+        /^\(?async(\s+function)?\s*\(/.test(codeBody) &&
+        /[)]\s*;?\s*$/.test(codeBody);
+
+      const wrappedCode = isAsyncIIFE
+        ? `(async function() {
+  try {
+    return await (${codeBody.replace(/;?\s*$/, '')});
+  } catch (__e) {
+    const __msg = __e instanceof Error ? __e.message : String(__e);
+    const __stk = __e instanceof Error && __e.stack ? __e.stack : '';
+    return { __guardian_exec_error: (__stk && __stk.includes(__msg) ? __stk : (__msg + (__stk ? '\n' + __stk : ''))).trim() };
+  }
+})()`
+        : `(async function() {
+  try {
+${codeBody}
+  } catch (__e) {
+    const __msg = __e instanceof Error ? __e.message : String(__e);
+    const __stk = __e instanceof Error && __e.stack ? __e.stack : '';
+    return { __guardian_exec_error: (__stk && __stk.includes(__msg) ? __stk : (__msg + (__stk ? '\n' + __stk : ''))).trim() };
+  }
+})()`;
       const timeoutMs = msg.timeout ?? 5000;
       const timeoutPromise = new Promise<never>((_, reject) => {
-        setTimeout(
-            () => reject(new Error(`Execution timed out after ${timeoutMs}ms`)),
-            timeoutMs
-        );
+        setTimeout(() => reject(new Error(`Execution timed out after ${timeoutMs}ms`)), timeoutMs);
       });
 
       let codePromise: Promise<unknown>;
@@ -378,37 +421,52 @@ figma.ui.onmessage = async (msg: IncomingMessage): Promise<void> => {
         // eslint-disable-next-line no-eval
         codePromise = eval(wrappedCode) as Promise<unknown>;
       } catch (syntaxError) {
-        const syntaxErrorMsg = syntaxError instanceof Error
-            ? syntaxError.message
-            : String(syntaxError);
-        console.error('FigPal Bridge: Syntax error in code:', syntaxErrorMsg);
-        figma.ui.postMessage({
-          type: 'EXECUTE_CODE_RESULT',
-          id: requestId,
+        sendResult({
           success: false,
-          error: `Syntax error: ${syntaxErrorMsg}`
+          error: `Syntax error: ${syntaxError instanceof Error ? syntaxError.message : String(syntaxError)}`,
         });
         return;
       }
 
       const result: unknown = await Promise.race([codePromise, timeoutPromise]);
-      console.log('FigPal Bridge: Code executed successfully');
 
-      figma.ui.postMessage({
-        type: 'EXECUTE_CODE_RESULT',
-        id: requestId,
-        success: true,
-        result
-      });
+      // Check if the inner try/catch captured a runtime error
+      if (result !== null && typeof result === 'object' && '__guardian_exec_error' in result) {
+        sendResult({
+          success: false,
+          error: (result as { __guardian_exec_error: string }).__guardian_exec_error,
+        });
+        return;
+      }
+
+      // When an async IIFE was detected, the agent may have written its own try/catch
+      // that returns { success: false, error: "..." } on failure. Normalize this to our
+      // standard error format so the MCP agent receives a clear success: false signal.
+      if (
+        isAsyncIIFE &&
+        result !== null && typeof result === 'object' &&
+        (result as Record<string, unknown>)['success'] === false &&
+        typeof (result as Record<string, unknown>)['error'] === 'string'
+      ) {
+        sendResult({
+          success: false,
+          error: (result as { error: string }).error,
+        });
+        return;
+      }
+
+      // Test JSON-serializability before sending — Figma nodes and circular refs will throw
+      let safeResult: unknown;
+      try {
+        JSON.stringify(result);
+        safeResult = result;
+      } catch {
+        safeResult = `[non-serializable: ${String(result)}]`;
+      }
+
+      sendResult({ success: true, result: safeResult });
     } catch (err) {
-      const error = err instanceof Error ? err : new Error(String(err));
-      console.error('FigPal Bridge: Execution error:', error.message);
-      figma.ui.postMessage({
-        type: 'EXECUTE_CODE_RESULT',
-        id: requestId,
-        success: false,
-        error: error.message
-      });
+      sendResult({ success: false, error: err instanceof Error ? err.message : String(err) });
     }
   }
 

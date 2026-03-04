@@ -1428,6 +1428,13 @@
                 return;
             }
 
+            // Forward EXECUTE_CODE_RESULT back to the BridgeServer so MCP controllers
+            // that sent the EXECUTE_CODE request can receive the result.
+            if (msg.type === 'EXECUTE_CODE_RESULT') {
+                send(msg);
+                return;
+            }
+
             // Mirror selection changes to the Electron overlay (only when authenticated)
             if (msg.type === 'selection-changed' && isAuthenticated) {
                 send({

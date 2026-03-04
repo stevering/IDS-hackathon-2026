@@ -10,10 +10,16 @@ type MessageHandler = (clientId: string, msg: FigmaMessage) => void;
  * Figma plugin / widget UIs connect to this server from localhost.
  * The server routes ElectronMessages to specific clients or broadcasts
  * to all, and surfaces FigmaMessages to the Electron app via event handlers.
+ *
+ * MCP controllers can also connect by registering with clientType 'mcp-controller'.
+ * They can send EXECUTE_CODE messages (broadcast to all Figma clients) and receive
+ * EXECUTE_CODE_RESULT messages back when the plugin finishes execution.
  */
 export class BridgeServer {
   private wss: WebSocketServer | null = null;
   private clients = new Map<string, { ws: WebSocket; info: ClientInfo }>();
+  /** MCP controller connections — receive EXECUTE_CODE_RESULT forwarded from Figma clients. */
+  private controllers = new Map<string, WebSocket>();
   private counter = 0;
 
   private onConnectHandler?: ConnectHandler;
@@ -31,28 +37,60 @@ export class BridgeServer {
 
       ws.on('message', (raw: RawData) => {
         try {
-          const msg = JSON.parse(raw.toString()) as FigmaMessage;
+          // Parse as a loose object first — messages can come from Figma clients OR
+          // MCP controllers, so the union of both message types is valid here.
+          const msg = JSON.parse(raw.toString()) as { type: string; [key: string]: unknown };
 
           if (msg.type === 'REGISTER') {
-            // Replace temp entry with a real one
+            // MCP controllers register with a special clientType
+            if (msg['clientType'] === 'mcp-controller') {
+              const controllerId = `mcp-${++this.counter}`;
+              this.controllers.set(controllerId, ws);
+              ws.send(JSON.stringify({ type: 'REGISTERED', clientId: controllerId }));
+              ws.on('close', () => this.controllers.delete(controllerId));
+              return;
+            }
+
+            // Regular Figma plugin / widget client
             const info: ClientInfo = {
               id: tempId,
-              clientType: msg.clientType,
-              widgetId: msg.widgetId,
-              fileKey: msg.fileKey,
+              clientType: msg['clientType'] as ClientInfo['clientType'],
+              widgetId: msg['widgetId'] as string | undefined,
+              fileKey: msg['fileKey'] as string | undefined,
               connectedAt: Date.now(),
             };
             this.clients.set(tempId, { ws, info });
-            // ACK with assigned ID
             ws.send(JSON.stringify({ type: 'REGISTERED', clientId: tempId }));
             this.onConnectHandler?.(info);
             return;
           }
 
-          // Find the client entry by its WebSocket reference
+          // EXECUTE_CODE from an MCP controller → broadcast to all Figma clients
+          if (msg.type === 'EXECUTE_CODE') {
+            const isController = [...this.controllers.values()].some((c) => c === ws);
+            if (isController) {
+              this.broadcast(msg as unknown as ElectronMessage);
+              return;
+            }
+          }
+
+          // EXECUTE_CODE_RESULT from a Figma client → forward to all MCP controllers
+          if (msg.type === 'EXECUTE_CODE_RESULT') {
+            const json = JSON.stringify(msg);
+            for (const controllerWs of this.controllers.values()) {
+              if (controllerWs.readyState === WebSocket.OPEN) controllerWs.send(json);
+            }
+            // Also surface to the Electron app (onMessageHandler) for logging
+            const entry = [...this.clients.entries()].find(([, v]) => v.ws === ws);
+            const clientId = entry?.[0] ?? tempId;
+            this.onMessageHandler?.(clientId, msg as FigmaMessage);
+            return;
+          }
+
+          // All other Figma messages → surface to the Electron app
           const entry = [...this.clients.entries()].find(([, v]) => v.ws === ws);
           const clientId = entry?.[0] ?? tempId;
-          this.onMessageHandler?.(clientId, msg);
+          this.onMessageHandler?.(clientId, msg as FigmaMessage);
         } catch {
           // ignore malformed JSON
         }

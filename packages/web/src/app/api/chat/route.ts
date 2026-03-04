@@ -230,7 +230,7 @@ function createKeepaliveStream(
                console.log("[Chat] Tool calls:", step.toolCalls.map(t => t));
              }
              if (step.toolResults.length > 0) {
-               console.log("[Chat] Tool results:", step.toolCalls.map(t => t));
+               console.log("[Chat] Tool results:", step.toolResults.map(r => ({ toolName: r.toolName, result: JSON.stringify(r.result)?.substring(0, 300) })));
              }
            },
            onFinish: (result) => {
@@ -435,6 +435,50 @@ async function getOrConnectWithAuth(url: string, label: string, authProvider: im
   return connectMCPWithAuth(url, label, authProvider, headers);
 }
 
+/**
+ * Like getOrConnectWithAuth but skips health checks and age eviction entirely.
+ * Use for session-based OAuth MCPs (e.g. Southleft figma-console) where any
+ * reconnection creates a new session_id, losing the authenticated Figma session
+ * and forcing the user to redo the OAuth flow.
+ * The connection is reused until it fails on an actual tool call.
+ */
+async function getOrConnectWithAuthSession(url: string, label: string, authProvider: import("@ai-sdk/mcp").OAuthClientProvider, headers?: Record<string, string>): Promise<CachedMCP> {
+  const cached = mcpClients.get(url);
+
+  if (cached) {
+    console.log(`[${label}] Reusing cached session (age ${Math.round((Date.now() - cached.connectedAt) / 1000)}s) — no healthcheck. NOTE: if you saw "NO OAUTH / NO AUTH" above in a previous request, this cached session may be unauthenticated.`);
+    return cached;
+  }
+
+  console.log(`[${label}] No cached session found — creating new authenticated connection.`);
+  return connectMCPWithAuth(url, label, authProvider, headers);
+}
+
+/**
+ * Wraps tools with timeout only — no eviction, no reconnect on failure.
+ * Use for session-based OAuth MCPs (e.g. Southleft) where eviction would destroy
+ * the authenticated session and reconnect without auth.
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function wrapToolsWithTimeout(tools: Record<string, any>, label: string): Record<string, any> {
+  const wrapped: Record<string, unknown> = {};
+  for (const [name, tool] of Object.entries(tools)) {
+    wrapped[name] = {
+      ...tool,
+      execute: async (...args: unknown[]) => {
+        const toolResult = await withTimeout(
+          (tool as { execute: (...a: unknown[]) => Promise<unknown> }).execute(...args),
+          TOOL_TIMEOUT_MS,
+          `Tool "${name}"`,
+        );
+        console.log(`[${label}] Tool "${name}" raw result:`, JSON.stringify(toolResult)?.substring(0, 300));
+        return toolResult;
+      },
+    };
+  }
+  return wrapped;
+}
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function wrapToolsWithRetry(tools: Record<string, any>, url: string, label: string, headers?: Record<string, string>): Record<string, any> {
   const wrapped: Record<string, unknown> = {};
@@ -460,9 +504,11 @@ function wrapToolsWithRetry(tools: Record<string, any>, url: string, label: stri
             `Tool "${name}"`,
           );
         } catch (firstError) {
-          console.warn(`[${label}] Tool "${name}" failed, reconnecting: ${firstError instanceof Error ? firstError.message : firstError}`);
+          const firstErrorMsg = firstError instanceof Error ? firstError.message : String(firstError);
+          console.warn(`[${label}] Tool "${name}" failed — EVICTING SESSION at ${url}. Error: ${firstErrorMsg}`);
           await evict(url);
           try {
+            console.warn(`[${label}] Reconnecting via connectMCPAuto (NO OAUTH / NO AUTH) for: ${url}`);
             const fresh = await connectMCPAuto(url, label, headers);
             const freshTool = fresh.tools[name];
             if (!freshTool || typeof (freshTool as { execute?: unknown }).execute !== "function") {
@@ -559,7 +605,7 @@ async function connectMCPs(
           : figmaProvider;
         mcpResult = await getOrConnectWithAuth(effectiveUrl, "Figma", effectiveFigmaProvider);
       } else {
-        const token = figmaAccessToken || oauthToken || process.env.FIGMA_ACCESS_TOKEN;
+        const token = figmaAccessToken || oauthToken;
         if (token) {
           figmaHeaders.Authorization = `Bearer ${token}`;
         }
@@ -582,7 +628,7 @@ async function connectMCPs(
 
   // Connect Figma Console MCP (southleft - online version, requires OAuth) if enabled
   if (enabledMcps.figmaConsole) {
-  const figmaConsoleMcpUrl = `${SOUTHLEFT_MCP_URL}/sse`;
+  const figmaConsoleMcpUrl = `${SOUTHLEFT_MCP_URL}/mcp`;
   try {
     const cookieStoreForSouthleft = await cookies();
     const southleftTokensRaw = cookieStoreForSouthleft.get(SOUTHLEFT_COOKIE_TOKENS)?.value;
@@ -597,18 +643,23 @@ async function connectMCPs(
     if (southleftTokensRaw || bearerToken) {
       console.log("[FigmaConsole] Connecting with OAuth to:", figmaConsoleMcpUrl);
       const southleftProvider = await createSouthleftMcpOAuthProvider(cookieStoreForSouthleft);
-      // If bearer token provided, override the provider's tokens method
-      if (bearerToken) {
-        const originalTokens = southleftProvider.tokens.bind(southleftProvider);
+      // Only use the Authorization header Bearer token as fallback when the Southleft OAuth cookie is absent.
+      // The cookie token (from the dedicated Southleft OAuth flow) takes priority.
+      if (bearerToken && !southleftTokensRaw) {
         southleftProvider.tokens = async () => {
           return { access_token: bearerToken, token_type: 'Bearer' };
         };
       }
-      const { tools } = await getOrConnectWithAuth(figmaConsoleMcpUrl, "FigmaConsole", southleftProvider);
+      // Diagnostic: log what token will be used for this SSE connection
+      const providerTokens = await southleftProvider.tokens?.();
+      const tokenSource = southleftTokensRaw ? "southleft_mcp_tokens cookie" : (bearerToken ? "Authorization header (fallback)" : "none");
+      console.log("[FigmaConsole] Token present:", !!providerTokens, "| prefix:", providerTokens?.access_token?.substring(0, 15) ?? "none", "| source:", tokenSource);
+      const { tools } = await getOrConnectWithAuthSession(figmaConsoleMcpUrl, "FigmaConsole", southleftProvider);
       const prefixedTools = Object.fromEntries(
         Object.entries(tools).map(([name, tool]) => [`figmaconsole_${name}`, tool])
       );
-      Object.assign(allTools, wrapToolsWithRetry(prefixedTools, figmaConsoleMcpUrl, "FigmaConsole", {}));
+      // Use timeout-only wrapper (no retry/eviction) to preserve the OAuth session
+      Object.assign(allTools, wrapToolsWithTimeout(prefixedTools, "FigmaConsole"));
       console.log("[FigmaConsole] Connected successfully");
     } else {
       console.log("[FigmaConsole] No OAuth tokens found — skipping (user needs to sign in via Figma Console button)");
@@ -708,8 +759,8 @@ async function connectMCPs(
     }
   }
 
-  console.debug('allTools:');
-  console.debug(allTools);
+  //console.debug('allTools:');
+  //console.debug(allTools);
   return { allTools, mcpErrors };
 }
 
