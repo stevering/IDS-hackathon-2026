@@ -1101,22 +1101,6 @@ export default function Home() {
   <span className="text-xs text-white/30 mt-1 block">Alternative MCP server</span>
 </div>
 
-           {/*  <div>
-              <label className="block text-xs text-white/50 mb-1">
-                Figma Access Token (legacy)
-              </label>
-              <input
-                type="password"
-                value={figmaAccessToken}
-                onChange={(e) => setFigmaAccessToken(e.target.value)}
-                placeholder="figd_..."
-                className="w-full bg-white/5 border border-white/10 rounded-md px-3 py-2 text-sm text-white placeholder:text-white/20 focus:outline-none focus:border-white/30"
-              />
-              <span className="text-xs text-white/30 mt-1 block">
-                Fallback if OAuth not used. Also reads FIGMA_ACCESS_TOKEN from .env.local
-              </span>
-            </div> */}
-
             <div>
               <label className="block text-xs text-white/50 mb-1">
                 Code Editor MCP Url

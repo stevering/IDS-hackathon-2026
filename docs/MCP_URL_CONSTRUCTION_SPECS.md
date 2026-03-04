@@ -19,7 +19,6 @@ This document describes the complete URL construction logic for accessing the Fi
 | `NEXT_PUBLIC_PROXY_LOCAL_CODE_MCP` | Proxy URL for Code | `http://localhost:3000/proxy-local/code/mcp` |
 | `NEXT_PUBLIC_MCP_TUNNEL_SECRET` | Proxy/tunnel authentication secret (middleware only) | Randomly generated token |
 | `NEXT_PUBLIC_BASE_URL` | Application base URL | `http://127.0.0.1:3000` |
-| `FIGMA_ACCESS_TOKEN` | Figma access token (optional) | `figd_xxxxx` |
 | `FIGMA_CLIENT_ID` | Figma OAuth client ID (optional) | `xxxxx` |
 | `FIGMA_CLIENT_SECRET` | Figma OAuth client secret (optional) | `xxxxx` |
 

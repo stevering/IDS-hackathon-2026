@@ -1348,7 +1348,7 @@ export default function Home() {
                 className="w-full bg-white/5 border border-white/10 rounded-md px-3 py-2 text-sm text-white placeholder:text-white/20 focus:outline-none focus:border-white/30"
               />
               <span className="text-xs text-white/30 mt-1 block">
-                Fallback if OAuth not used. Also reads FIGMA_ACCESS_TOKEN from .env.local
+                Fallback if OAuth not used.
               </span>
             </div> */}
 

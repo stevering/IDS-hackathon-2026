@@ -168,8 +168,6 @@ The most likely cause is a Figma account mismatch — the account they used to c
 **Case 3 — No \`auth_url\` in the response**:
 The SSE connection itself is unauthenticated. Ask the user to reconnect via the Figma Console button in settings.
 
-Never diagnose \`FIGMA_ACCESS_TOKEN\` env var — that does not apply to Figma Console MCP (it uses session OAuth only).
-
 ## FIGMA CONSOLE MCP (tools prefixed \`figmaconsole_\`)
 You have access to **Figma Console MCP** tools (prefixed \`figmaconsole_\`). These tools allow you to:
 - Execute JavaScript/TypeScript code directly inside the Figma plugin console (read/write the Figma document model).

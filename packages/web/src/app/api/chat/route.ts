@@ -628,7 +628,7 @@ async function connectMCPs(
 
   // Connect Figma Console MCP (southleft - online version, requires OAuth) if enabled
   if (enabledMcps.figmaConsole) {
-  const figmaConsoleMcpUrl = `${SOUTHLEFT_MCP_URL}/mcp`;
+  const figmaConsoleMcpUrl = process.env.SOUTHLEFT_MCP_RESOURCE || `${SOUTHLEFT_MCP_URL}/mcp`;
   try {
     const cookieStoreForSouthleft = await cookies();
     const southleftTokensRaw = cookieStoreForSouthleft.get(SOUTHLEFT_COOKIE_TOKENS)?.value;
