@@ -7,6 +7,7 @@ import { streamText, stepCountIs, convertToModelMessages, type LanguageModel } f
 import { createClient as createSupabaseUserClient } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { FREE_TIER_MODEL } from "@/lib/providers";
+import { getModelPricing } from "@/lib/model-pricing";
 import { createMCPClient, type MCPClient } from "@ai-sdk/mcp";
 import { GUARDIAN_SYSTEM_PROMPT } from "@/lib/system-prompt";
 import { cookies } from "next/headers";
@@ -47,6 +48,7 @@ type ResolvedModel = {
   model: LanguageModel;
   isFreeTier: boolean;
   supportsWebSearch: boolean;
+  modelId: string;
 };
 
 /**
@@ -80,14 +82,14 @@ async function resolveModel(
   const { data: gatewaySecret } = await supabase.rpc("get_api_key", { p_provider: "gateway" });
   if (gatewaySecret) {
     const gw = createGateway({ apiKey: gatewaySecret });
-    return { model: gw(modelStr), isFreeTier: false, supportsWebSearch: false };
+    return { model: gw(modelStr), isFreeTier: false, supportsWebSearch: false, modelId: modelStr };
   }
 
   // ── Check user's direct provider key ──────────────────────────────────────
   const { data: providerSecret } = await supabase.rpc("get_api_key", { p_provider: requestedProvider });
   if (providerSecret) {
     const model = buildDirectProviderModel(requestedProvider, requestedModelId, providerSecret);
-    if (model) return { model, isFreeTier: false, supportsWebSearch: false };
+    if (model) return { model, isFreeTier: false, supportsWebSearch: false, modelId: modelStr };
   }
 
   // ── No matching key → fall back to free tier ──────────────────────────────
@@ -115,7 +117,7 @@ async function resolveFreeTier(userId: string | null | undefined): Promise<Resol
   const platformGatewayKey = process.env.AI_GATEWAY_API_KEY;
   if (platformGatewayKey) {
     const gw = createGateway({ apiKey: platformGatewayKey });
-    return { model: gw(FREE_TIER_MODEL), isFreeTier: true, supportsWebSearch: false };
+    return { model: gw(FREE_TIER_MODEL), isFreeTier: true, supportsWebSearch: false, modelId: FREE_TIER_MODEL };
   }
 
   // Fallback: platform XAI key
@@ -123,6 +125,7 @@ async function resolveFreeTier(userId: string | null | undefined): Promise<Resol
     model: xai.responses("grok-4-1-fast-non-reasoning"),
     isFreeTier: true,
     supportsWebSearch: true,
+    modelId: "xai/grok-4-1-fast-non-reasoning",
   };
 }
 
@@ -139,7 +142,8 @@ function createKeepaliveStream(
   modelMessages: Awaited<ReturnType<typeof convertToModelMessages>>,
   system: string,
   resolvedModel: ResolvedModel,
-  freeTierUserId?: string | null
+  freeTierUserId?: string | null,
+  freeTierModelId?: string | null
 ): ReadableStream {
   const encoder = new TextEncoder();
 
@@ -234,14 +238,32 @@ function createKeepaliveStream(
               if (result.finishReason === 'stop' && result.steps.length >= MAX_STEPS) {
                 console.warn(`[Chat] Keepalive stream stopped due to max steps (${MAX_STEPS}) - response may be truncated`);
               }
-              // Track token usage for free-tier users (rolling 24h window)
+              // Track detailed token + cost usage for free-tier users (rolling 24h window)
               if (freeTierUserId && result.totalUsage) {
-                const totalTokens = (result.totalUsage.inputTokens ?? 0) + (result.totalUsage.outputTokens ?? 0);
-                console.log(`[FreeTier] Tracking ${totalTokens} tokens (input: ${result.totalUsage.inputTokens}, output: ${result.totalUsage.outputTokens}) for user: ${freeTierUserId}`);
-                const serviceClient = createServiceClient();
-                void Promise.resolve(serviceClient.rpc("increment_usage", { p_user_id: freeTierUserId, p_tokens: totalTokens }))
-                  .then(({ data }) => { console.log(`[FreeTier] Usage updated — rolling 24h total: ${data} tokens`); })
-                  .catch((e: unknown) => { console.error("[FreeTier] Failed to track token usage:", e); });
+                const inputTokens = result.totalUsage.inputTokens ?? 0;
+                const outputTokens = result.totalUsage.outputTokens ?? 0;
+                const modelId = freeTierModelId ?? "unknown";
+                console.log(`[FreeTier] Tracking tokens (input: ${inputTokens}, output: ${outputTokens}, model: ${modelId}) for user: ${freeTierUserId}`);
+                void (async () => {
+                  try {
+                    const pricing = await getModelPricing(modelId);
+                    const costInput = inputTokens * pricing.inputPerToken;
+                    const costOutput = outputTokens * pricing.outputPerToken;
+                    console.log(`[FreeTier] Cost: input=$${costInput.toFixed(6)}, output=$${costOutput.toFixed(6)}, total=$${(costInput + costOutput).toFixed(6)}`);
+                    const serviceClient = createServiceClient();
+                    const { data } = await serviceClient.rpc("increment_usage", {
+                      p_user_id: freeTierUserId,
+                      p_input_tokens: inputTokens,
+                      p_output_tokens: outputTokens,
+                      p_model: modelId,
+                      p_cost_input: costInput,
+                      p_cost_output: costOutput,
+                    });
+                    console.log(`[FreeTier] Usage updated — rolling 24h total: ${data} tokens`);
+                  } catch (e) {
+                    console.error("[FreeTier] Failed to track token usage:", e);
+                  }
+                })();
               }
               streamFinishedResolve({ finishReason: result.finishReason, steps: result.steps });
            },
@@ -898,9 +920,10 @@ RULES:
 
   // Use keepalive stream for async MCP connection with live feedback
   const freeTierUserId = resolvedModel.isFreeTier ? user?.id : null;
+  const freeTierModelId = resolvedModel.isFreeTier ? resolvedModel.modelId : null;
   console.log('[Chat] Starting async keepalive stream for MCP connection, isFreeTier:', resolvedModel.isFreeTier);
   return new Response(
-    createKeepaliveStream(mcpConnectionPromise, modelMessages, system, resolvedModel, freeTierUserId),
+    createKeepaliveStream(mcpConnectionPromise, modelMessages, system, resolvedModel, freeTierUserId, freeTierModelId),
     {
       headers: {
         'Content-Type': 'text/event-stream',

@@ -6,6 +6,7 @@ import { useState, useRef, useEffect, useMemo } from "react";
 import Link from "next/link";
 import type { GatewayModel } from "./api/gateway-models/route";
 import { useFigmaPlugin } from "./hooks/useFigmaPlugin";
+import { useFigmaExecutePoller } from "./hooks/useFigmaExecutePoller";
 import { UserMenu } from "@/components/UserMenu";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -617,6 +618,7 @@ function parseTextWithImages(text: string, isStreaming: boolean): Segment[] {
 export default function Home() {
   // ── Figma plugin bridge ─────────────────────────────────────────────
   const { isFigmaPlugin, figmaContext, sendToPlugin, executeCode } = useFigmaPlugin();
+  useFigmaExecutePoller(executeCode, isFigmaPlugin);
 
   const isDev = process.env.NODE_ENV === 'development';
   const [figmaMcpUrl, setFigmaMcpUrl] = useState(
@@ -657,26 +659,21 @@ export default function Home() {
   const githubOAuthSessionRef = useRef<string | null>(null);
   const figmaOAuthSessionRef = useRef<string | null>(null);
 
-  // MCP Toggles - enabled/disabled state
-  const [enabledMcps, setEnabledMcps] = useState<Record<string, boolean>>({
-    figma: true,
-    figmaConsole: false,
-    github: false,
-    code: true,
-  });
-
-  // Load enabled MCPs from localStorage on mount
-  useEffect(() => {
-    const saved = localStorage.getItem('guardian-enabled-mcps');
-    if (saved) {
-      try {
-        const parsed = JSON.parse(saved);
-        setEnabledMcps(prev => ({ ...prev, ...parsed }));
-      } catch (e) {
-        console.error('Failed to parse enabled MCPs from localStorage:', e);
+  // MCP Toggles - enabled/disabled state (lazy init from localStorage)
+  const mcpDefaults = { figma: true, figmaConsole: false, github: false, code: true };
+  const [enabledMcps, setEnabledMcps] = useState<Record<string, boolean>>(() => {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('guardian-enabled-mcps');
+      if (saved) {
+        try {
+          return { ...mcpDefaults, ...JSON.parse(saved) };
+        } catch {
+          // ignore malformed data
+        }
       }
     }
-  }, []);
+    return mcpDefaults;
+  });
 
   // Save enabled MCPs to localStorage when changed
   useEffect(() => {

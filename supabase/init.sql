@@ -33,12 +33,16 @@ CREATE POLICY "users update own keys"
 CREATE POLICY "users delete own keys"
   ON public.user_api_keys FOR DELETE USING (auth.uid() = user_id);
 
--- ── Table : rolling 24h token usage log (free tier) ──────────────────────────
+-- ── Table : detailed token + cost usage log (free tier, rolling 24h) ─────────
 CREATE TABLE IF NOT EXISTS public.user_usage_log (
-  id         BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-  user_id    UUID        NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
-  tokens     INTEGER     NOT NULL,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+  id              BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  user_id         UUID        NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+  input_tokens    INTEGER     NOT NULL DEFAULT 0,
+  output_tokens   INTEGER     NOT NULL DEFAULT 0,
+  model           TEXT,
+  cost_input_usd  NUMERIC(12,8) NOT NULL DEFAULT 0,
+  cost_output_usd NUMERIC(12,8) NOT NULL DEFAULT 0,
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 CREATE INDEX IF NOT EXISTS idx_usage_log_user_time ON public.user_usage_log (user_id, created_at DESC);
@@ -47,6 +51,14 @@ ALTER TABLE public.user_usage_log ENABLE ROW LEVEL SECURITY;
 
 CREATE POLICY "users see own usage"
   ON public.user_usage_log FOR SELECT USING (auth.uid() = user_id);
+
+-- ── Table : model pricing cache (refreshed daily from Vercel AI Gateway) ─────
+CREATE TABLE IF NOT EXISTS public.model_pricing_cache (
+  model_id         TEXT PRIMARY KEY,
+  input_per_token  NUMERIC(16,12) NOT NULL,
+  output_per_token NUMERIC(16,12) NOT NULL,
+  fetched_at       TIMESTAMPTZ NOT NULL DEFAULT now()
+);
 
 -- ── RPC : stocker / mettre à jour une clé dans le Vault ──────────────────────
 CREATE OR REPLACE FUNCTION public.upsert_api_key(p_provider TEXT, p_secret TEXT)
@@ -140,43 +152,106 @@ BEGIN
     WHERE user_id = v_user_id AND provider = p_provider;
 END; $$;
 
--- ── RPC : add token usage (called server-side via service role) ──────────────
-CREATE OR REPLACE FUNCTION public.increment_usage(p_user_id UUID, p_tokens INTEGER)
+-- ── Custom return type for detailed usage aggregates ──────────────────────────
+CREATE TYPE public.usage_aggregate AS (
+  total_tokens    INTEGER,
+  input_tokens    INTEGER,
+  output_tokens   INTEGER,
+  cost_input_usd  NUMERIC,
+  cost_output_usd NUMERIC
+);
+
+-- ── RPC : detailed usage increment (called server-side via service role) ─────
+CREATE OR REPLACE FUNCTION public.increment_usage(
+  p_user_id       UUID,
+  p_input_tokens  INTEGER,
+  p_output_tokens INTEGER,
+  p_model         TEXT DEFAULT NULL,
+  p_cost_input    NUMERIC DEFAULT 0,
+  p_cost_output   NUMERIC DEFAULT 0
+)
 RETURNS INTEGER LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
 DECLARE
   v_total INTEGER;
 BEGIN
-  INSERT INTO public.user_usage_log (user_id, tokens) VALUES (p_user_id, p_tokens);
-  SELECT COALESCE(SUM(tokens), 0) INTO v_total
+  INSERT INTO public.user_usage_log (user_id, input_tokens, output_tokens, model, cost_input_usd, cost_output_usd)
+    VALUES (p_user_id, p_input_tokens, p_output_tokens, p_model, p_cost_input, p_cost_output);
+  SELECT COALESCE(SUM(input_tokens + output_tokens), 0) INTO v_total
     FROM public.user_usage_log
     WHERE user_id = p_user_id AND created_at > now() - interval '24 hours';
   RETURN v_total;
 END; $$;
 
--- ── RPC : get rolling 24h token usage ────────────────────────────────────────
+-- ── RPC : get rolling 24h usage (authenticated user) ─────────────────────────
 CREATE OR REPLACE FUNCTION public.get_current_usage()
-RETURNS INTEGER LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+RETURNS public.usage_aggregate LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
 DECLARE
   v_user_id UUID := auth.uid();
-  v_total   INTEGER;
+  v_result  public.usage_aggregate;
 BEGIN
   IF v_user_id IS NULL THEN RAISE EXCEPTION 'Not authenticated'; END IF;
-  SELECT COALESCE(SUM(tokens), 0) INTO v_total
-    FROM public.user_usage_log
-    WHERE user_id = v_user_id AND created_at > now() - interval '24 hours';
-  RETURN v_total;
+  SELECT
+    COALESCE(SUM(input_tokens + output_tokens), 0),
+    COALESCE(SUM(input_tokens), 0),
+    COALESCE(SUM(output_tokens), 0),
+    COALESCE(SUM(cost_input_usd), 0),
+    COALESCE(SUM(cost_output_usd), 0)
+  INTO v_result
+  FROM public.user_usage_log
+  WHERE user_id = v_user_id AND created_at > now() - interval '24 hours';
+  RETURN v_result;
 END; $$;
 
--- ── RPC : get usage for a specific user (called server-side via service role) ─
+-- ── RPC : get rolling 24h total tokens for a user (server-side, limit check) ─
 CREATE OR REPLACE FUNCTION public.get_usage_for_user(p_user_id UUID)
 RETURNS INTEGER LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
 DECLARE
   v_total INTEGER;
 BEGIN
-  SELECT COALESCE(SUM(tokens), 0) INTO v_total
+  SELECT COALESCE(SUM(input_tokens + output_tokens), 0) INTO v_total
     FROM public.user_usage_log
     WHERE user_id = p_user_id AND created_at > now() - interval '24 hours';
   RETURN v_total;
+END; $$;
+
+-- ── RPC : get rolling 30-day usage (authenticated user) ──────────────────────
+CREATE OR REPLACE FUNCTION public.get_monthly_usage()
+RETURNS public.usage_aggregate LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+DECLARE
+  v_user_id UUID := auth.uid();
+  v_result  public.usage_aggregate;
+BEGIN
+  IF v_user_id IS NULL THEN RAISE EXCEPTION 'Not authenticated'; END IF;
+  SELECT
+    COALESCE(SUM(input_tokens + output_tokens), 0),
+    COALESCE(SUM(input_tokens), 0),
+    COALESCE(SUM(output_tokens), 0),
+    COALESCE(SUM(cost_input_usd), 0),
+    COALESCE(SUM(cost_output_usd), 0)
+  INTO v_result
+  FROM public.user_usage_log
+  WHERE user_id = v_user_id AND created_at > now() - interval '30 days';
+  RETURN v_result;
+END; $$;
+
+-- ── RPC : get lifetime usage (authenticated user) ────────────────────────────
+CREATE OR REPLACE FUNCTION public.get_lifetime_usage()
+RETURNS public.usage_aggregate LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+DECLARE
+  v_user_id UUID := auth.uid();
+  v_result  public.usage_aggregate;
+BEGIN
+  IF v_user_id IS NULL THEN RAISE EXCEPTION 'Not authenticated'; END IF;
+  SELECT
+    COALESCE(SUM(input_tokens + output_tokens), 0),
+    COALESCE(SUM(input_tokens), 0),
+    COALESCE(SUM(output_tokens), 0),
+    COALESCE(SUM(cost_input_usd), 0),
+    COALESCE(SUM(cost_output_usd), 0)
+  INTO v_result
+  FROM public.user_usage_log
+  WHERE user_id = v_user_id;
+  RETURN v_result;
 END; $$;
 
 -- ── RPC : cleanup old records (call periodically via cron or manually) ───────

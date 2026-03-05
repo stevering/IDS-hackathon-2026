@@ -3,6 +3,9 @@ import { WebSocket } from "ws"
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js"
 
 const DEFAULT_BRIDGE_PORT = 3002
+const DEFAULT_WEBAPP_URL = "http://localhost:3000"
+
+type ExecResult = { success: boolean; result?: unknown; error?: string }
 
 /**
  * Connect to the local BridgeServer as an MCP controller, send an EXECUTE_CODE
@@ -17,11 +20,11 @@ function executeViaLocalBridge(
   requestId: string,
   timeoutMs: number,
   bridgePort: number
-): Promise<{ success: boolean; result?: unknown; error?: string }> {
+): Promise<ExecResult> {
   return new Promise((resolve) => {
     const ws = new WebSocket(`ws://localhost:${bridgePort}`)
 
-    const cleanup = (result: { success: boolean; result?: unknown; error?: string }): void => {
+    const cleanup = (result: ExecResult): void => {
       clearTimeout(timer)
       if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) {
         ws.close()
@@ -80,6 +83,52 @@ function executeViaLocalBridge(
   })
 }
 
+/**
+ * Submit code execution via the Guardian webapp HTTP bridge and poll for the result.
+ *
+ * Flow: MCP --POST--> /api/figma-execute --poll--> webapp iframe --postMessage--> plugin
+ */
+async function executeViaWebapp(
+  code: string,
+  requestId: string,
+  timeoutMs: number,
+  webappUrl: string
+): Promise<ExecResult> {
+  const base = webappUrl.replace(/\/+$/, "")
+
+  // Submit the execution request
+  const submitResp = await fetch(`${base}/api/figma-execute`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ requestId, code, timeout: timeoutMs }),
+  })
+  if (!submitResp.ok) {
+    return { success: false, error: `Webapp returned ${submitResp.status} on submit.` }
+  }
+
+  // Poll for the result
+  const pollInterval = 300
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, pollInterval))
+    try {
+      const resp = await fetch(
+        `${base}/api/figma-execute?action=result&requestId=${encodeURIComponent(requestId)}`
+      )
+      if (!resp.ok) continue
+      const data = await resp.json() as ExecResult | null
+      if (data) return data
+    } catch {
+      // Network error — retry until deadline
+    }
+  }
+
+  return {
+    success: false,
+    error: `Timed out after ${timeoutMs}ms waiting for webapp bridge result. Make sure the Figma plugin is open with the Guardian webapp loaded.`,
+  }
+}
+
 export function registerFigmaExecuteTool(server: McpServer): void {
   server.tool(
     "guardian_figma_execute",
@@ -88,8 +137,13 @@ export function registerFigmaExecuteTool(server: McpServer): void {
 Use this for one-off operations not covered by guardian_run_skill.
 Prefer guardian_run_skill for common DS operations (it uses pre-validated code templates).
 
-IMPORTANT: The Guardian Electron overlay must be running AND the Guardian Figma plugin
-must be open in Figma Desktop for this to work. If neither is running, the call will time out.
+IMPORTANT: The Guardian Figma plugin must be open in Figma Desktop for this to work.
+
+## Transport modes
+
+- "overlay": connect via the Electron overlay BridgeServer (WebSocket, requires overlay running locally)
+- "webapp": connect via the Guardian webapp HTTP bridge (works locally and remotely)
+- "auto" (default): try overlay first (fast, 3s), fall back to webapp
 
 ## How to write code
 
@@ -153,17 +207,39 @@ Create a button (Frame with text label — NOT a Rectangle):
       timeout: z.number().optional().describe(
         "Execution timeout in milliseconds (default: 10000)"
       ),
+      transport: z.enum(["auto", "overlay", "webapp"]).optional().describe(
+        'Transport mode: "overlay" (WebSocket via Electron overlay), "webapp" (HTTP via Guardian webapp), "auto" (try overlay then webapp). Default: "auto".'
+      ),
       bridge_port: z.number().optional().describe(
         `Local BridgeServer port (default: ${DEFAULT_BRIDGE_PORT}). Override via GUARDIAN_BRIDGE_PORT env.`
       ),
+      webapp_url: z.string().optional().describe(
+        `Guardian webapp URL (default: ${DEFAULT_WEBAPP_URL}). Override via GUARDIAN_WEBAPP_URL env.`
+      ),
     },
-    async ({ code, timeout, bridge_port }) => {
+    async ({ code, timeout, transport, bridge_port, webapp_url }) => {
       const timeoutMs = timeout ?? 10_000
       const port = bridge_port
         ?? Number(process.env["GUARDIAN_BRIDGE_PORT"] ?? DEFAULT_BRIDGE_PORT)
+      const webUrl = webapp_url
+        ?? process.env["GUARDIAN_WEBAPP_URL"]
+        ?? DEFAULT_WEBAPP_URL
+      const mode = transport ?? "auto"
       const requestId = `mcp-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
 
-      const result = await executeViaLocalBridge(code, requestId, timeoutMs, port)
+      let result: ExecResult
+
+      if (mode === "overlay") {
+        result = await executeViaLocalBridge(code, requestId, timeoutMs, port)
+      } else if (mode === "webapp") {
+        result = await executeViaWebapp(code, requestId, timeoutMs, webUrl)
+      } else {
+        // auto: try overlay first with a short timeout, fall back to webapp
+        result = await executeViaLocalBridge(code, requestId, 3_000, port)
+        if (!result.success) {
+          result = await executeViaWebapp(code, requestId, timeoutMs, webUrl)
+        }
+      }
 
       return {
         content: [

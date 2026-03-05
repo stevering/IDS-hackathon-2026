@@ -36,7 +36,11 @@ function capitalize(s: string) {
 export default function AccountPage() {
   const router = useRouter();
   const [keys, setKeys] = useState<StoredKey[]>([]);
-  const [usage, setUsage] = useState<number | null>(null);
+  const [usage, setUsage] = useState<{
+    daily: { total_tokens: number; input_tokens: number; output_tokens: number; cost_input_usd: number; cost_output_usd: number; limit: number };
+    monthly: { total_tokens: number; input_tokens: number; output_tokens: number; cost_input_usd: number; cost_output_usd: number };
+    lifetime: { total_tokens: number; input_tokens: number; output_tokens: number; cost_input_usd: number; cost_output_usd: number };
+  } | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState<string | null>(null);
   const [deleting, setDeleting] = useState<string | null>(null);
@@ -81,7 +85,7 @@ export default function AccountPage() {
       const keysData = await keysRes.json();
       const usageData = await usageRes.json();
       setKeys(keysData.keys ?? []);
-      setUsage(usageData.tokens_used ?? 0);
+      setUsage(usageData.daily ? usageData : null);
 
       // Build dynamic provider list from Gateway catalog
       if (modelsRes.ok) {
@@ -171,10 +175,14 @@ export default function AccountPage() {
   const providerLabel = (id: string) =>
     providers.find((p) => p.id === id)?.name ?? capitalize(id);
 
-  const FREE_TIER_DAILY_LIMIT = 500_000;
-
   /** Format a token count for display (e.g. 124532 → "124,532") */
   const fmt = (n: number) => n.toLocaleString("en-US");
+
+  /** Format a USD cost for display */
+  const fmtCost = (n: number) => n < 0.01 ? `$${n.toFixed(4)}` : `$${n.toFixed(2)}`;
+
+  /** Compact token display (e.g. 124532 → "125k") */
+  const fmtCompact = (n: number) => n >= 1000 ? `${Math.round(n / 1000)}k` : String(n);
 
   return (
     <div className="min-h-screen px-4 py-10 max-w-2xl mx-auto">
@@ -200,22 +208,74 @@ export default function AccountPage() {
         <h2 className="text-sm font-medium mb-3">Free tier usage</h2>
         {loading ? (
           <div className="h-4 w-32 bg-white/10 rounded animate-pulse" />
-        ) : (
+        ) : usage ? (
           <>
+            {/* Daily (rolling 24h) — main quota */}
             <div className="flex items-end gap-2 mb-2">
-              <span className="text-2xl font-semibold">{fmt(usage ?? 0)}</span>
-              <span className="text-white/40 text-sm mb-0.5">/ {fmt(FREE_TIER_DAILY_LIMIT)} tokens (last 24h)</span>
+              <span className="text-2xl font-semibold">{fmt(usage.daily.total_tokens)}</span>
+              <span className="text-white/40 text-sm mb-0.5">/ {fmt(usage.daily.limit)} tokens (last 24h)</span>
+              <div className="relative group ml-1 mb-0.5">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-white/30 hover:text-white/60 transition-colors cursor-help">
+                  <circle cx="12" cy="12" r="10" /><path d="M12 16v-4M12 8h.01" />
+                </svg>
+                <div className="absolute bottom-6 left-1/2 -translate-x-1/2 hidden group-hover:block z-10 w-56 p-3 rounded-lg bg-[#1a1a2e] border border-white/10 shadow-xl text-xs">
+                  <div className="flex justify-between mb-1"><span className="text-white/50">Input</span><span className="text-white/70">{fmt(usage.daily.input_tokens)} tokens</span></div>
+                  <div className="flex justify-between mb-1"><span className="text-white/50">Output</span><span className="text-white/70">{fmt(usage.daily.output_tokens)} tokens</span></div>
+                  <div className="border-t border-white/10 my-1.5" />
+                  <div className="flex justify-between mb-1"><span className="text-white/50">Input cost</span><span className="text-white/70">{fmtCost(usage.daily.cost_input_usd)}</span></div>
+                  <div className="flex justify-between mb-1"><span className="text-white/50">Output cost</span><span className="text-white/70">{fmtCost(usage.daily.cost_output_usd)}</span></div>
+                  <div className="border-t border-white/10 my-1.5" />
+                  <div className="flex justify-between"><span className="text-white/50">Guardian cost</span><span className="font-medium text-violet-400">{fmtCost(usage.daily.cost_input_usd + usage.daily.cost_output_usd)}</span></div>
+                </div>
+              </div>
             </div>
             <div className="h-1.5 rounded-full bg-white/10 overflow-hidden">
               <div
                 className="h-full rounded-full bg-violet-500 transition-all"
-                style={{ width: `${Math.min(100, ((usage ?? 0) / FREE_TIER_DAILY_LIMIT) * 100)}%` }}
+                style={{ width: `${Math.min(100, (usage.daily.total_tokens / usage.daily.limit) * 100)}%` }}
               />
             </div>
-            <p className="text-xs text-white/30 mt-2">
+
+            {/* Monthly (rolling 30 days) */}
+            <div className="flex items-center gap-2 mt-4 text-xs text-white/40">
+              <span className="font-medium text-white/60">Last 30 days</span>
+              <span>{fmt(usage.monthly.total_tokens)} tokens</span>
+              <div className="relative group">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-white/30 hover:text-white/60 transition-colors cursor-help">
+                  <circle cx="12" cy="12" r="10" /><path d="M12 16v-4M12 8h.01" />
+                </svg>
+                <div className="absolute bottom-5 left-1/2 -translate-x-1/2 hidden group-hover:block z-10 w-52 p-2.5 rounded-lg bg-[#1a1a2e] border border-white/10 shadow-xl text-xs">
+                  <div className="flex justify-between mb-1"><span className="text-white/50">Input</span><span className="text-white/70">{fmtCompact(usage.monthly.input_tokens)}</span></div>
+                  <div className="flex justify-between mb-1"><span className="text-white/50">Output</span><span className="text-white/70">{fmtCompact(usage.monthly.output_tokens)}</span></div>
+                  <div className="border-t border-white/10 my-1" />
+                  <div className="flex justify-between"><span className="text-white/50">Guardian cost</span><span className="text-violet-400">{fmtCost(usage.monthly.cost_input_usd + usage.monthly.cost_output_usd)}</span></div>
+                </div>
+              </div>
+            </div>
+
+            {/* Lifetime */}
+            <div className="flex items-center gap-2 mt-1.5 text-xs text-white/40">
+              <span className="font-medium text-white/60">Since signup</span>
+              <span>{fmt(usage.lifetime.total_tokens)} tokens</span>
+              <div className="relative group">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-white/30 hover:text-white/60 transition-colors cursor-help">
+                  <circle cx="12" cy="12" r="10" /><path d="M12 16v-4M12 8h.01" />
+                </svg>
+                <div className="absolute bottom-5 left-1/2 -translate-x-1/2 hidden group-hover:block z-10 w-52 p-2.5 rounded-lg bg-[#1a1a2e] border border-white/10 shadow-xl text-xs">
+                  <div className="flex justify-between mb-1"><span className="text-white/50">Input</span><span className="text-white/70">{fmtCompact(usage.lifetime.input_tokens)}</span></div>
+                  <div className="flex justify-between mb-1"><span className="text-white/50">Output</span><span className="text-white/70">{fmtCompact(usage.lifetime.output_tokens)}</span></div>
+                  <div className="border-t border-white/10 my-1" />
+                  <div className="flex justify-between"><span className="text-white/50">Guardian cost</span><span className="text-violet-400">{fmtCost(usage.lifetime.cost_input_usd + usage.lifetime.cost_output_usd)}</span></div>
+                </div>
+              </div>
+            </div>
+
+            <p className="text-xs text-white/30 mt-3">
               Rolling 24-hour window. Add your own API key below to remove the limit.
             </p>
           </>
+        ) : (
+          <p className="text-xs text-white/30">No usage data available.</p>
         )}
       </section>
 
