@@ -164,6 +164,13 @@ async function startHttpServer(port: number): Promise<void> {
     httpServer.listen(port, "127.0.0.1", () => resolve())
   })
 
+  // Graceful shutdown: close the HTTP server so the port is released immediately
+  for (const signal of ["SIGINT", "SIGTERM"] as const) {
+    process.on(signal, () => {
+      httpServer.close()
+    })
+  }
+
   console.error(`[Guardian MCP] HTTP server running on http://127.0.0.1:${port}/mcp`)
   console.error(`[Guardian MCP] Health: http://127.0.0.1:${port}/health`)
 }
