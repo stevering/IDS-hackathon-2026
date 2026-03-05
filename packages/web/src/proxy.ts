@@ -40,7 +40,7 @@ function getMcpCodeUrl(request: NextRequest): string | undefined {
 }
 
 // Pages accessible without being logged in
-const PUBLIC_PAGES = ["/login", "/signup"];
+const PUBLIC_PAGES = ["/login", "/signup", "/oauth/consent"];
 
 export async function proxy(request: NextRequest) {
   const { pathname, search } = request.nextUrl;

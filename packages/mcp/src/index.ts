@@ -15,10 +15,13 @@ import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http"
 import { randomUUID } from "node:crypto"
 import { createGuardianServer } from "./server.js"
+import { handleOAuthDiscovery, handleOAuthProxy, verifyRequest, send401 } from "./auth.js"
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js"
 
 const MODE = process.env.GUARDIAN_MCP_MODE ?? "stdio"
 const PORT = parseInt(process.env.GUARDIAN_MCP_PORT ?? "3847", 10)
+// Skip JWT verification in dev to avoid needing RS256 keys locally
+const SKIP_AUTH = process.env.GUARDIAN_MCP_SKIP_AUTH === "true"
 
 // --------------------------------------------------------------------------
 // HTTP transport (for Next.js webapp integration)
@@ -48,6 +51,18 @@ async function startHttpServer(port: number): Promise<void> {
   }
 
   const httpServer = createServer(async (req: IncomingMessage, res: ServerResponse) => {
+    // CORS preflight (needed for webapp cross-origin requests)
+    if (req.method === "OPTIONS") {
+      res.writeHead(204, {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+        "Access-Control-Allow-Headers": "Content-Type, Authorization, mcp-session-id",
+        "Access-Control-Max-Age": "86400",
+      })
+      res.end()
+      return
+    }
+
     // Health check endpoint (useful for dev + deployment)
     if (req.url === "/health" && req.method === "GET") {
       res.writeHead(200, { "Content-Type": "application/json" })
@@ -55,8 +70,39 @@ async function startHttpServer(port: number): Promise<void> {
       return
     }
 
+    // OAuth 2.1 discovery — required by MCP spec for Claude Code / other MCP clients
+    if (
+      req.method === "GET" &&
+      (req.url === "/.well-known/oauth-authorization-server" ||
+       req.url === "/.well-known/oauth-authorization-server/mcp")
+    ) {
+      handleOAuthDiscovery(req, res, port)
+      return
+    }
+
+    // OAuth proxy endpoints — forward to Supabase with apikey header injected
+    const oauthUrl = req.url?.split("?")[0]
+    if (oauthUrl === "/oauth/register" || oauthUrl === "/oauth/token" || oauthUrl === "/oauth/authorize" || oauthUrl === "/oauth/userinfo") {
+      // Supabase DCR endpoint is at /oauth/clients/register, not /oauth/register
+      const supabasePath = oauthUrl === "/oauth/register"
+        ? "/clients/register"
+        : oauthUrl.replace("/oauth", "")
+      await handleOAuthProxy(req, res, supabasePath)
+      return
+    }
+
     // MCP endpoint
     if (req.url === "/mcp") {
+      // ── Authentication gate ──────────────────────────────────────────
+      if (!SKIP_AUTH) {
+        const user = await verifyRequest(req)
+        if (!user) {
+          send401(req, res, port)
+          return
+        }
+        // Attach user info for downstream tools (future: scoping by userId)
+        ;(req as IncomingMessage & { guardianUser?: typeof user }).guardianUser = user
+      }
       const sessionId = req.headers["mcp-session-id"] as string | undefined
 
       // Reuse existing session
@@ -138,6 +184,14 @@ async function startStdioServer(): Promise<void> {
 // --------------------------------------------------------------------------
 
 async function main(): Promise<void> {
+  // Ensure clean shutdown when parent (Turborepo) sends SIGTERM/SIGINT
+  for (const signal of ["SIGINT", "SIGTERM"] as const) {
+    process.on(signal, () => {
+      console.error(`[Guardian MCP] Received ${signal}, shutting down.`)
+      process.exit(0)
+    })
+  }
+
   if (MODE === "http") {
     await startHttpServer(PORT)
   } else {

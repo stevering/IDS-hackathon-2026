@@ -586,7 +586,8 @@ async function connectMCPs(
   figmaOAuth: boolean | undefined,
   tunnelSecret: string | undefined,
   mcpCodeUrlHeader: string | null,
-  enabledMcps: Record<string, boolean>
+  enabledMcps: Record<string, boolean>,
+  supabaseAccessToken?: string
 ): Promise<{ allTools: Record<string, unknown>; mcpErrors: string[] }> {
   const allTools: Record<string, unknown> = {};
   const mcpErrors: string[] = [];
@@ -783,7 +784,11 @@ async function connectMCPs(
   if (enabledMcps.guardian !== false && guardianMcpUrl) {
     try {
       console.log("[Guardian] Connecting to:", guardianMcpUrl);
-      const { tools } = await getOrConnect(guardianMcpUrl, "Guardian");
+      const guardianHeaders: Record<string, string> = {};
+      if (supabaseAccessToken) {
+        guardianHeaders["Authorization"] = `Bearer ${supabaseAccessToken}`;
+      }
+      const { tools } = await getOrConnect(guardianMcpUrl, "Guardian", guardianHeaders);
       const prefixedTools = Object.fromEntries(
         Object.entries(tools).map(([name, tool]) => [`guardian_${name}`, tool])
       );
@@ -807,6 +812,8 @@ export async function POST(req: Request) {
   // Resolve the AI model (BYOK or free tier)
   const supabase = await createSupabaseUserClient();
   const { data: { user } } = await supabase.auth.getUser();
+  // Get the user's access token to forward to authenticated MCP servers
+  const { data: { session: supabaseSession } } = await supabase.auth.getSession();
   const resolvedModel = await resolveModel(user?.id, model, supabase);
 
   // Enforce rolling 24h token limit for free-tier users
@@ -915,7 +922,8 @@ RULES:
     figmaOAuth,
     tunnelSecret,
     mcpCodeUrlHeader,
-    enabledMcps || { figma: true, figmaConsole: false, github: false, code: true }
+    enabledMcps || { figma: true, figmaConsole: false, github: false, code: true },
+    supabaseSession?.access_token ?? undefined
   );
 
   // Use keepalive stream for async MCP connection with live feedback
