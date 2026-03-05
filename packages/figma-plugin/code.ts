@@ -399,7 +399,7 @@ figma.ui.onmessage = async (msg: IncomingMessage): Promise<void> => {
   } catch (__e) {
     const __msg = __e instanceof Error ? __e.message : String(__e);
     const __stk = __e instanceof Error && __e.stack ? __e.stack : '';
-    return { __guardian_exec_error: (__stk && __stk.includes(__msg) ? __stk : (__msg + (__stk ? '\n' + __stk : ''))).trim() };
+    return { __guardian_exec_error: (__stk && __stk.includes(__msg) ? __stk : (__msg + (__stk ? '\\n' + __stk : ''))).trim() };
   }
 })()`
         : `(async function() {
@@ -408,7 +408,7 @@ ${codeBody}
   } catch (__e) {
     const __msg = __e instanceof Error ? __e.message : String(__e);
     const __stk = __e instanceof Error && __e.stack ? __e.stack : '';
-    return { __guardian_exec_error: (__stk && __stk.includes(__msg) ? __stk : (__msg + (__stk ? '\n' + __stk : ''))).trim() };
+    return { __guardian_exec_error: (__stk && __stk.includes(__msg) ? __stk : (__msg + (__stk ? '\\n' + __stk : ''))).trim() };
   }
 })()`;
       const timeoutMs = msg.timeout ?? 5000;
