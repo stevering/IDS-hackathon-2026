@@ -1935,7 +1935,7 @@ export default function Home() {
                                             : "text-white/60 hover:bg-white/5 hover:text-white/90"
                                         }`}
                                       >
-                                        {m.name}{isReasoning ? " ✦" : ""}
+                                        {m.name}{isReasoning ? <span title="Supports reasoning">{" "}✦</span> : ""}
                                       </button>
                                     );
                                   })}
@@ -1951,7 +1951,6 @@ export default function Home() {
                     );
                   })()}
                 </div>
-                <span className="text-[10px] text-white/20" title="✦ = supports reasoning">✦ reasoning</span>
               </div>
             )}
           </div>

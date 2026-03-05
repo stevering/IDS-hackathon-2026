@@ -9,12 +9,18 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js"
 import { registerAllTools } from "./tools/index.js"
 import { registerAllPrompts } from "./prompts/index.js"
 import { registerAllResources } from "./resources/index.js"
+import { MCP_INSTRUCTIONS } from "./knowledge/guardian-mcp-client-instructions.js"
 
 export function createGuardianServer(): McpServer {
-  const server = new McpServer({
-    name: "guardian",
-    version: "0.1.0",
-  })
+  const server = new McpServer(
+    {
+      name: "guardian",
+      version: "0.1.0",
+    },
+    {
+      instructions: MCP_INSTRUCTIONS,
+    }
+  )
 
   registerAllTools(server)
   registerAllPrompts(server)
