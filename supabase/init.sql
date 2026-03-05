@@ -33,18 +33,20 @@ CREATE POLICY "users update own keys"
 CREATE POLICY "users delete own keys"
   ON public.user_api_keys FOR DELETE USING (auth.uid() = user_id);
 
--- ── Table : suivi d'usage mensuel (free tier) ─────────────────────────────────
-CREATE TABLE IF NOT EXISTS public.user_usage (
-  user_id  UUID    NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
-  month    DATE    NOT NULL,  -- premier jour du mois ex: 2026-03-01
-  messages INTEGER NOT NULL DEFAULT 0,
-  PRIMARY KEY (user_id, month)
+-- ── Table : rolling 24h token usage log (free tier) ──────────────────────────
+CREATE TABLE IF NOT EXISTS public.user_usage_log (
+  id         BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  user_id    UUID        NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+  tokens     INTEGER     NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-ALTER TABLE public.user_usage ENABLE ROW LEVEL SECURITY;
+CREATE INDEX IF NOT EXISTS idx_usage_log_user_time ON public.user_usage_log (user_id, created_at DESC);
+
+ALTER TABLE public.user_usage_log ENABLE ROW LEVEL SECURITY;
 
 CREATE POLICY "users see own usage"
-  ON public.user_usage FOR SELECT USING (auth.uid() = user_id);
+  ON public.user_usage_log FOR SELECT USING (auth.uid() = user_id);
 
 -- ── RPC : stocker / mettre à jour une clé dans le Vault ──────────────────────
 CREATE OR REPLACE FUNCTION public.upsert_api_key(p_provider TEXT, p_secret TEXT)
@@ -138,32 +140,52 @@ BEGIN
     WHERE user_id = v_user_id AND provider = p_provider;
 END; $$;
 
--- ── RPC : incrémenter l'usage (appelé server-side via service role) ───────────
-CREATE OR REPLACE FUNCTION public.increment_usage(p_user_id UUID)
+-- ── RPC : add token usage (called server-side via service role) ──────────────
+CREATE OR REPLACE FUNCTION public.increment_usage(p_user_id UUID, p_tokens INTEGER)
 RETURNS INTEGER LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
 DECLARE
-  v_month DATE := date_trunc('month', now())::date;
-  v_count INTEGER;
+  v_total INTEGER;
 BEGIN
-  INSERT INTO public.user_usage (user_id, month, messages)
-    VALUES (p_user_id, v_month, 1)
-    ON CONFLICT (user_id, month)
-    DO UPDATE SET messages = public.user_usage.messages + 1
-    RETURNING messages INTO v_count;
-  RETURN v_count;
+  INSERT INTO public.user_usage_log (user_id, tokens) VALUES (p_user_id, p_tokens);
+  SELECT COALESCE(SUM(tokens), 0) INTO v_total
+    FROM public.user_usage_log
+    WHERE user_id = p_user_id AND created_at > now() - interval '24 hours';
+  RETURN v_total;
 END; $$;
 
--- ── RPC : lire l'usage du mois courant ───────────────────────────────────────
+-- ── RPC : get rolling 24h token usage ────────────────────────────────────────
 CREATE OR REPLACE FUNCTION public.get_current_usage()
 RETURNS INTEGER LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
 DECLARE
   v_user_id UUID := auth.uid();
-  v_month   DATE := date_trunc('month', now())::date;
-  v_count   INTEGER;
+  v_total   INTEGER;
 BEGIN
   IF v_user_id IS NULL THEN RAISE EXCEPTION 'Not authenticated'; END IF;
-  SELECT COALESCE(messages, 0) INTO v_count
-  FROM public.user_usage
-  WHERE user_id = v_user_id AND month = v_month;
-  RETURN COALESCE(v_count, 0);
+  SELECT COALESCE(SUM(tokens), 0) INTO v_total
+    FROM public.user_usage_log
+    WHERE user_id = v_user_id AND created_at > now() - interval '24 hours';
+  RETURN v_total;
+END; $$;
+
+-- ── RPC : get usage for a specific user (called server-side via service role) ─
+CREATE OR REPLACE FUNCTION public.get_usage_for_user(p_user_id UUID)
+RETURNS INTEGER LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+DECLARE
+  v_total INTEGER;
+BEGIN
+  SELECT COALESCE(SUM(tokens), 0) INTO v_total
+    FROM public.user_usage_log
+    WHERE user_id = p_user_id AND created_at > now() - interval '24 hours';
+  RETURN v_total;
+END; $$;
+
+-- ── RPC : cleanup old records (call periodically via cron or manually) ───────
+CREATE OR REPLACE FUNCTION public.cleanup_old_usage()
+RETURNS INTEGER LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+DECLARE
+  v_deleted INTEGER;
+BEGIN
+  DELETE FROM public.user_usage_log WHERE created_at < now() - interval '48 hours';
+  GET DIAGNOSTICS v_deleted = ROW_COUNT;
+  RETURN v_deleted;
 END; $$;

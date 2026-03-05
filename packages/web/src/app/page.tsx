@@ -4,7 +4,7 @@ import { useChat } from "@ai-sdk/react";
 import { DefaultChatTransport } from "ai";
 import { useState, useRef, useEffect, useMemo } from "react";
 import Link from "next/link";
-import { PROVIDERS } from "@/lib/providers";
+import type { GatewayModel } from "./api/gateway-models/route";
 import { useFigmaPlugin } from "./hooks/useFigmaPlugin";
 import { UserMenu } from "@/components/UserMenu";
 import ReactMarkdown, { type Components } from "react-markdown";
@@ -639,7 +639,10 @@ export default function Home() {
   // or legacy bare string for free-tier XAI (e.g. "grok-4-1-fast-non-reasoning")
   const [selectedModel, setSelectedModel] = useState<string>("grok-4-1-fast-non-reasoning");
   const [byokKeys, setByokKeys] = useState<{ provider: string; is_default: boolean }[]>([]);
-  const [gatewayModels, setGatewayModels] = useState<{ id: string; name: string; owned_by: string; tags: string[] }[]>([]);
+  const [gatewayModels, setGatewayModels] = useState<GatewayModel[]>([]);
+  const [modelDropdownOpen, setModelDropdownOpen] = useState(false);
+  const [modelSearch, setModelSearch] = useState("");
+  const modelDropdownRef = useRef<HTMLDivElement>(null);
   const [selectedNode, setSelectedNode] = useState<{ nodes: unknown[]; image: string | null; nodeUrl: string | null } | null>(null);
   const [figmaPluginContext, setFigmaPluginContext] = useState<{ fileKey: string; fileName: string; fileUrl: string; currentPage?: { id: string; name: string } | null; pages?: { id: string; name: string }[]; currentUser?: { id: string; name: string } | null } | null>(null);
   const [selectionGlow, setSelectionGlow] = useState(false);
@@ -680,42 +683,46 @@ export default function Home() {
     localStorage.setItem('guardian-enabled-mcps', JSON.stringify(enabledMcps));
   }, [enabledMcps]);
 
-  // Load user's BYOK keys on mount to drive model selector
+  // Close model dropdown on outside click
   useEffect(() => {
-    fetch("/api/user/api-keys")
-      .then((r) => r.ok ? r.json() : { keys: [] })
-      .then(async (d) => {
-        const keys: { provider: string; is_default: boolean }[] = d.keys ?? [];
-        setByokKeys(keys);
+    function handleClickOutside(e: MouseEvent) {
+      if (modelDropdownRef.current && !modelDropdownRef.current.contains(e.target as Node)) {
+        setModelDropdownOpen(false);
+        setModelSearch("");
+      }
+    }
+    if (modelDropdownOpen) {
+      document.addEventListener("mousedown", handleClickOutside);
+      return () => document.removeEventListener("mousedown", handleClickOutside);
+    }
+  }, [modelDropdownOpen]);
 
-        // If user has a gateway key, fetch the full model catalog from Vercel AI Gateway
-        const hasGateway = keys.some((k) => k.provider === "gateway");
-        if (hasGateway) {
-          try {
-            const gwRes = await fetch("/api/gateway-models");
-            if (gwRes.ok) {
-              const gwData = await gwRes.json();
-              setGatewayModels(gwData.models ?? []);
-              // Auto-select first gateway model if default key is gateway
-              const defaultKey = keys.find((k) => k.is_default);
-              if (defaultKey?.provider === "gateway" && gwData.models?.length > 0) {
-                setSelectedModel(gwData.models[0].id);
-              }
-              return;
-            }
-          } catch { /* ignore, fall through to local catalog */ }
-        }
+  // Load user's BYOK keys + full model catalog on mount
+  useEffect(() => {
+    Promise.all([
+      fetch("/api/user/api-keys").then((r) => r.ok ? r.json() : { keys: [] }),
+      fetch("/api/gateway-models").then((r) => r.ok ? r.json() : { models: [] }).catch(() => ({ models: [] })),
+    ]).then(([keysData, gwData]) => {
+      const keys: { provider: string; is_default: boolean }[] = keysData.keys ?? [];
+      const models: GatewayModel[] = gwData.models ?? [];
+      setByokKeys(keys);
+      setGatewayModels(models);
 
-        // Auto-select based on local catalog for direct provider keys
-        const defaultKey = keys.find((k) => k.is_default);
-        if (defaultKey) {
-          const provider = PROVIDERS.find((p) => p.id === defaultKey.provider);
-          if (provider && provider.models.length > 0) {
-            setSelectedModel(`${provider.id}/${provider.models[0].id}`);
-          }
+      // Auto-select first model matching the default key's provider
+      const defaultKey = keys.find((k) => k.is_default);
+      if (defaultKey && models.length > 0) {
+        const firstMatch = defaultKey.provider === "gateway"
+          ? models[0]
+          : models.find((m) => m.owned_by === defaultKey.provider);
+        if (firstMatch) {
+          setSelectedModel(
+            defaultKey.provider === "gateway"
+              ? firstMatch.id
+              : `${defaultKey.provider}/${firstMatch.id.split("/").pop()}`
+          );
         }
-      })
-      .catch(() => {});
+      }
+    }).catch(() => {});
   }, []);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -1428,8 +1435,8 @@ export default function Home() {
         </div>
       </div>
 
-      <div className="flex-1 flex flex-col min-w-0 relative z-10">
-        <header className="flex items-center justify-between px-3 sm:px-4 py-3 glass-header">
+      <div className="flex-1 flex flex-col min-w-0 relative">
+        <header className="relative z-20 flex items-center justify-between px-3 sm:px-4 py-3 glass-header">
           <div className="flex items-center gap-2 sm:gap-3 min-w-0">
             <button
               onClick={() => setSettingsOpen(!settingsOpen)}
@@ -1516,7 +1523,7 @@ export default function Home() {
                     <div className="min-w-0">
                       <p className="text-sm font-medium text-white/80 mb-1">You&apos;re on the free tier</p>
                       <p className="text-xs text-white/40 leading-relaxed mb-3">
-                        You get 100 AI messages per month on us. Each message uses the platform&apos;s AI model.
+                        You get 500k tokens per day on us (rolling 24h window). Each message uses the platform&apos;s AI model.
                       </p>
                       <div className="space-y-2">
                         <p className="text-[11px] text-white/50 font-medium uppercase tracking-wider">Want unlimited access?</p>
@@ -1812,7 +1819,11 @@ export default function Home() {
 
           {error && errorVisible && (
             <div className="mb-4 p-3 bg-red-500/10 border border-red-500/20 rounded-lg text-sm text-red-400 break-words">
-              Error: {error?.message ?? "Unknown error"}
+              {error?.message?.includes("429") ? (
+                <>Daily free tier limit reached (500k tokens). <a href="/account" className="underline hover:text-red-300">Add your own API key</a> for unlimited access.</>
+              ) : (
+                <>Error: {error?.message ?? "Unknown error"}</>
+              )}
             </div>
           )}
 
@@ -1842,39 +1853,107 @@ export default function Home() {
               /* BYOK — model picker */
               <div className="flex items-center gap-1.5">
                 <span className="text-xs text-white/40">Model:</span>
-                <select
-                  value={selectedModel}
-                  onChange={(e) => setSelectedModel(e.target.value)}
-                  className="text-xs bg-white/5 border border-white/10 rounded-md px-2 py-1 text-white/80 focus:outline-none focus:border-white/30 cursor-pointer max-w-[220px]"
-                >
-                  {byokKeys.some((k) => k.provider === "gateway") && gatewayModels.length > 0 ? (
-                    /* Gateway key — dynamic model list from Vercel AI Gateway, grouped by provider */
-                    Object.entries(
-                      gatewayModels.reduce<Record<string, typeof gatewayModels>>((acc, m) => {
-                        (acc[m.owned_by] ??= []).push(m);
-                        return acc;
-                      }, {})
-                    ).map(([provider, models]) => (
-                      <optgroup key={provider} label={provider.charAt(0).toUpperCase() + provider.slice(1)}>
-                        {models.map((m) => (
-                          <option key={m.id} value={m.id}>
-                            {m.name}{m.tags.includes("reasoning") ? " ✦" : ""}
-                          </option>
-                        ))}
-                      </optgroup>
-                    ))
-                  ) : (
-                    /* Direct provider keys — local catalog */
-                    byokKeys.map((key) => {
-                      const provider = PROVIDERS.find((p) => p.id === key.provider);
-                      return provider?.models.map((m) => (
-                        <option key={`${provider.id}/${m.id}`} value={`${provider.id}/${m.id}`}>
-                          {provider.name} · {m.name}{m.supportsReasoning ? " ✦" : ""}
-                        </option>
-                      ));
-                    })
-                  )}
-                </select>
+                <div className="relative" ref={modelDropdownRef}>
+                  {(() => {
+                    const hasGateway = byokKeys.some((k) => k.provider === "gateway");
+                    const directProviders = new Set(byokKeys.filter((k) => k.provider !== "gateway").map((k) => k.provider));
+                    const visibleModels = hasGateway
+                      ? gatewayModels
+                      : gatewayModels.filter((m) => directProviders.has(m.owned_by));
+                    const getModelValue = (m: GatewayModel) =>
+                      hasGateway ? m.id : `${m.owned_by}/${m.id.split("/").pop()}`;
+
+                    // Find selected model label
+                    const selectedGw = visibleModels.find((m) => getModelValue(m) === selectedModel);
+                    const selectedLabel = selectedGw
+                      ? `${selectedGw.name}${selectedGw.tags?.includes("reasoning") ? " ✦" : ""}`
+                      : selectedModel;
+
+                    // Group by provider
+                    const grouped = visibleModels.reduce<Record<string, GatewayModel[]>>((acc, m) => {
+                      (acc[m.owned_by] ??= []).push(m);
+                      return acc;
+                    }, {});
+
+                    // Filter by search
+                    const query = modelSearch.toLowerCase();
+                    const filteredGrouped = Object.entries(grouped).reduce<Record<string, GatewayModel[]>>((acc, [provider, models]) => {
+                      const filtered = models.filter((m) =>
+                        m.name.toLowerCase().includes(query) || provider.toLowerCase().includes(query)
+                      );
+                      if (filtered.length > 0) acc[provider] = filtered;
+                      return acc;
+                    }, {});
+
+                    return (
+                      <>
+                        <button
+                          type="button"
+                          onClick={() => { setModelDropdownOpen(!modelDropdownOpen); setModelSearch(""); }}
+                          className="flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-white/5 border border-white/10 text-xs text-white/80 hover:border-white/20 transition-colors cursor-pointer max-w-[240px]"
+                        >
+                          <span className="truncate">{selectedLabel}</span>
+                          <svg
+                            width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                            strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
+                            className={`shrink-0 text-white/40 transition-transform ${modelDropdownOpen ? "rotate-180" : ""}`}
+                          >
+                            <path d="M6 9l6 6 6-6" />
+                          </svg>
+                        </button>
+
+                        {modelDropdownOpen && (
+                          <div className="absolute bottom-full mb-1 left-0 z-50 w-64 rounded-lg bg-[#1a1a2e] border border-white/10 shadow-xl overflow-hidden">
+                            <div className="p-2 border-b border-white/[0.06]">
+                              <input
+                                type="text"
+                                placeholder="Search models..."
+                                value={modelSearch}
+                                onChange={(e) => setModelSearch(e.target.value)}
+                                autoFocus
+                                className="w-full px-2.5 py-1.5 rounded-md bg-white/5 border border-white/10 text-xs outline-none focus:border-white/25 transition-colors placeholder:text-white/25"
+                              />
+                            </div>
+                            <div className="max-h-60 overflow-y-auto py-1">
+                              {Object.entries(filteredGrouped).map(([provider, models]) => (
+                                <div key={provider}>
+                                  <div className="px-3 py-1.5 text-[10px] font-semibold text-white/30 uppercase tracking-wider">
+                                    {provider.charAt(0).toUpperCase() + provider.slice(1)}
+                                  </div>
+                                  {models.map((m) => {
+                                    const value = getModelValue(m);
+                                    const isReasoning = m.tags?.includes("reasoning");
+                                    return (
+                                      <button
+                                        key={m.id}
+                                        type="button"
+                                        onClick={() => {
+                                          setSelectedModel(value);
+                                          setModelDropdownOpen(false);
+                                          setModelSearch("");
+                                        }}
+                                        className={`w-full text-left px-3 py-1.5 text-xs transition-colors cursor-pointer ${
+                                          selectedModel === value
+                                            ? "bg-violet-600/30 text-white"
+                                            : "text-white/60 hover:bg-white/5 hover:text-white/90"
+                                        }`}
+                                      >
+                                        {m.name}{isReasoning ? " ✦" : ""}
+                                      </button>
+                                    );
+                                  })}
+                                </div>
+                              ))}
+                              {Object.keys(filteredGrouped).length === 0 && (
+                                <p className="px-3 py-3 text-xs text-white/30 text-center">No model found</p>
+                              )}
+                            </div>
+                          </div>
+                        )}
+                      </>
+                    );
+                  })()}
+                </div>
                 <span className="text-[10px] text-white/20" title="✦ = supports reasoning">✦ reasoning</span>
               </div>
             )}

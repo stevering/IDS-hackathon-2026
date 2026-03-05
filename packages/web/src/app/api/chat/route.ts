@@ -39,6 +39,7 @@ const MAX_AGE_MS = 2 * 60_000;
 const HEALTHCHECK_TIMEOUT_MS = 5_000;
 const STREAM_KEEPALIVE_MS = 5_000; // Send a ping every 5s during MCP connection
 const MAX_STEPS = 20; // Maximum number of steps for the stream (limit to prevent infinite loops)
+const FREE_TIER_DAILY_TOKEN_LIMIT = 500_000; // Rolling 24h token limit for free tier
 
 const encoder = new TextEncoder();
 
@@ -109,13 +110,7 @@ function buildDirectProviderModel(provider: string, modelId: string, apiKey: str
 }
 
 async function resolveFreeTier(userId: string | null | undefined): Promise<ResolvedModel> {
-  // Always track usage for authenticated free-tier users, regardless of which platform model is used
-  if (userId) {
-    const serviceClient = createServiceClient();
-    void Promise.resolve(serviceClient.rpc("increment_usage", { p_user_id: userId }))
-      .then(() => { console.log("[FreeTier] Usage incremented for user:", userId); })
-      .catch((e: unknown) => { console.error("[FreeTier] Failed to increment usage:", e); });
-  }
+  // Token usage is now tracked in onFinish (after streaming completes) via increment_usage(user_id, tokens)
 
   const platformGatewayKey = process.env.AI_GATEWAY_API_KEY;
   if (platformGatewayKey) {
@@ -143,7 +138,8 @@ function createKeepaliveStream(
   mcpConnectionPromise: Promise<{ allTools: Record<string, unknown>; mcpErrors: string[] }>,
   modelMessages: Awaited<ReturnType<typeof convertToModelMessages>>,
   system: string,
-  resolvedModel: ResolvedModel
+  resolvedModel: ResolvedModel,
+  freeTierUserId?: string | null
 ): ReadableStream {
   const encoder = new TextEncoder();
 
@@ -230,16 +226,24 @@ function createKeepaliveStream(
                console.log("[Chat] Tool calls:", step.toolCalls.map(t => t));
              }
              if (step.toolResults.length > 0) {
-               console.log("[Chat] Tool results:", step.toolResults.map(r => ({ toolName: r.toolName, result: JSON.stringify(r.result)?.substring(0, 300) })));
+               console.log("[Chat] Tool results:", step.toolResults.map(r => ({ toolName: r.toolName, result: JSON.stringify((r as Record<string, unknown>).result)?.substring(0, 300) })));
              }
            },
            onFinish: (result) => {
-              console.log("[Chat] Keepalive stream finished with reason:", result.finishReason);
+              console.log("[Chat] Keepalive stream finished with reason:", result.finishReason, "steps:", result.steps.length);
               if (result.finishReason === 'stop' && result.steps.length >= MAX_STEPS) {
                 console.warn(`[Chat] Keepalive stream stopped due to max steps (${MAX_STEPS}) - response may be truncated`);
               }
-             console.log("[Chat] Keepalive stream finished with reason:", result.finishReason, "steps:", result.steps.length);
-             streamFinishedResolve({ finishReason: result.finishReason, steps: result.steps });
+              // Track token usage for free-tier users (rolling 24h window)
+              if (freeTierUserId && result.totalUsage) {
+                const totalTokens = (result.totalUsage.inputTokens ?? 0) + (result.totalUsage.outputTokens ?? 0);
+                console.log(`[FreeTier] Tracking ${totalTokens} tokens (input: ${result.totalUsage.inputTokens}, output: ${result.totalUsage.outputTokens}) for user: ${freeTierUserId}`);
+                const serviceClient = createServiceClient();
+                void Promise.resolve(serviceClient.rpc("increment_usage", { p_user_id: freeTierUserId, p_tokens: totalTokens }))
+                  .then(({ data }) => { console.log(`[FreeTier] Usage updated — rolling 24h total: ${data} tokens`); })
+                  .catch((e: unknown) => { console.error("[FreeTier] Failed to track token usage:", e); });
+              }
+              streamFinishedResolve({ finishReason: result.finishReason, steps: result.steps });
            },
          });
 
@@ -783,6 +787,22 @@ export async function POST(req: Request) {
   const { data: { user } } = await supabase.auth.getUser();
   const resolvedModel = await resolveModel(user?.id, model, supabase);
 
+  // Enforce rolling 24h token limit for free-tier users
+  if (resolvedModel.isFreeTier && user?.id) {
+    const serviceClient = createServiceClient();
+    const { data: currentUsage, error: usageError } = await serviceClient.rpc("get_usage_for_user", { p_user_id: user.id });
+    if (!usageError && typeof currentUsage === "number" && currentUsage >= FREE_TIER_DAILY_TOKEN_LIMIT) {
+      return new Response(
+        JSON.stringify({
+          error: "daily_limit_exceeded",
+          limit: FREE_TIER_DAILY_TOKEN_LIMIT,
+          used: currentUsage,
+        }),
+        { status: 429, headers: { "Content-Type": "application/json" } }
+      );
+    }
+  }
+
   // Get X-MCP-Code-URL header to resolve relative proxy URLs
   console.log("[Header] X-MCP-Code-URL:", req.headers.get("X-MCP-Code-URL"));
   console.log("[Code] codeProjectPath from body:", codeProjectPath);
@@ -877,9 +897,10 @@ RULES:
   );
 
   // Use keepalive stream for async MCP connection with live feedback
+  const freeTierUserId = resolvedModel.isFreeTier ? user?.id : null;
   console.log('[Chat] Starting async keepalive stream for MCP connection, isFreeTier:', resolvedModel.isFreeTier);
   return new Response(
-    createKeepaliveStream(mcpConnectionPromise, modelMessages, system, resolvedModel),
+    createKeepaliveStream(mcpConnectionPromise, modelMessages, system, resolvedModel, freeTierUserId),
     {
       headers: {
         'Content-Type': 'text/event-stream',

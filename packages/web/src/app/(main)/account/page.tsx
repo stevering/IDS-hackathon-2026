@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 
@@ -48,6 +48,23 @@ export default function AccountPage() {
   ]);
   const [selectedProvider, setSelectedProvider] = useState("gateway");
   const [secret, setSecret] = useState("");
+  const [dropdownOpen, setDropdownOpen] = useState(false);
+  const [search, setSearch] = useState("");
+  const dropdownRef = useRef<HTMLDivElement>(null);
+
+  // Close dropdown on outside click
+  useEffect(() => {
+    function handleClickOutside(e: MouseEvent) {
+      if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
+        setDropdownOpen(false);
+        setSearch("");
+      }
+    }
+    if (dropdownOpen) {
+      document.addEventListener("mousedown", handleClickOutside);
+      return () => document.removeEventListener("mousedown", handleClickOutside);
+    }
+  }, [dropdownOpen]);
 
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -64,7 +81,7 @@ export default function AccountPage() {
       const keysData = await keysRes.json();
       const usageData = await usageRes.json();
       setKeys(keysData.keys ?? []);
-      setUsage(usageData.messages ?? 0);
+      setUsage(usageData.tokens_used ?? 0);
 
       // Build dynamic provider list from Gateway catalog
       if (modelsRes.ok) {
@@ -154,7 +171,10 @@ export default function AccountPage() {
   const providerLabel = (id: string) =>
     providers.find((p) => p.id === id)?.name ?? capitalize(id);
 
-  const FREE_TIER_LIMIT = 100;
+  const FREE_TIER_DAILY_LIMIT = 500_000;
+
+  /** Format a token count for display (e.g. 124532 → "124,532") */
+  const fmt = (n: number) => n.toLocaleString("en-US");
 
   return (
     <div className="min-h-screen px-4 py-10 max-w-2xl mx-auto">
@@ -183,17 +203,17 @@ export default function AccountPage() {
         ) : (
           <>
             <div className="flex items-end gap-2 mb-2">
-              <span className="text-2xl font-semibold">{usage ?? 0}</span>
-              <span className="text-white/40 text-sm mb-0.5">/ {FREE_TIER_LIMIT} messages this month</span>
+              <span className="text-2xl font-semibold">{fmt(usage ?? 0)}</span>
+              <span className="text-white/40 text-sm mb-0.5">/ {fmt(FREE_TIER_DAILY_LIMIT)} tokens (last 24h)</span>
             </div>
             <div className="h-1.5 rounded-full bg-white/10 overflow-hidden">
               <div
                 className="h-full rounded-full bg-violet-500 transition-all"
-                style={{ width: `${Math.min(100, ((usage ?? 0) / FREE_TIER_LIMIT) * 100)}%` }}
+                style={{ width: `${Math.min(100, ((usage ?? 0) / FREE_TIER_DAILY_LIMIT) * 100)}%` }}
               />
             </div>
             <p className="text-xs text-white/30 mt-2">
-              Add your own API key below to remove the limit.
+              Rolling 24-hour window. Add your own API key below to remove the limit.
             </p>
           </>
         )}
@@ -204,29 +224,67 @@ export default function AccountPage() {
         <h2 className="text-sm font-medium mb-4">Add or update an API key</h2>
 
         <form onSubmit={handleSave} className="flex flex-col gap-3">
-          {/* Provider selector — dynamic from Gateway catalog */}
+          {/* Provider selector — searchable dropdown */}
           {loading ? (
-            <div className="flex gap-2 flex-wrap">
-              {[1, 2, 3, 4].map((i) => (
-                <div key={i} className="h-7 w-20 rounded-lg bg-white/10 animate-pulse" />
-              ))}
-            </div>
+            <div className="h-10 w-full rounded-lg bg-white/10 animate-pulse" />
           ) : (
-            <div className="flex gap-2 flex-wrap">
-              {providers.map((p) => (
-                <button
-                  key={p.id}
-                  type="button"
-                  onClick={() => setSelectedProvider(p.id)}
-                  className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors cursor-pointer ${
-                    selectedProvider === p.id
-                      ? "bg-violet-600/70 border border-violet-500/50 text-white"
-                      : "bg-white/5 border border-white/10 text-white/50 hover:text-white/80"
-                  }`}
+            <div className="relative" ref={dropdownRef}>
+              <button
+                type="button"
+                onClick={() => { setDropdownOpen(!dropdownOpen); setSearch(""); }}
+                className="w-full flex items-center justify-between px-4 py-2.5 rounded-lg bg-white/5 border border-white/10 text-sm transition-colors hover:border-white/20 cursor-pointer"
+              >
+                <span className="truncate">{providerLabel(selectedProvider)}</span>
+                <svg
+                  width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                  strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
+                  className={`shrink-0 text-white/40 transition-transform ${dropdownOpen ? "rotate-180" : ""}`}
                 >
-                  {p.name}
-                </button>
-              ))}
+                  <path d="M6 9l6 6 6-6" />
+                </svg>
+              </button>
+
+              {dropdownOpen && (
+                <div className="absolute z-50 mt-1 w-full rounded-lg bg-[#1a1a2e] border border-white/10 shadow-xl overflow-hidden">
+                  {/* Search input */}
+                  <div className="p-2 border-b border-white/[0.06]">
+                    <input
+                      type="text"
+                      placeholder="Search providers..."
+                      value={search}
+                      onChange={(e) => setSearch(e.target.value)}
+                      autoFocus
+                      className="w-full px-3 py-1.5 rounded-md bg-white/5 border border-white/10 text-sm outline-none focus:border-white/25 transition-colors placeholder:text-white/25"
+                    />
+                  </div>
+                  {/* Options list */}
+                  <div className="max-h-52 overflow-y-auto py-1">
+                    {providers
+                      .filter((p) => p.name.toLowerCase().includes(search.toLowerCase()))
+                      .map((p) => (
+                        <button
+                          key={p.id}
+                          type="button"
+                          onClick={() => {
+                            setSelectedProvider(p.id);
+                            setDropdownOpen(false);
+                            setSearch("");
+                          }}
+                          className={`w-full text-left px-4 py-2 text-sm transition-colors cursor-pointer ${
+                            selectedProvider === p.id
+                              ? "bg-violet-600/30 text-white"
+                              : "text-white/60 hover:bg-white/5 hover:text-white/90"
+                          }`}
+                        >
+                          {p.name}
+                        </button>
+                      ))}
+                    {providers.filter((p) => p.name.toLowerCase().includes(search.toLowerCase())).length === 0 && (
+                      <p className="px-4 py-3 text-sm text-white/30 text-center">No provider found</p>
+                    )}
+                  </div>
+                </div>
+              )}
             </div>
           )}
 
