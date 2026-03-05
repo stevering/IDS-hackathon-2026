@@ -1827,29 +1827,48 @@ export default function Home() {
           <div ref={messagesEndRef} />
         </div>
 
-        <form
-          onSubmit={onSubmit}
-          className="px-3 sm:px-4 py-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))] glass-input-bar"
-        >
-          {/* Model selector */}
-          <div className="flex items-center gap-2 mb-2 flex-wrap">
-            {byokKeys.length === 0 ? (
-              /* Free tier — no BYOK keys */
-              <div className="flex items-center gap-2">
-                <span className="text-xs text-white/30 bg-white/5 border border-white/10 px-2 py-1 rounded-md">
-                  Free tier · Grok
-                </span>
-                <Link
-                  href="/account"
-                  className="text-xs text-violet-400 hover:text-violet-300 transition-colors underline underline-offset-2"
-                >
-                  Add API key
-                </Link>
-              </div>
-            ) : (
-              /* BYOK — model picker */
-              <div className="flex items-center gap-1.5">
-                <span className="text-xs text-white/40">Model:</span>
+        <div className="px-3 sm:px-4 pt-2 pb-[calc(0.75rem+env(safe-area-inset-bottom))]">
+          <form
+            onSubmit={onSubmit}
+            className="relative mx-auto max-w-3xl rounded-2xl glass-input-bar overflow-visible"
+          >
+            <textarea
+              ref={inputRef}
+              value={input}
+              onChange={(e) => {
+                setInput(e.target.value);
+                e.target.style.height = "auto";
+                const maxH = window.innerHeight * 0.3;
+                e.target.style.height = Math.min(e.target.scrollHeight, maxH) + "px";
+              }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && !e.shiftKey) {
+                  e.preventDefault();
+                  onSubmit(e);
+                }
+              }}
+              placeholder="Ask Guardian to check a component..."
+              className={`w-full bg-transparent px-4 pt-3 pb-12 text-sm text-white placeholder:text-white/20 focus:outline-none resize-none overflow-y-auto ${isLoading ? "opacity-50" : ""}`}
+              readOnly={isLoading}
+              rows={3}
+            />
+            {/* Bottom bar inside the form */}
+            <div className="absolute bottom-0 left-0 right-0 flex items-center justify-end gap-2 px-3 py-2">
+              {byokKeys.length === 0 ? (
+                /* Free tier */
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-white/30">
+                    Free tier · Grok
+                  </span>
+                  <Link
+                    href="/account"
+                    className="text-xs text-violet-400 hover:text-violet-300 transition-colors underline underline-offset-2"
+                  >
+                    Add API key
+                  </Link>
+                </div>
+              ) : (
+                /* BYOK — model picker */
                 <div className="relative" ref={modelDropdownRef}>
                   {(() => {
                     const hasGateway = byokKeys.some((k) => k.provider === "gateway");
@@ -1860,19 +1879,16 @@ export default function Home() {
                     const getModelValue = (m: GatewayModel) =>
                       hasGateway ? m.id : `${m.owned_by}/${m.id.split("/").pop()}`;
 
-                    // Find selected model label
                     const selectedGw = visibleModels.find((m) => getModelValue(m) === selectedModel);
                     const selectedLabel = selectedGw
                       ? `${selectedGw.name}${selectedGw.tags?.includes("reasoning") ? " ✦" : ""}`
                       : selectedModel;
 
-                    // Group by provider
                     const grouped = visibleModels.reduce<Record<string, GatewayModel[]>>((acc, m) => {
                       (acc[m.owned_by] ??= []).push(m);
                       return acc;
                     }, {});
 
-                    // Filter by search
                     const query = modelSearch.toLowerCase();
                     const filteredGrouped = Object.entries(grouped).reduce<Record<string, GatewayModel[]>>((acc, [provider, models]) => {
                       const filtered = models.filter((m) =>
@@ -1887,20 +1903,20 @@ export default function Home() {
                         <button
                           type="button"
                           onClick={() => { setModelDropdownOpen(!modelDropdownOpen); setModelSearch(""); }}
-                          className="flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-white/5 border border-white/10 text-xs text-white/80 hover:border-white/20 transition-colors cursor-pointer max-w-[240px]"
+                          className="flex items-center gap-1.5 px-2 py-1 rounded-lg text-xs text-white/50 hover:text-white/80 transition-colors cursor-pointer max-w-[200px]"
                         >
                           <span className="truncate">{selectedLabel}</span>
                           <svg
-                            width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                            width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor"
                             strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
-                            className={`shrink-0 text-white/40 transition-transform ${modelDropdownOpen ? "rotate-180" : ""}`}
+                            className={`shrink-0 transition-transform ${modelDropdownOpen ? "rotate-180" : ""}`}
                           >
                             <path d="M6 9l6 6 6-6" />
                           </svg>
                         </button>
 
                         {modelDropdownOpen && (
-                          <div className="absolute bottom-full mb-1 left-0 z-50 w-64 rounded-lg bg-[#1a1a2e] border border-white/10 shadow-xl overflow-hidden">
+                          <div className="absolute bottom-full mb-1 right-0 z-50 w-64 rounded-lg bg-[#1a1a2e] border border-white/10 shadow-xl overflow-hidden">
                             <div className="p-2 border-b border-white/[0.06]">
                               <input
                                 type="text"
@@ -1951,39 +1967,20 @@ export default function Home() {
                     );
                   })()}
                 </div>
-              </div>
-            )}
-          </div>
-          <div className="flex gap-2">
-            <textarea
-              ref={inputRef}
-              value={input}
-              onChange={(e) => {
-                setInput(e.target.value);
-                e.target.style.height = "auto";
-                const maxH = window.innerHeight * 0.1;
-                e.target.style.height = Math.min(e.target.scrollHeight, maxH) + "px";
-              }}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && !e.shiftKey) {
-                  e.preventDefault();
-                  onSubmit(e);
-                }
-              }}
-              placeholder="Ask Guardian to check a component..."
-              className={`flex-1 min-w-0 bg-white/5 border border-white/10 rounded-lg px-3 sm:px-4 py-3 text-sm text-white placeholder:text-white/20 focus:outline-none focus:border-white/30 resize-none overflow-y-auto ${isLoading ? "opacity-50" : ""}`}
-              readOnly={isLoading}
-              rows={1}
-            />
-            <button
-              type="submit"
-              disabled={isLoading || !input.trim()}
-              className="px-3 sm:px-4 py-3 bg-blue-600 hover:bg-blue-500 disabled:bg-white/5 disabled:text-white/20 disabled:cursor-not-allowed rounded-lg text-sm font-medium transition-colors shrink-0 cursor-pointer"
-            >
-              Send
-            </button>
-          </div>
-        </form>
+              )}
+              <button
+                type="submit"
+                disabled={isLoading || !input.trim()}
+                className="p-1.5 rounded-lg bg-white text-black hover:bg-white/90 disabled:bg-white/10 disabled:text-white/20 disabled:cursor-not-allowed transition-colors shrink-0 cursor-pointer"
+              >
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M12 19V5" />
+                  <path d="M5 12l7-7 7 7" />
+                </svg>
+              </button>
+            </div>
+          </form>
+        </div>
       </div>
 
       {proxyModalOpen && (
