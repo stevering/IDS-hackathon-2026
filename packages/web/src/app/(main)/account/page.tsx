@@ -3,6 +3,8 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
+import { useGuardianPresence } from "@/app/hooks/useGuardianPresence";
+import { ConnectedClients } from "@/components/ConnectedClients";
 
 type StoredKey = {
   id: string;
@@ -35,6 +37,7 @@ function capitalize(s: string) {
 
 export default function AccountPage() {
   const router = useRouter();
+  const { clients: presenceClients, loading: presenceLoading } = useGuardianPresence();
   const [keys, setKeys] = useState<StoredKey[]>([]);
   const [usage, setUsage] = useState<{
     daily: { total_tokens: number; input_tokens: number; output_tokens: number; cost_input_usd: number; cost_output_usd: number; limit: number };
@@ -185,7 +188,19 @@ export default function AccountPage() {
   const fmtCompact = (n: number) => n >= 1000 ? `${Math.round(n / 1000)}k` : String(n);
 
   return (
-    <div className="min-h-screen px-4 py-10 max-w-2xl mx-auto">
+    <div className="relative min-h-screen">
+      <div className="absolute inset-0 overflow-hidden pointer-events-none z-0">
+        <div className="wave-bg-layer wave-bg-1" />
+        <div className="wave-bg-layer wave-bg-2" />
+        <div className="wave-bg-layer wave-bg-3" />
+        <div className="wave-bg-noise" />
+        <div className="aurora aurora-1" />
+        <div className="aurora aurora-2" />
+        <div className="aurora aurora-3" />
+        <div className="aurora aurora-4" />
+        <div className="aurora aurora-5" />
+      </div>
+      <div className="relative z-10 px-4 py-10 max-w-2xl mx-auto">
       {/* Header */}
       <div className="flex items-center justify-between mb-8">
         <div>
@@ -204,7 +219,7 @@ export default function AccountPage() {
       </div>
 
       {/* Usage */}
-      <section className="mb-8 p-4 rounded-xl bg-white/[0.04] border border-white/[0.08]">
+      <section className="mb-8 p-4 rounded-xl bg-white/[0.06] border border-white/[0.15] backdrop-blur-md">
         <h2 className="text-sm font-medium mb-3">Free tier usage</h2>
         {loading ? (
           <div className="h-4 w-32 bg-white/10 rounded animate-pulse" />
@@ -218,7 +233,7 @@ export default function AccountPage() {
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-white/30 hover:text-white/60 transition-colors cursor-help">
                   <circle cx="12" cy="12" r="10" /><path d="M12 16v-4M12 8h.01" />
                 </svg>
-                <div className="absolute bottom-6 left-1/2 -translate-x-1/2 hidden group-hover:block z-10 w-56 p-3 rounded-lg bg-[#1a1a2e] border border-white/10 shadow-xl text-xs">
+                <div className="absolute bottom-6 left-1/2 -translate-x-1/2 hidden group-hover:block z-10 w-56 p-3 rounded-lg bg-[rgba(10,10,10,0.6)] border border-white/15 shadow-xl backdrop-blur-xl backdrop-saturate-150 text-xs">
                   <div className="flex justify-between mb-1"><span className="text-white/50">Input</span><span className="text-white/70">{fmt(usage.daily.input_tokens)} tokens</span></div>
                   <div className="flex justify-between mb-1"><span className="text-white/50">Output</span><span className="text-white/70">{fmt(usage.daily.output_tokens)} tokens</span></div>
                   <div className="border-t border-white/10 my-1.5" />
@@ -244,7 +259,7 @@ export default function AccountPage() {
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-white/30 hover:text-white/60 transition-colors cursor-help">
                   <circle cx="12" cy="12" r="10" /><path d="M12 16v-4M12 8h.01" />
                 </svg>
-                <div className="absolute bottom-5 left-1/2 -translate-x-1/2 hidden group-hover:block z-10 w-52 p-2.5 rounded-lg bg-[#1a1a2e] border border-white/10 shadow-xl text-xs">
+                <div className="absolute bottom-5 left-1/2 -translate-x-1/2 hidden group-hover:block z-10 w-52 p-2.5 rounded-lg bg-[rgba(10,10,10,0.6)] border border-white/15 shadow-xl backdrop-blur-xl backdrop-saturate-150 text-xs">
                   <div className="flex justify-between mb-1"><span className="text-white/50">Input</span><span className="text-white/70">{fmtCompact(usage.monthly.input_tokens)}</span></div>
                   <div className="flex justify-between mb-1"><span className="text-white/50">Output</span><span className="text-white/70">{fmtCompact(usage.monthly.output_tokens)}</span></div>
                   <div className="border-t border-white/10 my-1" />
@@ -261,7 +276,7 @@ export default function AccountPage() {
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-white/30 hover:text-white/60 transition-colors cursor-help">
                   <circle cx="12" cy="12" r="10" /><path d="M12 16v-4M12 8h.01" />
                 </svg>
-                <div className="absolute bottom-5 left-1/2 -translate-x-1/2 hidden group-hover:block z-10 w-52 p-2.5 rounded-lg bg-[#1a1a2e] border border-white/10 shadow-xl text-xs">
+                <div className="absolute bottom-5 left-1/2 -translate-x-1/2 hidden group-hover:block z-10 w-52 p-2.5 rounded-lg bg-[rgba(10,10,10,0.6)] border border-white/15 shadow-xl backdrop-blur-xl backdrop-saturate-150 text-xs">
                   <div className="flex justify-between mb-1"><span className="text-white/50">Input</span><span className="text-white/70">{fmtCompact(usage.lifetime.input_tokens)}</span></div>
                   <div className="flex justify-between mb-1"><span className="text-white/50">Output</span><span className="text-white/70">{fmtCompact(usage.lifetime.output_tokens)}</span></div>
                   <div className="border-t border-white/10 my-1" />
@@ -280,7 +295,7 @@ export default function AccountPage() {
       </section>
 
       {/* Add / update a key */}
-      <section className="mb-8 p-4 rounded-xl bg-white/[0.04] border border-white/[0.08]">
+      <section className="mb-8 p-4 rounded-xl bg-white/[0.06] border border-white/[0.15] backdrop-blur-md">
         <h2 className="text-sm font-medium mb-4">Add or update an API key</h2>
 
         <form onSubmit={handleSave} className="flex flex-col gap-3">
@@ -305,7 +320,7 @@ export default function AccountPage() {
               </button>
 
               {dropdownOpen && (
-                <div className="absolute z-50 mt-1 w-full rounded-lg bg-[#1a1a2e] border border-white/10 shadow-xl overflow-hidden">
+                <div className="absolute z-50 mt-1 w-full rounded-lg bg-[rgba(10,10,10,0.6)] border border-white/15 shadow-xl backdrop-blur-xl backdrop-saturate-150 overflow-hidden">
                   {/* Search input */}
                   <div className="p-2 border-b border-white/[0.06]">
                     <input
@@ -434,6 +449,10 @@ export default function AccountPage() {
           </div>
         )}
       </section>
+
+      {/* Connected Clients */}
+      <ConnectedClients clients={presenceClients} loading={presenceLoading} />
+      </div>
     </div>
   );
 }

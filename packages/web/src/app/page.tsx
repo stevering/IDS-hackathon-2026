@@ -7,6 +7,7 @@ import Link from "next/link";
 import type { GatewayModel } from "./api/gateway-models/route";
 import { useFigmaPlugin } from "./hooks/useFigmaPlugin";
 import { useFigmaExecuteChannel } from "./hooks/useFigmaExecuteChannel";
+import { ClientSelector } from "@/components/ClientSelector";
 import { UserMenu } from "@/components/UserMenu";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -618,7 +619,15 @@ function parseTextWithImages(text: string, isStreaming: boolean): Segment[] {
 export default function Home() {
   // ── Figma plugin bridge ─────────────────────────────────────────────
   const { isFigmaPlugin, figmaContext, sendToPlugin, executeCode } = useFigmaPlugin();
-  useFigmaExecuteChannel(executeCode, isFigmaPlugin);
+  const { clients } = useFigmaExecuteChannel(executeCode, true, {
+    type: isFigmaPlugin ? "figma-plugin" : "webapp",
+    label: isFigmaPlugin
+      ? figmaContext?.currentPage?.name ?? "Figma Plugin"
+      : typeof navigator !== "undefined" ? navigator.userAgent.split(" ").pop()?.split("/")[0] ?? "Browser" : "Browser",
+    fileKey: figmaContext?.fileKey ?? undefined,
+  });
+  const [selectedFigmaClient, setSelectedFigmaClient] = useState<string | null>(null);
+  const [selectedCodeClient, setSelectedCodeClient] = useState<string | null>(null);
 
   const isDev = process.env.NODE_ENV === 'development';
   const [figmaMcpUrl, setFigmaMcpUrl] = useState(
@@ -1488,16 +1497,20 @@ export default function Home() {
                 </svg>
               </button>
             )}
-            <div
-              className={`w-2 h-2 rounded-full ${figmaConnected ? "bg-emerald-400" : "bg-white/20"}`}
-              title={`Figma MCP: ${figmaConnected ? "configured" : "not configured"}`}
+            <ClientSelector
+              clients={clients}
+              filterType="figma-plugin"
+              label="No plugin"
+              selected={selectedFigmaClient}
+              onSelect={setSelectedFigmaClient}
             />
-            <span className="text-xs text-white/60 hidden sm:inline">Figma</span>
-            <div
-              className={`w-2 h-2 rounded-full ml-1 sm:ml-2 ${codeConnected ? "bg-emerald-400" : "bg-white/20"}`}
-              title={`Code MCP: ${codeConnected ? "configured" : "not configured"}`}
+            <ClientSelector
+              clients={clients}
+              filterType="webapp"
+              label="No code"
+              selected={selectedCodeClient}
+              onSelect={setSelectedCodeClient}
             />
-            <span className="text-xs text-white/60 hidden sm:inline">Code</span>
             <div className="w-px h-4 bg-white/10 mx-1 hidden sm:block" />
             <UserMenu />
           </div>
@@ -1923,7 +1936,7 @@ export default function Home() {
                         </button>
 
                         {modelDropdownOpen && (
-                          <div className="absolute bottom-full mb-1 right-0 z-50 w-64 rounded-lg bg-[#1a1a2e] border border-white/10 shadow-xl overflow-hidden">
+                          <div className="absolute bottom-full mb-1 right-0 z-50 w-64 rounded-lg bg-[rgba(10,10,10,0.6)] border border-white/15 shadow-xl backdrop-blur-xl backdrop-saturate-150 overflow-hidden">
                             <div className="p-2 border-b border-white/[0.06]">
                               <input
                                 type="text"
@@ -1993,7 +2006,7 @@ export default function Home() {
 
       {proxyModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
-          <div className="bg-[#1a1a2e] border border-white/10 rounded-lg p-5 w-full max-w-md mx-4 shadow-2xl">
+          <div className="bg-[rgba(10,10,10,0.6)] border border-white/15 rounded-lg p-5 w-full max-w-md mx-4 shadow-2xl backdrop-blur-xl backdrop-saturate-150">
             <h3 className="text-sm font-semibold text-white mb-1">Configure Proxy</h3>
             <p className="text-xs text-white/50 mb-4">
               Choose between Proxy Online (tunnel) or Proxy Local mode
