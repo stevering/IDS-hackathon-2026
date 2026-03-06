@@ -12,23 +12,37 @@ export type ClientInfo = {
   label: string;
   fileKey?: string;
   mcpInfo?: PresenceClient["mcpInfo"];
+  figmaContext?: PresenceClient["figmaContext"];
 };
 
 /**
  * Subscribes to the Supabase Realtime channel "guardian:execute:{userId}",
- * handles MCP code-execution requests, tracks presence, and returns
- * the list of connected clients.
+ * handles MCP code-execution requests, tracks presence, supports client
+ * targeting via set_target broadcasts, and returns connected clients.
  */
 export function useFigmaExecuteChannel(
   executeCode: (code: string, timeout?: number) => Promise<ExecuteCodeResult>,
   enabled: boolean,
   clientInfo?: ClientInfo
-): { clients: PresenceClient[] } {
+): { clients: PresenceClient[]; setTarget: (clientId: string | null) => void; clientId: string } {
   const busy = useRef(false);
   const executeCodeRef = useRef(executeCode);
   executeCodeRef.current = executeCode;
   const [userId, setUserId] = useState<string | null>(null);
   const [clients, setClients] = useState<PresenceClient[]>([]);
+
+  // Self-generated stable client ID — lazy-init on first client-side access only
+  const clientId = useRef("");
+  if (clientId.current === "" && typeof window !== "undefined") {
+    clientId.current = Math.random().toString(36).slice(2, 10);
+  }
+
+  // Active target clientId — only this client responds to execute_request
+  // null means "no target set, anyone can respond"
+  const activeTargetRef = useRef<string | null>(null);
+
+  // Channel ref for broadcasting set_target
+  const channelRef = useRef<ReturnType<ReturnType<typeof createClient>["channel"]> | null>(null);
 
   // Resolve userId from Supabase auth on mount
   useEffect(() => {
@@ -50,6 +64,16 @@ export function useFigmaExecuteChannel(
     []
   );
 
+  // Broadcast target selection to all clients on the channel
+  const setTarget = useCallback((targetClientId: string | null) => {
+    activeTargetRef.current = targetClientId;
+    channelRef.current?.send({
+      type: "broadcast",
+      event: "set_target",
+      payload: { targetClientId },
+    });
+  }, []);
+
   // Subscribe to the user-scoped channel
   useEffect(() => {
     if (!enabled || !userId) return;
@@ -59,9 +83,14 @@ export function useFigmaExecuteChannel(
     const channel = supabase.channel(channelName, {
       config: { presence: { key: userId } },
     });
+    channelRef.current = channel;
 
     channel
       .on("broadcast", { event: "execute_request" }, async (payload) => {
+        // Only respond if this client is the target (or no target is set)
+        const target = activeTargetRef.current;
+        if (target !== null && target !== clientId.current) return;
+
         if (busy.current) return;
         busy.current = true;
 
@@ -90,6 +119,10 @@ export function useFigmaExecuteChannel(
           busy.current = false;
         }
       })
+      .on("broadcast", { event: "set_target" }, (payload) => {
+        const { targetClientId } = payload.payload as { targetClientId: string | null };
+        activeTargetRef.current = targetClientId;
+      })
       .on("presence", { event: "sync" }, () => {
         handlePresenceSync(
           channel.presenceState() as Record<
@@ -101,19 +134,22 @@ export function useFigmaExecuteChannel(
       .subscribe(async (status) => {
         if (status === "SUBSCRIBED" && clientInfoRef.current) {
           await channel.track({
+            clientId: clientId.current,
             type: clientInfoRef.current.type,
             label: clientInfoRef.current.label,
             fileKey: clientInfoRef.current.fileKey,
             mcpInfo: clientInfoRef.current.mcpInfo,
+            figmaContext: clientInfoRef.current.figmaContext,
             connectedAt: Date.now(),
           });
         }
       });
 
     return () => {
+      channelRef.current = null;
       channel.unsubscribe();
     };
   }, [enabled, userId, handlePresenceSync]);
 
-  return { clients };
+  return { clients, setTarget, clientId: clientId.current };
 }

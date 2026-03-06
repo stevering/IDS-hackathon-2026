@@ -16,12 +16,12 @@ export function ClientSelector({ clients, filterType, label, selected, onSelect 
   const ref = useRef<HTMLDivElement>(null);
 
   const filtered = clients.filter((c) => c.type === filterType);
-  const selectedClient = filtered.find((c) => c.presenceRef === selected);
+  const selectedClient = filtered.find((c) => c.clientId === selected);
 
   // Auto-select the only client
   useEffect(() => {
-    if (filtered.length === 1 && selected !== filtered[0].presenceRef) {
-      onSelect(filtered[0].presenceRef);
+    if (filtered.length === 1 && selected !== filtered[0].clientId) {
+      onSelect(filtered[0].clientId);
     } else if (filtered.length === 0 && selected !== null) {
       onSelect(null);
     }
@@ -85,7 +85,7 @@ export function ClientSelector({ clients, filterType, label, selected, onSelect 
             <button
               key={client.presenceRef}
               onClick={() => {
-                onSelect(client.presenceRef);
+                onSelect(client.clientId);
                 setOpen(false);
               }}
               className="w-full flex items-center gap-2 px-3 py-2 text-xs text-white/70 hover:bg-white/10 transition-colors cursor-pointer"
@@ -94,7 +94,7 @@ export function ClientSelector({ clients, filterType, label, selected, onSelect 
               <span className="flex-1 text-left truncate">
                 {client.shortId} {client.label}
               </span>
-              {selected === client.presenceRef && (
+              {selected === client.clientId && (
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className="text-emerald-400 shrink-0">
                   <path d="M20 6L9 17l-5-5" />
                 </svg>

@@ -2,7 +2,8 @@
 
 import { useChat } from "@ai-sdk/react";
 import { DefaultChatTransport } from "ai";
-import { useState, useRef, useEffect, useMemo } from "react";
+import { useState, useRef, useEffect, useMemo, useCallback } from "react";
+import { createPortal } from "react-dom";
 import Link from "next/link";
 import type { GatewayModel } from "./api/gateway-models/route";
 import { useFigmaPlugin } from "./hooks/useFigmaPlugin";
@@ -619,15 +620,24 @@ function parseTextWithImages(text: string, isStreaming: boolean): Segment[] {
 export default function Home() {
   // ── Figma plugin bridge ─────────────────────────────────────────────
   const { isFigmaPlugin, figmaContext, sendToPlugin, executeCode } = useFigmaPlugin();
-  const { clients } = useFigmaExecuteChannel(executeCode, true, {
+  const { clients, setTarget, clientId: myClientId } = useFigmaExecuteChannel(executeCode, true, {
     type: isFigmaPlugin ? "figma-plugin" : "webapp",
     label: isFigmaPlugin
       ? figmaContext?.currentPage?.name ?? "Figma Plugin"
       : typeof navigator !== "undefined" ? navigator.userAgent.split(" ").pop()?.split("/")[0] ?? "Browser" : "Browser",
     fileKey: figmaContext?.fileKey ?? undefined,
+    figmaContext: isFigmaPlugin && figmaContext ? {
+      fileName: figmaContext.fileName,
+      fileUrl: figmaContext.fileUrl,
+      pages: figmaContext.pages,
+      currentPage: figmaContext.currentPage,
+      currentUser: figmaContext.currentUser,
+    } : undefined,
   });
   const [selectedFigmaClient, setSelectedFigmaClient] = useState<string | null>(null);
   const [selectedCodeClient, setSelectedCodeClient] = useState<string | null>(null);
+
+  // Target is broadcast before each chat send, not on mount (avoids plugins overriding each other)
 
   const isDev = process.env.NODE_ENV === 'development';
   const [figmaMcpUrl, setFigmaMcpUrl] = useState(
@@ -654,6 +664,8 @@ export default function Home() {
   const [modelDropdownOpen, setModelDropdownOpen] = useState(false);
   const [modelSearch, setModelSearch] = useState("");
   const modelDropdownRef = useRef<HTMLDivElement>(null);
+  const modelBtnRef = useRef<HTMLButtonElement>(null);
+  const [modelDropdownPos, setModelDropdownPos] = useState<{ top: number; left: number } | null>(null);
   const [selectedNode, setSelectedNode] = useState<{ nodes: unknown[]; image: string | null; nodeUrl: string | null } | null>(null);
   const [figmaPluginContext, setFigmaPluginContext] = useState<{ fileKey: string; fileName: string; fileUrl: string; currentPage?: { id: string; name: string } | null; pages?: { id: string; name: string }[]; currentUser?: { id: string; name: string } | null } | null>(null);
   const [selectionGlow, setSelectionGlow] = useState(false);
@@ -690,9 +702,14 @@ export default function Home() {
   }, [enabledMcps]);
 
   // Close model dropdown on outside click
+  const portalDropdownRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     function handleClickOutside(e: MouseEvent) {
-      if (modelDropdownRef.current && !modelDropdownRef.current.contains(e.target as Node)) {
+      const target = e.target as Node;
+      if (
+        modelDropdownRef.current && !modelDropdownRef.current.contains(target) &&
+        (!portalDropdownRef.current || !portalDropdownRef.current.contains(target))
+      ) {
         setModelDropdownOpen(false);
         setModelSearch("");
       }
@@ -700,6 +717,19 @@ export default function Home() {
     if (modelDropdownOpen) {
       document.addEventListener("mousedown", handleClickOutside);
       return () => document.removeEventListener("mousedown", handleClickOutside);
+    }
+  }, [modelDropdownOpen]);
+
+  // Compute dropdown position when opened
+  useEffect(() => {
+    if (modelDropdownOpen && modelBtnRef.current) {
+      const rect = modelBtnRef.current.getBoundingClientRect();
+      setModelDropdownPos({
+        top: rect.top - 4,
+        left: rect.right - 256,
+      });
+    } else {
+      setModelDropdownPos(null);
     }
   }, [modelDropdownOpen]);
 
@@ -750,6 +780,10 @@ export default function Home() {
   selectedNodeRef.current = selectedNode;
   const figmaPluginContextRef = useRef(figmaPluginContext);
   figmaPluginContextRef.current = figmaPluginContext;
+  const clientsRef = useRef(clients);
+  clientsRef.current = clients;
+  const selectedFigmaClientRef = useRef(selectedFigmaClient);
+  selectedFigmaClientRef.current = selectedFigmaClient;
   const tunnelSecretRef = useRef(tunnelSecret);
   tunnelSecretRef.current = tunnelSecret;
   const oauthSessionRef = useRef<string | null>(null);
@@ -1057,12 +1091,40 @@ export default function Home() {
           }
           return headers;
         },
-        body: () => ({ figmaMcpUrl: figmaMcpUrlRef.current || (figmaOAuthRef.current ? "https://mcp.figma.com/mcp" : ""), figmaAccessToken: figmaAccessTokenRef.current, codeProjectPath: codeProjectPathRef.current, figmaOAuth: figmaOAuthRef.current, model: selectedModelRef.current, selectedNode: selectedNodeRef.current, tunnelSecret: tunnelSecretRef.current, enabledMcps: enabledMcpsRef.current, figmaPluginContext: figmaPluginContextRef.current }),
+        body: () => {
+          // If standalone webapp with a selected plugin, derive figmaPluginContext from presence
+          let pluginContext = figmaPluginContextRef.current;
+          if (!pluginContext && selectedFigmaClientRef.current) {
+            const sel = clientsRef.current.find(c => c.clientId === selectedFigmaClientRef.current && c.type === "figma-plugin");
+            if (sel?.figmaContext) {
+              pluginContext = {
+                fileKey: sel.fileKey ?? "",
+                fileName: sel.figmaContext.fileName ?? "",
+                fileUrl: sel.figmaContext.fileUrl ?? (sel.fileKey ? `https://www.figma.com/file/${sel.fileKey}` : ""),
+                currentPage: sel.figmaContext.currentPage,
+                pages: sel.figmaContext.pages,
+                currentUser: sel.figmaContext.currentUser,
+              };
+            }
+          }
+          return { figmaMcpUrl: figmaMcpUrlRef.current || (figmaOAuthRef.current ? "https://mcp.figma.com/mcp" : ""), figmaAccessToken: figmaAccessTokenRef.current, codeProjectPath: codeProjectPathRef.current, figmaOAuth: figmaOAuthRef.current, model: selectedModelRef.current, selectedNode: selectedNodeRef.current, tunnelSecret: tunnelSecretRef.current, enabledMcps: enabledMcpsRef.current, figmaPluginContext: pluginContext };
+        },
       }),
     [],
   );
 
-  const { messages, sendMessage, status, error, setMessages } = useChat({ transport });
+  const { messages, sendMessage: rawSendMessage, status, error, setMessages } = useChat({ transport });
+
+  // Wrap sendMessage to broadcast target before each chat send
+  const sendMessage = useCallback((msg: { text: string }) => {
+    // Plugin targets itself; standalone webapp targets the selected plugin
+    if (isFigmaPlugin) {
+      setTarget(myClientId);
+    } else {
+      setTarget(selectedFigmaClientRef.current);
+    }
+    rawSendMessage(msg);
+  }, [isFigmaPlugin, myClientId, setTarget, rawSendMessage]);
 
   const [errorVisible, setErrorVisible] = useState(false);
   useEffect(() => {
@@ -1497,6 +1559,7 @@ export default function Home() {
                 </svg>
               </button>
             )}
+            <span className="text-[10px] font-mono text-white/25" suppressHydrationWarning>{clients.find(c => c.clientId === myClientId)?.shortId ?? myClientId}</span>
             <ClientSelector
               clients={clients}
               filterType="figma-plugin"
@@ -1921,6 +1984,7 @@ export default function Home() {
                     return (
                       <>
                         <button
+                          ref={modelBtnRef}
                           type="button"
                           onClick={() => { setModelDropdownOpen(!modelDropdownOpen); setModelSearch(""); }}
                           className="flex items-center gap-1.5 px-2 py-1 rounded-lg text-xs text-white/50 hover:text-white/80 transition-colors cursor-pointer max-w-[200px]"
@@ -1935,8 +1999,20 @@ export default function Home() {
                           </svg>
                         </button>
 
-                        {modelDropdownOpen && (
-                          <div className="absolute bottom-full mb-1 right-0 z-50 w-64 rounded-lg bg-[rgba(10,10,10,0.6)] border border-white/15 shadow-xl backdrop-blur-xl backdrop-saturate-150 overflow-hidden">
+                        {modelDropdownOpen && modelDropdownPos && createPortal(
+                          <div
+                            ref={portalDropdownRef}
+                            className="fixed z-[9999] w-64 rounded-lg border border-white/15 overflow-hidden"
+                            style={{
+                              top: modelDropdownPos.top,
+                              left: modelDropdownPos.left,
+                              transform: "translateY(-100%)",
+                              background: "rgba(10,10,10,0.5)",
+                              backdropFilter: "blur(20px) saturate(1.5)",
+                              WebkitBackdropFilter: "blur(20px) saturate(1.5)",
+                              boxShadow: "0 8px 32px rgba(0,0,0,0.6), inset 0 1px 0 rgba(255,255,255,0.06)",
+                            }}
+                          >
                             <div className="p-2 border-b border-white/[0.06]">
                               <input
                                 type="text"
@@ -1981,7 +2057,8 @@ export default function Home() {
                                 <p className="px-3 py-3 text-xs text-white/30 text-center">No model found</p>
                               )}
                             </div>
-                          </div>
+                          </div>,
+                          document.body
                         )}
                       </>
                     );
@@ -2006,7 +2083,7 @@ export default function Home() {
 
       {proxyModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
-          <div className="bg-[rgba(10,10,10,0.6)] border border-white/15 rounded-lg p-5 w-full max-w-md mx-4 shadow-2xl backdrop-blur-xl backdrop-saturate-150">
+          <div className="border border-white/15 rounded-lg p-5 w-full max-w-md mx-4 shadow-2xl" style={{ background: "rgba(10,10,10,0.5)", backdropFilter: "blur(20px) saturate(1.5)", WebkitBackdropFilter: "blur(20px) saturate(1.5)" }}>
             <h3 className="text-sm font-semibold text-white mb-1">Configure Proxy</h3>
             <p className="text-xs text-white/50 mb-4">
               Choose between Proxy Online (tunnel) or Proxy Local mode

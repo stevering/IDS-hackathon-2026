@@ -2,6 +2,7 @@ export type ClientType = "figma-plugin" | "webapp" | "overlay"
 
 export type PresenceClient = {
   type: ClientType
+  clientId: string
   shortId: string
   label: string
   fileKey?: string
@@ -10,6 +11,13 @@ export type PresenceClient = {
   mcpInfo?: {
     figma?: { connected: boolean; mode: string }
     code?: { connected: boolean; path: string }
+  }
+  figmaContext?: {
+    fileName?: string
+    fileUrl?: string | null
+    pages?: { id: string; name: string }[]
+    currentPage?: { id: string; name: string } | null
+    currentUser?: { id: string; name: string } | null
   }
 }
 
@@ -28,12 +36,14 @@ export function parsePresenceState(
       const type = (p.type as ClientType) ?? "webapp"
       clients.push({
         type,
+        clientId: (p.clientId as string) ?? p.presence_ref,
         shortId: generateShortId(type, p.presence_ref),
         label: (p.label as string) ?? "Unknown",
         fileKey: p.fileKey as string | undefined,
         connectedAt: (p.connectedAt as number) ?? Date.now(),
         presenceRef: p.presence_ref,
         mcpInfo: p.mcpInfo as PresenceClient["mcpInfo"],
+        figmaContext: p.figmaContext as PresenceClient["figmaContext"],
       })
     }
   }

@@ -311,6 +311,12 @@ a[href],
   80%      { transform: rotate(-14deg) translateX(1vw) translateY(-2vh) scaleY(1.15); }
 }
 
+.glass-dropdown {
+  background: rgba(10, 10, 10, 0.5);
+  backdrop-filter: blur(20px) saturate(1.5);
+  -webkit-backdrop-filter: blur(20px) saturate(1.5);
+}
+
 .glass-sidebar {
   background: rgba(10, 10, 10, 0.85);
   backdrop-filter: blur(20px);

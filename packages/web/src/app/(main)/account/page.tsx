@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback, useRef } from "react";
+import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { useGuardianPresence } from "@/app/hooks/useGuardianPresence";
@@ -58,11 +59,18 @@ export default function AccountPage() {
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const [search, setSearch] = useState("");
   const dropdownRef = useRef<HTMLDivElement>(null);
+  const dropdownBtnRef = useRef<HTMLButtonElement>(null);
+  const portalDropdownRef = useRef<HTMLDivElement>(null);
+  const [dropdownPos, setDropdownPos] = useState<{ top: number; left: number; width: number } | null>(null);
 
   // Close dropdown on outside click
   useEffect(() => {
     function handleClickOutside(e: MouseEvent) {
-      if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
+      const target = e.target as Node;
+      if (
+        dropdownRef.current && !dropdownRef.current.contains(target) &&
+        (!portalDropdownRef.current || !portalDropdownRef.current.contains(target))
+      ) {
         setDropdownOpen(false);
         setSearch("");
       }
@@ -70,6 +78,20 @@ export default function AccountPage() {
     if (dropdownOpen) {
       document.addEventListener("mousedown", handleClickOutside);
       return () => document.removeEventListener("mousedown", handleClickOutside);
+    }
+  }, [dropdownOpen]);
+
+  // Compute dropdown position when opened
+  useEffect(() => {
+    if (dropdownOpen && dropdownBtnRef.current) {
+      const rect = dropdownBtnRef.current.getBoundingClientRect();
+      setDropdownPos({
+        top: rect.bottom + 4,
+        left: rect.left,
+        width: rect.width,
+      });
+    } else {
+      setDropdownPos(null);
     }
   }, [dropdownOpen]);
 
@@ -233,7 +255,7 @@ export default function AccountPage() {
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-white/30 hover:text-white/60 transition-colors cursor-help">
                   <circle cx="12" cy="12" r="10" /><path d="M12 16v-4M12 8h.01" />
                 </svg>
-                <div className="absolute bottom-6 left-1/2 -translate-x-1/2 hidden group-hover:block z-10 w-56 p-3 rounded-lg bg-[rgba(10,10,10,0.6)] border border-white/15 shadow-xl backdrop-blur-xl backdrop-saturate-150 text-xs">
+                <div className="absolute bottom-6 left-1/2 -translate-x-1/2 hidden group-hover:block z-10 w-56 p-3 rounded-lg border border-white/15 shadow-xl glass-dropdown text-xs">
                   <div className="flex justify-between mb-1"><span className="text-white/50">Input</span><span className="text-white/70">{fmt(usage.daily.input_tokens)} tokens</span></div>
                   <div className="flex justify-between mb-1"><span className="text-white/50">Output</span><span className="text-white/70">{fmt(usage.daily.output_tokens)} tokens</span></div>
                   <div className="border-t border-white/10 my-1.5" />
@@ -259,7 +281,7 @@ export default function AccountPage() {
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-white/30 hover:text-white/60 transition-colors cursor-help">
                   <circle cx="12" cy="12" r="10" /><path d="M12 16v-4M12 8h.01" />
                 </svg>
-                <div className="absolute bottom-5 left-1/2 -translate-x-1/2 hidden group-hover:block z-10 w-52 p-2.5 rounded-lg bg-[rgba(10,10,10,0.6)] border border-white/15 shadow-xl backdrop-blur-xl backdrop-saturate-150 text-xs">
+                <div className="absolute bottom-5 left-1/2 -translate-x-1/2 hidden group-hover:block z-10 w-52 p-2.5 rounded-lg border border-white/15 shadow-xl glass-dropdown text-xs">
                   <div className="flex justify-between mb-1"><span className="text-white/50">Input</span><span className="text-white/70">{fmtCompact(usage.monthly.input_tokens)}</span></div>
                   <div className="flex justify-between mb-1"><span className="text-white/50">Output</span><span className="text-white/70">{fmtCompact(usage.monthly.output_tokens)}</span></div>
                   <div className="border-t border-white/10 my-1" />
@@ -276,7 +298,7 @@ export default function AccountPage() {
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-white/30 hover:text-white/60 transition-colors cursor-help">
                   <circle cx="12" cy="12" r="10" /><path d="M12 16v-4M12 8h.01" />
                 </svg>
-                <div className="absolute bottom-5 left-1/2 -translate-x-1/2 hidden group-hover:block z-10 w-52 p-2.5 rounded-lg bg-[rgba(10,10,10,0.6)] border border-white/15 shadow-xl backdrop-blur-xl backdrop-saturate-150 text-xs">
+                <div className="absolute bottom-5 left-1/2 -translate-x-1/2 hidden group-hover:block z-10 w-52 p-2.5 rounded-lg border border-white/15 shadow-xl glass-dropdown text-xs">
                   <div className="flex justify-between mb-1"><span className="text-white/50">Input</span><span className="text-white/70">{fmtCompact(usage.lifetime.input_tokens)}</span></div>
                   <div className="flex justify-between mb-1"><span className="text-white/50">Output</span><span className="text-white/70">{fmtCompact(usage.lifetime.output_tokens)}</span></div>
                   <div className="border-t border-white/10 my-1" />
@@ -305,6 +327,7 @@ export default function AccountPage() {
           ) : (
             <div className="relative" ref={dropdownRef}>
               <button
+                ref={dropdownBtnRef}
                 type="button"
                 onClick={() => { setDropdownOpen(!dropdownOpen); setSearch(""); }}
                 className="w-full flex items-center justify-between px-4 py-2.5 rounded-lg bg-white/5 border border-white/10 text-sm transition-colors hover:border-white/20 cursor-pointer"
@@ -319,8 +342,20 @@ export default function AccountPage() {
                 </svg>
               </button>
 
-              {dropdownOpen && (
-                <div className="absolute z-50 mt-1 w-full rounded-lg bg-[rgba(10,10,10,0.6)] border border-white/15 shadow-xl backdrop-blur-xl backdrop-saturate-150 overflow-hidden">
+              {dropdownOpen && dropdownPos && createPortal(
+                <div
+                  ref={portalDropdownRef}
+                  className="fixed z-[9999] rounded-lg border border-white/15 overflow-hidden"
+                  style={{
+                    top: dropdownPos.top,
+                    left: dropdownPos.left,
+                    width: dropdownPos.width,
+                    background: "rgba(10,10,10,0.5)",
+                    backdropFilter: "blur(20px) saturate(1.5)",
+                    WebkitBackdropFilter: "blur(20px) saturate(1.5)",
+                    boxShadow: "0 8px 32px rgba(0,0,0,0.6), inset 0 1px 0 rgba(255,255,255,0.06)",
+                  }}
+                >
                   {/* Search input */}
                   <div className="p-2 border-b border-white/[0.06]">
                     <input
@@ -358,7 +393,8 @@ export default function AccountPage() {
                       <p className="px-4 py-3 text-sm text-white/30 text-center">No provider found</p>
                     )}
                   </div>
-                </div>
+                </div>,
+                document.body
               )}
             </div>
           )}
