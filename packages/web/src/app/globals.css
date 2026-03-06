@@ -229,85 +229,86 @@ a[href],
   75% { border-radius: 60% 40% 45% 55% / 50% 50% 60% 40%; }
 }
 
-/* ── Animated wavy lines ──────────────────────────────────────────────────── */
+/* ── Aurora ribbons ───────────────────────────────────────────────────────── */
 
-.wave-lines-svg {
+.aurora {
   position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  z-index: 1;
   pointer-events: none;
-  transform: rotate(-8deg) scale(1.2);
-  transform-origin: center center;
+  border-radius: 50%;
+  filter: blur(35px);
+  will-change: transform;
 }
 
-.wave-line {
-  fill: none;
-  stroke-width: 1.5;
-  stroke-linecap: round;
+.aurora-1 {
+  width: 120%;
+  height: 18vh;
+  top: -5%;
+  left: -15%;
+  background: linear-gradient(135deg, rgba(162,89,255,0.35) 0%, rgba(26,188,254,0.25) 50%, transparent 100%);
+  transform: rotate(-12deg);
+  animation: auroraDrift1 55s ease-in-out infinite;
 }
 
-.wl-1  { stroke: #a259ff; animation: wlMove1 40s ease-in-out infinite, wlFade1 40s ease-in-out infinite; }
-.wl-2  { stroke: #1abcfe; animation: wlMove2 40s ease-in-out infinite, wlFade2 40s ease-in-out infinite; animation-delay: -3s; }
-.wl-3  { stroke: #0acf83; animation: wlMove1 40s ease-in-out infinite, wlFade1 40s ease-in-out infinite; animation-delay: -7s; }
-.wl-4  { stroke: #f24e1e; animation: wlMove3 40s ease-in-out infinite, wlFade3 40s ease-in-out infinite; animation-delay: -11s; }
-.wl-5  { stroke: #a259ff; animation: wlMove2 40s ease-in-out infinite, wlFade2 40s ease-in-out infinite; animation-delay: -15s; }
-.wl-6  { stroke: #1abcfe; animation: wlMove1 40s ease-in-out infinite, wlFade1 40s ease-in-out infinite; animation-delay: -19s; }
-.wl-7  { stroke: #0acf83; animation: wlMove3 40s ease-in-out infinite, wlFade3 40s ease-in-out infinite; animation-delay: -23s; }
-.wl-8  { stroke: #f24e1e; animation: wlMove2 40s ease-in-out infinite, wlFade2 40s ease-in-out infinite; animation-delay: -27s; }
-.wl-9  { stroke: #a259ff; animation: wlMove1 40s ease-in-out infinite, wlFade1 40s ease-in-out infinite; animation-delay: -31s; }
-.wl-10 { stroke: #1abcfe; animation: wlMove3 40s ease-in-out infinite, wlFade3 40s ease-in-out infinite; animation-delay: -35s; }
-.wl-11 { stroke: #0acf83; animation: wlMove2 40s ease-in-out infinite, wlFade2 40s ease-in-out infinite; animation-delay: -2s; }
-.wl-12 { stroke: #f24e1e; animation: wlMove1 40s ease-in-out infinite, wlFade1 40s ease-in-out infinite; animation-delay: -9s; }
-
-/* Opacity pulsing — 3 different rhythms */
-@keyframes wlFade1 {
-  0%, 100% { opacity: 0.15; }
-  30% { opacity: 0.45; }
-  60% { opacity: 0.1; }
-  80% { opacity: 0.35; }
-}
-@keyframes wlFade2 {
-  0%, 100% { opacity: 0.3; }
-  25% { opacity: 0.12; }
-  50% { opacity: 0.4; }
-  75% { opacity: 0.2; }
-}
-@keyframes wlFade3 {
-  0%, 100% { opacity: 0.2; }
-  20% { opacity: 0.5; }
-  45% { opacity: 0.15; }
-  70% { opacity: 0.35; }
-  90% { opacity: 0.1; }
+.aurora-2 {
+  width: 100%;
+  height: 14vh;
+  top: 20%;
+  left: 5%;
+  background: linear-gradient(140deg, transparent 0%, rgba(10,207,131,0.3) 40%, rgba(26,188,254,0.2) 80%, transparent 100%);
+  transform: rotate(-8deg);
+  animation: auroraDrift2 65s ease-in-out infinite;
 }
 
-/* Transform-based movement — lines keep their original path, just shift and skew */
-@keyframes wlMove1 {
-  0%, 100% { transform: translateY(0) skewY(0deg); }
-  25%      { transform: translateY(30px) skewY(1.5deg); }
-  50%      { transform: translateY(-20px) skewY(-1deg); }
-  75%      { transform: translateY(15px) skewY(0.8deg); }
+.aurora-3 {
+  width: 110%;
+  height: 20vh;
+  top: 45%;
+  left: -10%;
+  background: linear-gradient(130deg, rgba(26,188,254,0.25) 0%, rgba(162,89,255,0.3) 50%, transparent 100%);
+  transform: rotate(-15deg);
+  animation: auroraDrift3 70s ease-in-out infinite;
 }
 
-@keyframes wlMove2 {
-  0%, 100% { transform: translateY(0) skewY(0deg); }
-  25%      { transform: translateY(-25px) skewY(-1.2deg); }
-  50%      { transform: translateY(35px) skewY(1.8deg); }
-  75%      { transform: translateY(-10px) skewY(-0.6deg); }
+.aurora-4 {
+  width: 90%;
+  height: 16vh;
+  top: 65%;
+  left: 10%;
+  background: linear-gradient(145deg, transparent 0%, rgba(162,89,255,0.2) 30%, rgba(10,207,131,0.3) 70%, transparent 100%);
+  transform: rotate(-10deg);
+  animation: auroraDrift1 60s ease-in-out infinite;
+  animation-delay: -20s;
 }
 
-@keyframes wlMove3 {
-  0%, 100% { transform: translateY(0) skewY(0deg); }
-  33%      { transform: translateY(20px) skewY(2deg); }
-  66%      { transform: translateY(-30px) skewY(-1.5deg); }
+.aurora-5 {
+  width: 130%;
+  height: 22vh;
+  top: 82%;
+  left: -20%;
+  background: linear-gradient(135deg, rgba(10,207,131,0.2) 0%, rgba(26,188,254,0.3) 40%, rgba(162,89,255,0.15) 80%, transparent 100%);
+  transform: rotate(-12deg);
+  animation: auroraDrift2 50s ease-in-out infinite;
+  animation-delay: -15s;
 }
 
-/* Glass wrapper for bottom input area */
-.glass-input-wrapper {
-  background: linear-gradient(to top, rgba(10,10,10,0.3) 50%, transparent);
-  backdrop-filter: blur(40px) saturate(1.5);
-  -webkit-backdrop-filter: blur(40px) saturate(1.5);
+@keyframes auroraDrift1 {
+  0%, 100% { transform: rotate(-12deg) translateX(0) translateY(0) scaleY(1); }
+  25%      { transform: rotate(-10deg) translateX(3vw) translateY(2vh) scaleY(1.15); }
+  50%      { transform: rotate(-14deg) translateX(-2vw) translateY(-1vh) scaleY(0.9); }
+  75%      { transform: rotate(-11deg) translateX(1vw) translateY(3vh) scaleY(1.1); }
+}
+
+@keyframes auroraDrift2 {
+  0%, 100% { transform: rotate(-8deg) translateX(0) translateY(0) scaleY(1); }
+  33%      { transform: rotate(-6deg) translateX(-3vw) translateY(2vh) scaleY(1.2); }
+  66%      { transform: rotate(-10deg) translateX(2vw) translateY(-2vh) scaleY(0.85); }
+}
+
+@keyframes auroraDrift3 {
+  0%, 100% { transform: rotate(-15deg) translateX(0) translateY(0) scaleY(1); }
+  20%      { transform: rotate(-13deg) translateX(2vw) translateY(-1vh) scaleY(1.1); }
+  50%      { transform: rotate(-17deg) translateX(-3vw) translateY(3vh) scaleY(0.9); }
+  80%      { transform: rotate(-14deg) translateX(1vw) translateY(-2vh) scaleY(1.15); }
 }
 
 .glass-sidebar {

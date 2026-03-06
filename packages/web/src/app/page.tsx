@@ -6,7 +6,7 @@ import { useState, useRef, useEffect, useMemo } from "react";
 import Link from "next/link";
 import type { GatewayModel } from "./api/gateway-models/route";
 import { useFigmaPlugin } from "./hooks/useFigmaPlugin";
-import { useFigmaExecutePoller } from "./hooks/useFigmaExecutePoller";
+import { useFigmaExecuteChannel } from "./hooks/useFigmaExecuteChannel";
 import { UserMenu } from "@/components/UserMenu";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -618,7 +618,7 @@ function parseTextWithImages(text: string, isStreaming: boolean): Segment[] {
 export default function Home() {
   // ── Figma plugin bridge ─────────────────────────────────────────────
   const { isFigmaPlugin, figmaContext, sendToPlugin, executeCode } = useFigmaPlugin();
-  useFigmaExecutePoller(executeCode, isFigmaPlugin);
+  useFigmaExecuteChannel(executeCode, isFigmaPlugin);
 
   const isDev = process.env.NODE_ENV === 'development';
   const [figmaMcpUrl, setFigmaMcpUrl] = useState(
@@ -1432,33 +1432,13 @@ export default function Home() {
           <div className="wave-bg-layer wave-bg-2" />
           <div className="wave-bg-layer wave-bg-3" />
           <div className="wave-bg-noise" />
-          <svg className="wave-lines-svg" viewBox="0 0 1440 900" preserveAspectRatio="none" xmlns="http://www.w3.org/2000/svg">
-            <defs>
-              <filter id="lineGlow">
-                <feGaussianBlur stdDeviation="3" result="blur" />
-                <feMerge>
-                  <feMergeNode in="blur" />
-                  <feMergeNode in="SourceGraphic" />
-                </feMerge>
-              </filter>
-            </defs>
-            <g filter="url(#lineGlow)">
-              <path className="wave-line wl-1"  d="M-200,50 C100,10 400,140 700,90 S1100,10 1640,70" />
-              <path className="wave-line wl-2"  d="M-200,120 C150,80 350,200 700,160 S1050,80 1640,140" />
-              <path className="wave-line wl-3"  d="M-200,190 C100,150 450,280 700,230 S1100,150 1640,210" />
-              <path className="wave-line wl-4"  d="M-200,260 C180,220 380,350 700,300 S1050,220 1640,280" />
-              <path className="wave-line wl-5"  d="M-200,330 C100,290 420,420 700,370 S1100,290 1640,350" />
-              <path className="wave-line wl-6"  d="M-200,400 C150,360 380,490 700,440 S1050,360 1640,420" />
-              <path className="wave-line wl-7"  d="M-200,470 C100,430 450,560 700,510 S1100,430 1640,490" />
-              <path className="wave-line wl-8"  d="M-200,540 C180,500 370,630 700,580 S1050,500 1640,560" />
-              <path className="wave-line wl-9"  d="M-200,610 C100,570 430,700 700,650 S1100,570 1640,630" />
-              <path className="wave-line wl-10" d="M-200,680 C150,640 390,770 700,720 S1050,640 1640,700" />
-              <path className="wave-line wl-11" d="M-200,750 C100,710 440,840 700,790 S1100,710 1640,770" />
-              <path className="wave-line wl-12" d="M-200,820 C180,780 370,910 700,860 S1050,780 1640,840" />
-            </g>
-          </svg>
+          <div className="aurora aurora-1" />
+          <div className="aurora aurora-2" />
+          <div className="aurora aurora-3" />
+          <div className="aurora aurora-4" />
+          <div className="aurora aurora-5" />
         </div>
-        <header className="absolute top-0 left-0 right-0 z-20 flex items-center justify-between px-3 sm:px-4 py-3 border-b border-white/10" style={{ background: "rgba(10,10,10,0.25)", backdropFilter: "blur(12px) saturate(1.5)", WebkitBackdropFilter: "blur(12px) saturate(1.5)" }}>
+        <header className="absolute top-0 left-0 right-0 z-20 flex items-center justify-between px-3 sm:px-4 py-3 border-b border-white/20" style={{ background: "rgba(10,10,10,0.3)", backdropFilter: "blur(6px) saturate(1.3)", WebkitBackdropFilter: "blur(6px) saturate(1.3)", boxShadow: "0 4px 24px rgba(0,0,0,0.5), 0 1px 0 rgba(255,255,255,0.06) inset" }}>
           <div className="flex items-center gap-2 sm:gap-3 min-w-0">
             <button
               onClick={() => setSettingsOpen(!settingsOpen)}
@@ -1479,7 +1459,7 @@ export default function Home() {
             </button>
             <div className="min-w-0">
               <h1 className="text-sm font-semibold truncate">DS AI Guardian</h1>
-              <p className="text-xs text-white/40 hidden sm:block">
+              <p className="text-xs text-white/65 hidden sm:block">
                 [Figma ↔ Code] Design System drift detector
               </p>
             </div>
@@ -1512,44 +1492,44 @@ export default function Home() {
               className={`w-2 h-2 rounded-full ${figmaConnected ? "bg-emerald-400" : "bg-white/20"}`}
               title={`Figma MCP: ${figmaConnected ? "configured" : "not configured"}`}
             />
-            <span className="text-xs text-white/30 hidden sm:inline">Figma</span>
+            <span className="text-xs text-white/60 hidden sm:inline">Figma</span>
             <div
               className={`w-2 h-2 rounded-full ml-1 sm:ml-2 ${codeConnected ? "bg-emerald-400" : "bg-white/20"}`}
               title={`Code MCP: ${codeConnected ? "configured" : "not configured"}`}
             />
-            <span className="text-xs text-white/30 hidden sm:inline">Code</span>
+            <span className="text-xs text-white/60 hidden sm:inline">Code</span>
             <div className="w-px h-4 bg-white/10 mx-1 hidden sm:block" />
             <UserMenu />
           </div>
         </header>
 
-        <div ref={scrollContainerRef} onScroll={handleScroll} className="flex-1 overflow-y-auto px-3 sm:px-4 pt-16 pb-28">
+        <div ref={scrollContainerRef} onScroll={handleScroll} className="relative z-10 flex-1 overflow-y-auto px-3 sm:px-4 pt-16 pb-28">
           {messages.length === 0 && (
             <div className="flex flex-col items-center justify-center h-full text-center px-4">
               <div className="text-4xl mb-4">🛡️</div>
               <h2 className="text-lg font-semibold mb-2">
                 Welcome to DS AI Guardian
               </h2>
-              <p className="text-sm text-white/40 max-w-md mb-6">
+              <p className="text-sm text-white/70 max-w-md mb-6">
                 I can compare your Figma design system components with their
                 code implementation to detect property and variant drift.
               </p>
 
               {/* Free tier onboarding notice */}
               {byokKeys.length === 0 && (
-                <div className="mb-6 w-full max-w-sm rounded-xl bg-white/[0.04] border border-white/[0.08] p-4 text-left">
+                <div className="mb-6 w-full max-w-sm rounded-xl bg-white/[0.07] border border-white/[0.15] p-4 text-left">
                   <div className="flex items-start gap-3">
                     <div className="mt-0.5 shrink-0 w-7 h-7 rounded-full bg-violet-600/20 border border-violet-500/30 flex items-center justify-center text-sm">
                       ✨
                     </div>
                     <div className="min-w-0">
-                      <p className="text-sm font-medium text-white/80 mb-1">You&apos;re on the free tier</p>
-                      <p className="text-xs text-white/40 leading-relaxed mb-3">
+                      <p className="text-sm font-medium text-white/90 mb-1">You&apos;re on the free tier</p>
+                      <p className="text-xs text-white/60 leading-relaxed mb-3">
                         You get 500k tokens per day on us (rolling 24h window). Each message uses the platform&apos;s AI model.
                       </p>
                       <div className="space-y-2">
-                        <p className="text-[11px] text-white/50 font-medium uppercase tracking-wider">Want unlimited access?</p>
-                        <div className="space-y-1.5 text-xs text-white/40">
+                        <p className="text-[11px] text-white/65 font-medium uppercase tracking-wider">Want unlimited access?</p>
+                        <div className="space-y-1.5 text-xs text-white/55">
                           <div className="flex items-start gap-2">
                             <span className="shrink-0 mt-0.5">1.</span>
                             <span>
@@ -1580,17 +1560,17 @@ export default function Home() {
                 </div>
               )}
 
-              <div className="space-y-2 text-sm text-white/30">
+              <div className="space-y-2 text-sm text-white/60">
                 <p>Try asking:</p>
                 <button
                   onClick={() => sendMessage({ text: "Check the Button component" })}
-                  className="block mx-auto px-3 py-1.5 rounded-md bg-white/5 hover:bg-white/10 transition-colors cursor-pointer"
+                  className="block mx-auto px-3 py-1.5 rounded-md bg-white/8 border border-white/10 hover:bg-white/15 transition-colors cursor-pointer text-white/75"
                 >
                   &quot;Check the Button component&quot;
                 </button>
                 <button
                   onClick={() => sendMessage({ text: "List all components available in Figma" })}
-                  className="block mx-auto px-3 py-1.5 rounded-md bg-white/5 hover:bg-white/10 transition-colors cursor-pointer"
+                  className="block mx-auto px-3 py-1.5 rounded-md bg-white/8 border border-white/10 hover:bg-white/15 transition-colors cursor-pointer text-white/75"
                 >
                   &quot;List all components available in Figma&quot;
                 </button>
@@ -1856,8 +1836,8 @@ export default function Home() {
           <div className="pointer-events-auto">
           <form
             onSubmit={onSubmit}
-            className="relative mx-auto max-w-3xl rounded-2xl border border-white/10 shadow-[0_8px_32px_rgba(0,0,0,0.3)] overflow-visible"
-            style={{ background: "rgba(10,10,10,0.2)", backdropFilter: "blur(12px) saturate(1.5)", WebkitBackdropFilter: "blur(12px) saturate(1.5)" }}
+            className="relative mx-auto max-w-3xl rounded-2xl border border-white/20 overflow-visible"
+            style={{ background: "rgba(10,10,10,0.25)", backdropFilter: "blur(6px) saturate(1.3)", WebkitBackdropFilter: "blur(6px) saturate(1.3)", boxShadow: "0 8px 40px rgba(0,0,0,0.6), 0 2px 8px rgba(0,0,0,0.4), 0 1px 0 rgba(255,255,255,0.05) inset" }}
           >
             <textarea
               ref={inputRef}
@@ -1875,7 +1855,7 @@ export default function Home() {
                 }
               }}
               placeholder="Ask Guardian to check a component..."
-              className={`w-full bg-transparent px-4 pt-3 pb-12 text-sm text-white placeholder:text-white/20 focus:outline-none resize-none overflow-y-auto ${isLoading ? "opacity-50" : ""}`}
+              className={`w-full bg-transparent px-4 pt-3 pb-12 text-sm text-white placeholder:text-white/45 focus:outline-none resize-none overflow-y-auto ${isLoading ? "opacity-50" : ""}`}
               readOnly={isLoading}
               rows={3}
             />
@@ -1884,7 +1864,7 @@ export default function Home() {
               {byokKeys.length === 0 ? (
                 /* Free tier */
                 <div className="flex items-center gap-2">
-                  <span className="text-xs text-white/30">
+                  <span className="text-xs text-white/55">
                     Free tier · Grok
                   </span>
                   <Link

@@ -1,12 +1,16 @@
 /**
  * /api/figma-execute
  *
- * HTTP bridge for MCP Guardian -> Webapp -> Figma Plugin code execution.
+ * @deprecated — Replaced by Supabase Realtime broadcast channel "guardian:execute".
+ * This HTTP polling bridge is kept as a legacy fallback but is no longer actively used.
+ * See: packages/web/src/app/hooks/useFigmaExecuteChannel.ts (webapp side)
+ * See: packages/mcp/src/tools/figma-execute.ts (MCP side, executeViaSupabase)
  *
- * POST  { requestId, code, timeout }           -> submit a code execution request
- * POST  { action:'result', requestId, ... }    -> submit an execution result
- * GET   ?action=pending                        -> claim the oldest pending request
- * GET   ?action=result&requestId=xxx           -> poll for a specific result
+ * Old flow (polling):
+ *   POST  { requestId, code, timeout }           -> submit a code execution request
+ *   POST  { action:'result', requestId, ... }    -> submit an execution result
+ *   GET   ?action=pending                        -> claim the oldest pending request
+ *   GET   ?action=result&requestId=xxx           -> poll for a specific result
  */
 
 import { NextResponse } from "next/server";

@@ -197,6 +197,9 @@ importers:
       '@modelcontextprotocol/sdk':
         specifier: ^1.6.0
         version: 1.27.1(zod@3.25.76)
+      '@supabase/supabase-js':
+        specifier: ^2.98.0
+        version: 2.98.0
       jose:
         specifier: ^6.2.0
         version: 6.2.0

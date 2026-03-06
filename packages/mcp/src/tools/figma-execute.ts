@@ -1,9 +1,10 @@
 import { z } from "zod"
 import { WebSocket } from "ws"
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js"
+import { createMcpSupabaseClient } from "../lib/supabase.js"
 
 const DEFAULT_BRIDGE_PORT = 3002
-const DEFAULT_WEBAPP_URL = "http://localhost:3000"
+const CHANNEL_NAME = "guardian:execute"
 
 type ExecResult = { success: boolean; result?: unknown; error?: string }
 
@@ -84,49 +85,72 @@ function executeViaLocalBridge(
 }
 
 /**
- * Submit code execution via the Guardian webapp HTTP bridge and poll for the result.
+ * Execute code via Supabase Realtime broadcast channel.
  *
- * Flow: MCP --POST--> /api/figma-execute --poll--> webapp iframe --postMessage--> plugin
+ * Flow: MCP broadcasts execute_request on "guardian:execute" channel,
+ * the webapp (subscribed to the same channel) receives it, executes via
+ * postMessage to the Figma plugin, and broadcasts the result back.
  */
-async function executeViaWebapp(
+async function executeViaSupabase(
   code: string,
   requestId: string,
-  timeoutMs: number,
-  webappUrl: string
+  timeoutMs: number
 ): Promise<ExecResult> {
-  const base = webappUrl.replace(/\/+$/, "")
+  const supabase = createMcpSupabaseClient()
+  const channel = supabase.channel(CHANNEL_NAME)
 
-  // Submit the execution request
-  const submitResp = await fetch(`${base}/api/figma-execute`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ requestId, code, timeout: timeoutMs }),
+  return new Promise<ExecResult>((resolve) => {
+    let settled = false
+
+    const timer = setTimeout(() => {
+      if (settled) return
+      settled = true
+      channel.unsubscribe()
+      resolve({
+        success: false,
+        error: `Timed out after ${timeoutMs}ms waiting for Supabase Realtime result. Make sure the Figma plugin is open with the Guardian webapp loaded.`,
+      })
+    }, timeoutMs)
+
+    channel
+      .on("broadcast", { event: "execute_result" }, (payload) => {
+        const data = payload.payload as {
+          requestId: string
+          success: boolean
+          result?: unknown
+          error?: string
+        }
+
+        if (data.requestId !== requestId) return
+        if (settled) return
+        settled = true
+
+        clearTimeout(timer)
+        channel.unsubscribe()
+        resolve({
+          success: data.success,
+          result: data.result,
+          error: data.error,
+        })
+      })
+      .subscribe(async (status) => {
+        if (status === "SUBSCRIBED") {
+          await channel.send({
+            type: "broadcast",
+            event: "execute_request",
+            payload: { requestId, code, timeout: timeoutMs },
+          })
+        } else if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") {
+          if (settled) return
+          settled = true
+          clearTimeout(timer)
+          resolve({
+            success: false,
+            error: `Supabase Realtime channel error: ${status}. Check NEXT_PUBLIC_SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY.`,
+          })
+        }
+      })
   })
-  if (!submitResp.ok) {
-    return { success: false, error: `Webapp returned ${submitResp.status} on submit.` }
-  }
-
-  // Poll for the result
-  const pollInterval = 300
-  const deadline = Date.now() + timeoutMs
-  while (Date.now() < deadline) {
-    await new Promise((r) => setTimeout(r, pollInterval))
-    try {
-      const resp = await fetch(
-        `${base}/api/figma-execute?action=result&requestId=${encodeURIComponent(requestId)}`
-      )
-      if (!resp.ok) continue
-      const data = await resp.json() as ExecResult | null
-      if (data) return data
-    } catch {
-      // Network error — retry until deadline
-    }
-  }
-
-  return {
-    success: false,
-    error: `Timed out after ${timeoutMs}ms waiting for webapp bridge result. Make sure the Figma plugin is open with the Guardian webapp loaded.`,
-  }
 }
 
 export function registerFigmaExecuteTool(server: McpServer): void {
@@ -142,8 +166,8 @@ IMPORTANT: The Guardian Figma plugin must be open in Figma Desktop for this to w
 ## Transport modes
 
 - "overlay": connect via the Electron overlay BridgeServer (WebSocket, requires overlay running locally)
-- "webapp": connect via the Guardian webapp HTTP bridge (works locally and remotely)
-- "auto" (default): try overlay first (fast, 3s), fall back to webapp
+- "cloud": connect via Supabase Realtime (works locally and remotely, no overlay needed)
+- "auto" (default): try overlay first (fast, 3s), fall back to Supabase Realtime
 
 ## How to write code
 
@@ -207,23 +231,17 @@ Create a button (Frame with text label — NOT a Rectangle):
       timeout: z.number().optional().describe(
         "Execution timeout in milliseconds (default: 10000)"
       ),
-      transport: z.enum(["auto", "overlay", "webapp"]).optional().describe(
-        'Transport mode: "overlay" (WebSocket via Electron overlay), "webapp" (HTTP via Guardian webapp), "auto" (try overlay then webapp). Default: "auto".'
+      transport: z.enum(["auto", "overlay", "cloud"]).optional().describe(
+        'Transport mode: "overlay" (WebSocket via Electron overlay), "cloud" (Supabase Realtime), "auto" (try overlay then cloud). Default: "auto".'
       ),
       bridge_port: z.number().optional().describe(
         `Local BridgeServer port (default: ${DEFAULT_BRIDGE_PORT}). Override via GUARDIAN_BRIDGE_PORT env.`
       ),
-      webapp_url: z.string().optional().describe(
-        `Guardian webapp URL (default: ${DEFAULT_WEBAPP_URL}). Override via GUARDIAN_WEBAPP_URL env.`
-      ),
     },
-    async ({ code, timeout, transport, bridge_port, webapp_url }) => {
+    async ({ code, timeout, transport, bridge_port }) => {
       const timeoutMs = timeout ?? 10_000
       const port = bridge_port
         ?? Number(process.env["GUARDIAN_BRIDGE_PORT"] ?? DEFAULT_BRIDGE_PORT)
-      const webUrl = webapp_url
-        ?? process.env["GUARDIAN_WEBAPP_URL"]
-        ?? DEFAULT_WEBAPP_URL
       const mode = transport ?? "auto"
       const requestId = `mcp-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
 
@@ -231,13 +249,13 @@ Create a button (Frame with text label — NOT a Rectangle):
 
       if (mode === "overlay") {
         result = await executeViaLocalBridge(code, requestId, timeoutMs, port)
-      } else if (mode === "webapp") {
-        result = await executeViaWebapp(code, requestId, timeoutMs, webUrl)
+      } else if (mode === "cloud") {
+        result = await executeViaSupabase(code, requestId, timeoutMs)
       } else {
-        // auto: try overlay first with a short timeout, fall back to webapp
+        // auto: try overlay first with a short timeout, fall back to Supabase Realtime
         result = await executeViaLocalBridge(code, requestId, 3_000, port)
         if (!result.success) {
-          result = await executeViaWebapp(code, requestId, timeoutMs, webUrl)
+          result = await executeViaSupabase(code, requestId, timeoutMs)
         }
       }
 
