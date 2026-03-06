@@ -1438,7 +1438,7 @@ export default function Home() {
           <div className="aurora aurora-4" />
           <div className="aurora aurora-5" />
         </div>
-        <header className="absolute top-0 left-0 right-0 z-20 flex items-center justify-between px-3 sm:px-4 py-3 border-b border-white/20" style={{ background: "rgba(10,10,10,0.3)", backdropFilter: "blur(6px) saturate(1.3)", WebkitBackdropFilter: "blur(6px) saturate(1.3)", boxShadow: "0 4px 24px rgba(0,0,0,0.5), 0 1px 0 rgba(255,255,255,0.06) inset" }}>
+        <header className="absolute top-0 left-0 right-0 z-20 flex items-center justify-between px-3 sm:px-4 py-3 border-b border-white/30" style={{ background: "rgba(10,10,10,0.3)", backdropFilter: "blur(6px) saturate(1.3)", WebkitBackdropFilter: "blur(6px) saturate(1.3)", boxShadow: "0 4px 24px rgba(0,0,0,0.5), 0 1px 0 rgba(255,255,255,0.06) inset" }}>
           <div className="flex items-center gap-2 sm:gap-3 min-w-0">
             <button
               onClick={() => setSettingsOpen(!settingsOpen)}
@@ -1836,7 +1836,7 @@ export default function Home() {
           <div className="pointer-events-auto">
           <form
             onSubmit={onSubmit}
-            className="relative mx-auto max-w-3xl rounded-2xl border border-white/20 overflow-visible"
+            className="relative mx-auto max-w-3xl rounded-2xl border border-white/30 overflow-visible"
             style={{ background: "rgba(10,10,10,0.25)", backdropFilter: "blur(6px) saturate(1.3)", WebkitBackdropFilter: "blur(6px) saturate(1.3)", boxShadow: "0 8px 40px rgba(0,0,0,0.6), 0 2px 8px rgba(0,0,0,0.4), 0 1px 0 rgba(255,255,255,0.05) inset" }}
           >
             <textarea

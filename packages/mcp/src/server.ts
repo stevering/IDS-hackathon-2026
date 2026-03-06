@@ -11,7 +11,7 @@ import { registerAllPrompts } from "./prompts/index.js"
 import { registerAllResources } from "./resources/index.js"
 import { MCP_INSTRUCTIONS } from "./knowledge/guardian-mcp-client-instructions.js"
 
-export function createGuardianServer(): McpServer {
+export function createGuardianServer(userId?: string): McpServer {
   const server = new McpServer(
     {
       name: "guardian",
@@ -22,7 +22,7 @@ export function createGuardianServer(): McpServer {
     }
   )
 
-  registerAllTools(server)
+  registerAllTools(server, userId)
   registerAllPrompts(server)
   registerAllResources(server)
 

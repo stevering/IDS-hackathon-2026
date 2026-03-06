@@ -4,7 +4,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js"
 import { createMcpSupabaseClient } from "../lib/supabase.js"
 
 const DEFAULT_BRIDGE_PORT = 3002
-const CHANNEL_NAME = "guardian:execute"
+const CHANNEL_BASE = "guardian:execute"
 
 type ExecResult = { success: boolean; result?: unknown; error?: string }
 
@@ -94,10 +94,12 @@ function executeViaLocalBridge(
 async function executeViaSupabase(
   code: string,
   requestId: string,
-  timeoutMs: number
+  timeoutMs: number,
+  userId?: string
 ): Promise<ExecResult> {
+  const channelName = userId ? `${CHANNEL_BASE}:${userId}` : CHANNEL_BASE
   const supabase = createMcpSupabaseClient()
-  const channel = supabase.channel(CHANNEL_NAME)
+  const channel = supabase.channel(channelName)
 
   return new Promise<ExecResult>((resolve) => {
     let settled = false
@@ -153,7 +155,7 @@ async function executeViaSupabase(
   })
 }
 
-export function registerFigmaExecuteTool(server: McpServer): void {
+export function registerFigmaExecuteTool(server: McpServer, userId?: string): void {
   server.tool(
     "guardian_figma_execute",
     `Execute arbitrary Figma Plugin API code via the Guardian Figma plugin bridge.
@@ -250,12 +252,12 @@ Create a button (Frame with text label — NOT a Rectangle):
       if (mode === "overlay") {
         result = await executeViaLocalBridge(code, requestId, timeoutMs, port)
       } else if (mode === "cloud") {
-        result = await executeViaSupabase(code, requestId, timeoutMs)
+        result = await executeViaSupabase(code, requestId, timeoutMs, userId)
       } else {
         // auto: try overlay first with a short timeout, fall back to Supabase Realtime
         result = await executeViaLocalBridge(code, requestId, 3_000, port)
         if (!result.success) {
-          result = await executeViaSupabase(code, requestId, timeoutMs)
+          result = await executeViaSupabase(code, requestId, timeoutMs, userId)
         }
       }
 

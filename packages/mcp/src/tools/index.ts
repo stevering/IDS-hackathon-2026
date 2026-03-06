@@ -23,7 +23,7 @@ import { registerDocumentGapTool } from "./document-gap.js"
 import { registerFigmaExecuteTool } from "./figma-execute.js"
 import { registerSkillsTools } from "./skills.js"
 
-export function registerAllTools(server: McpServer): void {
+export function registerAllTools(server: McpServer, userId?: string): void {
   // Investigation tools
   registerCheckComponentUsageTool(server)
   registerAnalyzeDriftTool(server)
@@ -32,6 +32,6 @@ export function registerAllTools(server: McpServer): void {
   registerDocumentGapTool(server)
 
   // Execution tools (Phase 2 stubs — functional once plugin bridge exists)
-  registerFigmaExecuteTool(server)
+  registerFigmaExecuteTool(server, userId)
   registerSkillsTools(server)
 }

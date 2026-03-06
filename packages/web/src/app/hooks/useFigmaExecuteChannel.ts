@@ -1,16 +1,17 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import type { ExecuteCodeResult } from "./useFigmaPlugin";
 
-const CHANNEL_NAME = "guardian:execute";
+const CHANNEL_BASE = "guardian:execute";
 
 /**
- * Subscribes to the Supabase Realtime channel "guardian:execute" and listens
- * for MCP code-execution requests. When a request arrives, it calls executeCode
- * (postMessage to the Figma plugin) and broadcasts the result back on the same channel.
+ * Subscribes to the Supabase Realtime channel "guardian:execute:{userId}" and
+ * listens for MCP code-execution requests. When a request arrives, it calls
+ * executeCode (postMessage to the Figma plugin) and broadcasts the result back.
  *
+ * Channels are scoped per user so messages are isolated between users.
  * Replaces the old polling-based useFigmaExecutePoller.
  */
 export function useFigmaExecuteChannel(
@@ -20,12 +21,24 @@ export function useFigmaExecuteChannel(
   const busy = useRef(false);
   const executeCodeRef = useRef(executeCode);
   executeCodeRef.current = executeCode;
+  const [userId, setUserId] = useState<string | null>(null);
 
+  // Resolve userId from Supabase auth on mount
   useEffect(() => {
     if (!enabled) return;
-
     const supabase = createClient();
-    const channel = supabase.channel(CHANNEL_NAME);
+    supabase.auth.getUser().then(({ data }) => {
+      if (data.user) setUserId(data.user.id);
+    });
+  }, [enabled]);
+
+  // Subscribe to the user-scoped channel
+  useEffect(() => {
+    if (!enabled || !userId) return;
+
+    const channelName = `${CHANNEL_BASE}:${userId}`;
+    const supabase = createClient();
+    const channel = supabase.channel(channelName);
 
     channel
       .on("broadcast", { event: "execute_request" }, async (payload) => {
@@ -62,5 +75,5 @@ export function useFigmaExecuteChannel(
     return () => {
       channel.unsubscribe();
     };
-  }, [enabled]);
+  }, [enabled, userId]);
 }

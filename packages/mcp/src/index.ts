@@ -100,9 +100,14 @@ async function startHttpServer(port: number): Promise<void> {
           send401(req, res, port)
           return
         }
-        // Attach user info for downstream tools (future: scoping by userId)
+        // Attach user info for downstream tools (scoping channels by userId)
         ;(req as IncomingMessage & { guardianUser?: typeof user }).guardianUser = user
       }
+
+      // Extract userId for Supabase Realtime channel scoping
+      const guardianUser = (req as IncomingMessage & { guardianUser?: { id: string } }).guardianUser
+      const userId = guardianUser?.id
+
       const sessionId = req.headers["mcp-session-id"] as string | undefined
 
       // Reuse existing session
@@ -121,7 +126,7 @@ async function startHttpServer(port: number): Promise<void> {
       }
 
       // New session — create fresh server + transport pair
-      const server = createGuardianServer()
+      const server = createGuardianServer(userId)
       let newSessionId: string | undefined
 
       const transport = new StreamableHTTPServerTransport({
