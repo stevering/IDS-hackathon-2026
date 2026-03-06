@@ -144,8 +144,8 @@ a[href],
 
 .wave-bg-layer {
   position: absolute;
-  filter: blur(80px);
-  opacity: 0.45;
+  filter: blur(50px);
+  opacity: 0.5;
   will-change: transform, border-radius;
 }
 
@@ -229,6 +229,87 @@ a[href],
   75% { border-radius: 60% 40% 45% 55% / 50% 50% 60% 40%; }
 }
 
+/* ── Animated wavy lines ──────────────────────────────────────────────────── */
+
+.wave-lines-svg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 1;
+  pointer-events: none;
+  transform: rotate(-8deg) scale(1.2);
+  transform-origin: center center;
+}
+
+.wave-line {
+  fill: none;
+  stroke-width: 1.5;
+  stroke-linecap: round;
+}
+
+.wl-1  { stroke: #a259ff; animation: wlMove1 40s ease-in-out infinite, wlFade1 40s ease-in-out infinite; }
+.wl-2  { stroke: #1abcfe; animation: wlMove2 40s ease-in-out infinite, wlFade2 40s ease-in-out infinite; animation-delay: -3s; }
+.wl-3  { stroke: #0acf83; animation: wlMove1 40s ease-in-out infinite, wlFade1 40s ease-in-out infinite; animation-delay: -7s; }
+.wl-4  { stroke: #f24e1e; animation: wlMove3 40s ease-in-out infinite, wlFade3 40s ease-in-out infinite; animation-delay: -11s; }
+.wl-5  { stroke: #a259ff; animation: wlMove2 40s ease-in-out infinite, wlFade2 40s ease-in-out infinite; animation-delay: -15s; }
+.wl-6  { stroke: #1abcfe; animation: wlMove1 40s ease-in-out infinite, wlFade1 40s ease-in-out infinite; animation-delay: -19s; }
+.wl-7  { stroke: #0acf83; animation: wlMove3 40s ease-in-out infinite, wlFade3 40s ease-in-out infinite; animation-delay: -23s; }
+.wl-8  { stroke: #f24e1e; animation: wlMove2 40s ease-in-out infinite, wlFade2 40s ease-in-out infinite; animation-delay: -27s; }
+.wl-9  { stroke: #a259ff; animation: wlMove1 40s ease-in-out infinite, wlFade1 40s ease-in-out infinite; animation-delay: -31s; }
+.wl-10 { stroke: #1abcfe; animation: wlMove3 40s ease-in-out infinite, wlFade3 40s ease-in-out infinite; animation-delay: -35s; }
+.wl-11 { stroke: #0acf83; animation: wlMove2 40s ease-in-out infinite, wlFade2 40s ease-in-out infinite; animation-delay: -2s; }
+.wl-12 { stroke: #f24e1e; animation: wlMove1 40s ease-in-out infinite, wlFade1 40s ease-in-out infinite; animation-delay: -9s; }
+
+/* Opacity pulsing — 3 different rhythms */
+@keyframes wlFade1 {
+  0%, 100% { opacity: 0.15; }
+  30% { opacity: 0.45; }
+  60% { opacity: 0.1; }
+  80% { opacity: 0.35; }
+}
+@keyframes wlFade2 {
+  0%, 100% { opacity: 0.3; }
+  25% { opacity: 0.12; }
+  50% { opacity: 0.4; }
+  75% { opacity: 0.2; }
+}
+@keyframes wlFade3 {
+  0%, 100% { opacity: 0.2; }
+  20% { opacity: 0.5; }
+  45% { opacity: 0.15; }
+  70% { opacity: 0.35; }
+  90% { opacity: 0.1; }
+}
+
+/* Transform-based movement — lines keep their original path, just shift and skew */
+@keyframes wlMove1 {
+  0%, 100% { transform: translateY(0) skewY(0deg); }
+  25%      { transform: translateY(30px) skewY(1.5deg); }
+  50%      { transform: translateY(-20px) skewY(-1deg); }
+  75%      { transform: translateY(15px) skewY(0.8deg); }
+}
+
+@keyframes wlMove2 {
+  0%, 100% { transform: translateY(0) skewY(0deg); }
+  25%      { transform: translateY(-25px) skewY(-1.2deg); }
+  50%      { transform: translateY(35px) skewY(1.8deg); }
+  75%      { transform: translateY(-10px) skewY(-0.6deg); }
+}
+
+@keyframes wlMove3 {
+  0%, 100% { transform: translateY(0) skewY(0deg); }
+  33%      { transform: translateY(20px) skewY(2deg); }
+  66%      { transform: translateY(-30px) skewY(-1.5deg); }
+}
+
+/* Glass wrapper for bottom input area */
+.glass-input-wrapper {
+  background: linear-gradient(to top, rgba(10,10,10,0.3) 50%, transparent);
+  backdrop-filter: blur(40px) saturate(1.5);
+  -webkit-backdrop-filter: blur(40px) saturate(1.5);
+}
+
 .glass-sidebar {
   background: rgba(10, 10, 10, 0.85);
   backdrop-filter: blur(20px);
@@ -236,9 +317,10 @@ a[href],
 }
 
 .glass-header {
-  background: rgba(10, 10, 10, 0.6);
-  backdrop-filter: blur(16px);
-  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  background: rgba(10, 10, 10, 0.25);
+  backdrop-filter: blur(40px) saturate(1.6);
+  -webkit-backdrop-filter: blur(40px) saturate(1.6);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.12);
 }
 
 .glass-msg-user {
@@ -254,10 +336,11 @@ a[href],
 }
 
 .glass-input-bar {
-  background: rgba(10, 10, 10, 0.7);
-  backdrop-filter: blur(16px);
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+  background: rgba(10, 10, 10, 0.2);
+  backdrop-filter: blur(40px) saturate(1.6);
+  -webkit-backdrop-filter: blur(40px) saturate(1.6);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
 }
 
 .markdown-body p {

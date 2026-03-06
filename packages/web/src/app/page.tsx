@@ -1143,13 +1143,7 @@ export default function Home() {
   const codeMode = getMcpConnectionMode(codeProjectPath || "");
 
   return (
-    <div className="relative flex h-screen bg-[#0a0a0a] text-white overflow-hidden">
-      <div className="absolute inset-0 overflow-hidden pointer-events-none z-0">
-        <div className="wave-bg-layer wave-bg-1" />
-        <div className="wave-bg-layer wave-bg-2" />
-        <div className="wave-bg-layer wave-bg-3" />
-        <div className="wave-bg-noise" />
-      </div>
+    <div className="relative flex h-screen text-white overflow-hidden">
       {settingsOpen && (
         <div
           className="fixed inset-0 bg-black/50 z-40 md:hidden"
@@ -1433,7 +1427,38 @@ export default function Home() {
       </div>
 
       <div className="flex-1 flex flex-col min-w-0 relative">
-        <header className="relative z-20 flex items-center justify-between px-3 sm:px-4 py-3 glass-header">
+        <div className="absolute inset-0 overflow-hidden pointer-events-none z-0">
+          <div className="wave-bg-layer wave-bg-1" />
+          <div className="wave-bg-layer wave-bg-2" />
+          <div className="wave-bg-layer wave-bg-3" />
+          <div className="wave-bg-noise" />
+          <svg className="wave-lines-svg" viewBox="0 0 1440 900" preserveAspectRatio="none" xmlns="http://www.w3.org/2000/svg">
+            <defs>
+              <filter id="lineGlow">
+                <feGaussianBlur stdDeviation="3" result="blur" />
+                <feMerge>
+                  <feMergeNode in="blur" />
+                  <feMergeNode in="SourceGraphic" />
+                </feMerge>
+              </filter>
+            </defs>
+            <g filter="url(#lineGlow)">
+              <path className="wave-line wl-1"  d="M-200,50 C100,10 400,140 700,90 S1100,10 1640,70" />
+              <path className="wave-line wl-2"  d="M-200,120 C150,80 350,200 700,160 S1050,80 1640,140" />
+              <path className="wave-line wl-3"  d="M-200,190 C100,150 450,280 700,230 S1100,150 1640,210" />
+              <path className="wave-line wl-4"  d="M-200,260 C180,220 380,350 700,300 S1050,220 1640,280" />
+              <path className="wave-line wl-5"  d="M-200,330 C100,290 420,420 700,370 S1100,290 1640,350" />
+              <path className="wave-line wl-6"  d="M-200,400 C150,360 380,490 700,440 S1050,360 1640,420" />
+              <path className="wave-line wl-7"  d="M-200,470 C100,430 450,560 700,510 S1100,430 1640,490" />
+              <path className="wave-line wl-8"  d="M-200,540 C180,500 370,630 700,580 S1050,500 1640,560" />
+              <path className="wave-line wl-9"  d="M-200,610 C100,570 430,700 700,650 S1100,570 1640,630" />
+              <path className="wave-line wl-10" d="M-200,680 C150,640 390,770 700,720 S1050,640 1640,700" />
+              <path className="wave-line wl-11" d="M-200,750 C100,710 440,840 700,790 S1100,710 1640,770" />
+              <path className="wave-line wl-12" d="M-200,820 C180,780 370,910 700,860 S1050,780 1640,840" />
+            </g>
+          </svg>
+        </div>
+        <header className="absolute top-0 left-0 right-0 z-20 flex items-center justify-between px-3 sm:px-4 py-3 border-b border-white/10" style={{ background: "rgba(10,10,10,0.25)", backdropFilter: "blur(12px) saturate(1.5)", WebkitBackdropFilter: "blur(12px) saturate(1.5)" }}>
           <div className="flex items-center gap-2 sm:gap-3 min-w-0">
             <button
               onClick={() => setSettingsOpen(!settingsOpen)}
@@ -1498,7 +1523,7 @@ export default function Home() {
           </div>
         </header>
 
-        <div ref={scrollContainerRef} onScroll={handleScroll} className="flex-1 overflow-y-auto px-3 sm:px-4 py-4 sm:py-6">
+        <div ref={scrollContainerRef} onScroll={handleScroll} className="flex-1 overflow-y-auto px-3 sm:px-4 pt-16 pb-28">
           {messages.length === 0 && (
             <div className="flex flex-col items-center justify-center h-full text-center px-4">
               <div className="text-4xl mb-4">🛡️</div>
@@ -1827,10 +1852,12 @@ export default function Home() {
           <div ref={messagesEndRef} />
         </div>
 
-        <div className="px-3 sm:px-4 pt-2 pb-[calc(0.75rem+env(safe-area-inset-bottom))]">
+        <div className="absolute bottom-0 left-0 right-0 z-20 px-3 sm:px-4 pt-6 pb-[calc(0.75rem+env(safe-area-inset-bottom))] pointer-events-none">
+          <div className="pointer-events-auto">
           <form
             onSubmit={onSubmit}
-            className="relative mx-auto max-w-3xl rounded-2xl glass-input-bar overflow-visible"
+            className="relative mx-auto max-w-3xl rounded-2xl border border-white/10 shadow-[0_8px_32px_rgba(0,0,0,0.3)] overflow-visible"
+            style={{ background: "rgba(10,10,10,0.2)", backdropFilter: "blur(12px) saturate(1.5)", WebkitBackdropFilter: "blur(12px) saturate(1.5)" }}
           >
             <textarea
               ref={inputRef}
@@ -1980,6 +2007,7 @@ export default function Home() {
               </button>
             </div>
           </form>
+          </div>
         </div>
       </div>
 
