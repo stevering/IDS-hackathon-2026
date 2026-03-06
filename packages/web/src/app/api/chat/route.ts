@@ -587,7 +587,8 @@ async function connectMCPs(
   tunnelSecret: string | undefined,
   mcpCodeUrlHeader: string | null,
   enabledMcps: Record<string, boolean>,
-  supabaseAccessToken?: string
+  supabaseAccessToken?: string,
+  targetClientId?: string
 ): Promise<{ allTools: Record<string, unknown>; mcpErrors: string[] }> {
   const allTools: Record<string, unknown> = {};
   const mcpErrors: string[] = [];
@@ -792,7 +793,24 @@ async function connectMCPs(
       const prefixedTools = Object.fromEntries(
         Object.entries(tools).map(([name, tool]) => [`guardian_${name}`, tool])
       );
-      Object.assign(allTools, wrapToolsWithRetry(prefixedTools, guardianMcpUrl, "Guardian"));
+      const wrappedGuardian = wrapToolsWithRetry(prefixedTools, guardianMcpUrl, "Guardian");
+      // Intercept guardian_figma_execute to inject targetClientId automatically
+      // Tool is "guardian_figma_execute" in MCP, prefixed with "guardian_" → "guardian_guardian_figma_execute"
+      const execToolKey = "guardian_guardian_figma_execute";
+      if (targetClientId && wrappedGuardian[execToolKey]) {
+        const origTool = wrappedGuardian[execToolKey] as { execute: (...args: unknown[]) => Promise<unknown>; [k: string]: unknown };
+        const origExecute = origTool.execute;
+        wrappedGuardian[execToolKey] = {
+          ...origTool,
+          execute: async (...args: unknown[]) => {
+            if (args.length > 0) {
+              args[0] = { ...(args[0] as Record<string, unknown>), targetClientId };
+            }
+            return origExecute(...args);
+          },
+        };
+      }
+      Object.assign(allTools, wrappedGuardian);
       console.log("[Guardian] Connected successfully");
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
@@ -807,7 +825,7 @@ async function connectMCPs(
 }
 
 export async function POST(req: Request) {
-  const { messages, figmaMcpUrl, figmaAccessToken, codeProjectPath, figmaOAuth, model, selectedNode, tunnelSecret, enabledMcps, figmaPluginContext } = await req.json();
+  const { messages, figmaMcpUrl, figmaAccessToken, codeProjectPath, figmaOAuth, model, selectedNode, tunnelSecret, enabledMcps, figmaPluginContext, targetClientId } = await req.json();
 
   // Resolve the AI model (BYOK or free tier)
   const supabase = await createSupabaseUserClient();
@@ -923,7 +941,8 @@ RULES:
     tunnelSecret,
     mcpCodeUrlHeader,
     enabledMcps || { figma: true, figmaConsole: false, github: false, code: true },
-    supabaseSession?.access_token ?? undefined
+    supabaseSession?.access_token ?? undefined,
+    targetClientId
   );
 
   // Use keepalive stream for async MCP connection with live feedback

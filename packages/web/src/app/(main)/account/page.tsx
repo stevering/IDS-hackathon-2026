@@ -1,11 +1,11 @@
 "use client";
 
 import { useState, useEffect, useCallback, useRef } from "react";
-import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { useGuardianPresence } from "@/app/hooks/useGuardianPresence";
 import { ConnectedClients } from "@/components/ConnectedClients";
+import { GlassDropdown } from "@/components/GlassDropdown";
 
 type StoredKey = {
   id: string;
@@ -58,42 +58,12 @@ export default function AccountPage() {
   const [secret, setSecret] = useState("");
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const [search, setSearch] = useState("");
-  const dropdownRef = useRef<HTMLDivElement>(null);
   const dropdownBtnRef = useRef<HTMLButtonElement>(null);
-  const portalDropdownRef = useRef<HTMLDivElement>(null);
-  const [dropdownPos, setDropdownPos] = useState<{ top: number; left: number; width: number } | null>(null);
 
-  // Close dropdown on outside click
-  useEffect(() => {
-    function handleClickOutside(e: MouseEvent) {
-      const target = e.target as Node;
-      if (
-        dropdownRef.current && !dropdownRef.current.contains(target) &&
-        (!portalDropdownRef.current || !portalDropdownRef.current.contains(target))
-      ) {
-        setDropdownOpen(false);
-        setSearch("");
-      }
-    }
-    if (dropdownOpen) {
-      document.addEventListener("mousedown", handleClickOutside);
-      return () => document.removeEventListener("mousedown", handleClickOutside);
-    }
-  }, [dropdownOpen]);
-
-  // Compute dropdown position when opened
-  useEffect(() => {
-    if (dropdownOpen && dropdownBtnRef.current) {
-      const rect = dropdownBtnRef.current.getBoundingClientRect();
-      setDropdownPos({
-        top: rect.bottom + 4,
-        left: rect.left,
-        width: rect.width,
-      });
-    } else {
-      setDropdownPos(null);
-    }
-  }, [dropdownOpen]);
+  const handleDropdownClose = useCallback(() => {
+    setDropdownOpen(false);
+    setSearch("");
+  }, []);
 
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -325,7 +295,7 @@ export default function AccountPage() {
           {loading ? (
             <div className="h-10 w-full rounded-lg bg-white/10 animate-pulse" />
           ) : (
-            <div className="relative" ref={dropdownRef}>
+            <div className="relative">
               <button
                 ref={dropdownBtnRef}
                 type="button"
@@ -342,20 +312,7 @@ export default function AccountPage() {
                 </svg>
               </button>
 
-              {dropdownOpen && dropdownPos && createPortal(
-                <div
-                  ref={portalDropdownRef}
-                  className="fixed z-[9999] rounded-lg border border-white/15 overflow-hidden"
-                  style={{
-                    top: dropdownPos.top,
-                    left: dropdownPos.left,
-                    width: dropdownPos.width,
-                    background: "rgba(10,10,10,0.5)",
-                    backdropFilter: "blur(20px) saturate(1.5)",
-                    WebkitBackdropFilter: "blur(20px) saturate(1.5)",
-                    boxShadow: "0 8px 32px rgba(0,0,0,0.6), inset 0 1px 0 rgba(255,255,255,0.06)",
-                  }}
-                >
+              <GlassDropdown open={dropdownOpen} onClose={handleDropdownClose} anchorRef={dropdownBtnRef}>
                   {/* Search input */}
                   <div className="p-2 border-b border-white/[0.06]">
                     <input
@@ -393,9 +350,7 @@ export default function AccountPage() {
                       <p className="px-4 py-3 text-sm text-white/30 text-center">No provider found</p>
                     )}
                   </div>
-                </div>,
-                document.body
-              )}
+              </GlassDropdown>
             </div>
           )}
 

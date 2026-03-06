@@ -25,12 +25,10 @@
     "@modelcontextprotocol/sdk": "^1.6.0",
     "@supabase/supabase-js": "^2.98.0",
     "jose": "^6.2.0",
-    "ws": "^8.18.0",
     "zod": "^3.23.8"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
-    "@types/ws": "^8.5.13",
     "tsup": "^8.3.5",
     "tsx": "^4.19.2",
     "typescript": "^5.7.0"

@@ -3,13 +3,13 @@
 import { useChat } from "@ai-sdk/react";
 import { DefaultChatTransport } from "ai";
 import { useState, useRef, useEffect, useMemo, useCallback } from "react";
-import { createPortal } from "react-dom";
 import Link from "next/link";
 import type { GatewayModel } from "./api/gateway-models/route";
 import { useFigmaPlugin } from "./hooks/useFigmaPlugin";
 import { useFigmaExecuteChannel } from "./hooks/useFigmaExecuteChannel";
 import { ClientSelector } from "@/components/ClientSelector";
 import { UserMenu } from "@/components/UserMenu";
+import { GlassDropdown } from "@/components/GlassDropdown";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import remarkBreaks from "remark-breaks";
@@ -620,7 +620,7 @@ function parseTextWithImages(text: string, isStreaming: boolean): Segment[] {
 export default function Home() {
   // ── Figma plugin bridge ─────────────────────────────────────────────
   const { isFigmaPlugin, figmaContext, sendToPlugin, executeCode } = useFigmaPlugin();
-  const { clients, setTarget, clientId: myClientId } = useFigmaExecuteChannel(executeCode, true, {
+  const { clients, clientId: myClientId } = useFigmaExecuteChannel(executeCode, true, {
     type: isFigmaPlugin ? "figma-plugin" : "webapp",
     label: isFigmaPlugin
       ? figmaContext?.currentPage?.name ?? "Figma Plugin"
@@ -637,7 +637,7 @@ export default function Home() {
   const [selectedFigmaClient, setSelectedFigmaClient] = useState<string | null>(null);
   const [selectedCodeClient, setSelectedCodeClient] = useState<string | null>(null);
 
-  // Target is broadcast before each chat send, not on mount (avoids plugins overriding each other)
+
 
   const isDev = process.env.NODE_ENV === 'development';
   const [figmaMcpUrl, setFigmaMcpUrl] = useState(
@@ -663,9 +663,7 @@ export default function Home() {
   const [gatewayModels, setGatewayModels] = useState<GatewayModel[]>([]);
   const [modelDropdownOpen, setModelDropdownOpen] = useState(false);
   const [modelSearch, setModelSearch] = useState("");
-  const modelDropdownRef = useRef<HTMLDivElement>(null);
   const modelBtnRef = useRef<HTMLButtonElement>(null);
-  const [modelDropdownPos, setModelDropdownPos] = useState<{ top: number; left: number } | null>(null);
   const [selectedNode, setSelectedNode] = useState<{ nodes: unknown[]; image: string | null; nodeUrl: string | null } | null>(null);
   const [figmaPluginContext, setFigmaPluginContext] = useState<{ fileKey: string; fileName: string; fileUrl: string; currentPage?: { id: string; name: string } | null; pages?: { id: string; name: string }[]; currentUser?: { id: string; name: string } | null } | null>(null);
   const [selectionGlow, setSelectionGlow] = useState(false);
@@ -701,37 +699,10 @@ export default function Home() {
     localStorage.setItem('guardian-enabled-mcps', JSON.stringify(enabledMcps));
   }, [enabledMcps]);
 
-  // Close model dropdown on outside click
-  const portalDropdownRef = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    function handleClickOutside(e: MouseEvent) {
-      const target = e.target as Node;
-      if (
-        modelDropdownRef.current && !modelDropdownRef.current.contains(target) &&
-        (!portalDropdownRef.current || !portalDropdownRef.current.contains(target))
-      ) {
-        setModelDropdownOpen(false);
-        setModelSearch("");
-      }
-    }
-    if (modelDropdownOpen) {
-      document.addEventListener("mousedown", handleClickOutside);
-      return () => document.removeEventListener("mousedown", handleClickOutside);
-    }
-  }, [modelDropdownOpen]);
-
-  // Compute dropdown position when opened
-  useEffect(() => {
-    if (modelDropdownOpen && modelBtnRef.current) {
-      const rect = modelBtnRef.current.getBoundingClientRect();
-      setModelDropdownPos({
-        top: rect.top - 4,
-        left: rect.right - 256,
-      });
-    } else {
-      setModelDropdownPos(null);
-    }
-  }, [modelDropdownOpen]);
+  const handleModelDropdownClose = useCallback(() => {
+    setModelDropdownOpen(false);
+    setModelSearch("");
+  }, []);
 
   // Load user's BYOK keys + full model catalog on mount
   useEffect(() => {
@@ -784,6 +755,10 @@ export default function Home() {
   clientsRef.current = clients;
   const selectedFigmaClientRef = useRef(selectedFigmaClient);
   selectedFigmaClientRef.current = selectedFigmaClient;
+  const isFigmaPluginRef = useRef(isFigmaPlugin);
+  isFigmaPluginRef.current = isFigmaPlugin;
+  const myClientIdRef = useRef(myClientId);
+  myClientIdRef.current = myClientId;
   const tunnelSecretRef = useRef(tunnelSecret);
   tunnelSecretRef.current = tunnelSecret;
   const oauthSessionRef = useRef<string | null>(null);
@@ -797,8 +772,6 @@ export default function Home() {
   sendToPluginRef.current = sendToPlugin;
   const executeCodeRef = useRef(executeCode);
   executeCodeRef.current = executeCode;
-  const isFigmaPluginRef = useRef(isFigmaPlugin);
-  isFigmaPluginRef.current = isFigmaPlugin;
 
   // Notify the Figma plugin that the user is authenticated
   useEffect(() => {
@@ -1107,24 +1080,17 @@ export default function Home() {
               };
             }
           }
-          return { figmaMcpUrl: figmaMcpUrlRef.current || (figmaOAuthRef.current ? "https://mcp.figma.com/mcp" : ""), figmaAccessToken: figmaAccessTokenRef.current, codeProjectPath: codeProjectPathRef.current, figmaOAuth: figmaOAuthRef.current, model: selectedModelRef.current, selectedNode: selectedNodeRef.current, tunnelSecret: tunnelSecretRef.current, enabledMcps: enabledMcpsRef.current, figmaPluginContext: pluginContext };
+          // Plugin targets itself; standalone webapp targets the selected plugin
+          const targetClientId = isFigmaPluginRef.current
+            ? myClientIdRef.current
+            : selectedFigmaClientRef.current;
+          return { figmaMcpUrl: figmaMcpUrlRef.current || (figmaOAuthRef.current ? "https://mcp.figma.com/mcp" : ""), figmaAccessToken: figmaAccessTokenRef.current, codeProjectPath: codeProjectPathRef.current, figmaOAuth: figmaOAuthRef.current, model: selectedModelRef.current, selectedNode: selectedNodeRef.current, tunnelSecret: tunnelSecretRef.current, enabledMcps: enabledMcpsRef.current, figmaPluginContext: pluginContext, targetClientId };
         },
       }),
     [],
   );
 
-  const { messages, sendMessage: rawSendMessage, status, error, setMessages } = useChat({ transport });
-
-  // Wrap sendMessage to broadcast target before each chat send
-  const sendMessage = useCallback((msg: { text: string }) => {
-    // Plugin targets itself; standalone webapp targets the selected plugin
-    if (isFigmaPlugin) {
-      setTarget(myClientId);
-    } else {
-      setTarget(selectedFigmaClientRef.current);
-    }
-    rawSendMessage(msg);
-  }, [isFigmaPlugin, myClientId, setTarget, rawSendMessage]);
+  const { messages, sendMessage, status, error, setMessages } = useChat({ transport });
 
   const [errorVisible, setErrorVisible] = useState(false);
   useEffect(() => {
@@ -1952,7 +1918,7 @@ export default function Home() {
                 </div>
               ) : (
                 /* BYOK — model picker */
-                <div className="relative" ref={modelDropdownRef}>
+                <div className="relative">
                   {(() => {
                     const hasGateway = byokKeys.some((k) => k.provider === "gateway");
                     const directProviders = new Set(byokKeys.filter((k) => k.provider !== "gateway").map((k) => k.provider));
@@ -1999,20 +1965,7 @@ export default function Home() {
                           </svg>
                         </button>
 
-                        {modelDropdownOpen && modelDropdownPos && createPortal(
-                          <div
-                            ref={portalDropdownRef}
-                            className="fixed z-[9999] w-64 rounded-lg border border-white/15 overflow-hidden"
-                            style={{
-                              top: modelDropdownPos.top,
-                              left: modelDropdownPos.left,
-                              transform: "translateY(-100%)",
-                              background: "rgba(10,10,10,0.5)",
-                              backdropFilter: "blur(20px) saturate(1.5)",
-                              WebkitBackdropFilter: "blur(20px) saturate(1.5)",
-                              boxShadow: "0 8px 32px rgba(0,0,0,0.6), inset 0 1px 0 rgba(255,255,255,0.06)",
-                            }}
-                          >
+                        <GlassDropdown open={modelDropdownOpen} onClose={handleModelDropdownClose} anchorRef={modelBtnRef} side="top" align="right" width={256}>
                             <div className="p-2 border-b border-white/[0.06]">
                               <input
                                 type="text"
@@ -2057,9 +2010,7 @@ export default function Home() {
                                 <p className="px-3 py-3 text-xs text-white/30 text-center">No model found</p>
                               )}
                             </div>
-                          </div>,
-                          document.body
-                        )}
+                        </GlassDropdown>
                       </>
                     );
                   })()}

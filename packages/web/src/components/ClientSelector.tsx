@@ -1,7 +1,8 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import type { PresenceClient } from "@/types/presence";
+import { GlassDropdown } from "./GlassDropdown";
 
 type Props = {
   clients: PresenceClient[];
@@ -13,7 +14,7 @@ type Props = {
 
 export function ClientSelector({ clients, filterType, label, selected, onSelect }: Props) {
   const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
+  const btnRef = useRef<HTMLButtonElement>(null);
 
   const filtered = clients.filter((c) => c.type === filterType);
   const selectedClient = filtered.find((c) => c.clientId === selected);
@@ -27,15 +28,7 @@ export function ClientSelector({ clients, filterType, label, selected, onSelect 
     }
   }, [filtered, selected, onSelect]);
 
-  // Close on outside click
-  useEffect(() => {
-    if (!open) return;
-    function handleClick(e: MouseEvent) {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
-    }
-    document.addEventListener("mousedown", handleClick);
-    return () => document.removeEventListener("mousedown", handleClick);
-  }, [open]);
+  const handleClose = useCallback(() => setOpen(false), []);
 
   if (filtered.length === 0) {
     return (
@@ -58,8 +51,9 @@ export function ClientSelector({ clients, filterType, label, selected, onSelect 
   }
 
   return (
-    <div ref={ref} className="relative">
+    <div className="relative">
       <button
+        ref={btnRef}
         onClick={() => setOpen(!open)}
         className="flex items-center gap-1.5 text-xs text-white/70 hover:text-white/90 transition-colors cursor-pointer"
       >
@@ -72,37 +66,28 @@ export function ClientSelector({ clients, filterType, label, selected, onSelect 
         </svg>
       </button>
 
-      {open && (
-        <div
-          className="absolute top-full right-0 mt-1 min-w-[180px] rounded-lg border border-white/10 py-1 z-50"
-          style={{
-            background: "rgba(20,20,20,0.95)",
-            backdropFilter: "blur(12px)",
-            boxShadow: "0 8px 32px rgba(0,0,0,0.5)",
-          }}
-        >
-          {filtered.map((client) => (
-            <button
-              key={client.presenceRef}
-              onClick={() => {
-                onSelect(client.clientId);
-                setOpen(false);
-              }}
-              className="w-full flex items-center gap-2 px-3 py-2 text-xs text-white/70 hover:bg-white/10 transition-colors cursor-pointer"
-            >
-              <div className="w-2 h-2 rounded-full bg-emerald-400 shrink-0" />
-              <span className="flex-1 text-left truncate">
-                {client.shortId} {client.label}
-              </span>
-              {selected === client.clientId && (
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className="text-emerald-400 shrink-0">
-                  <path d="M20 6L9 17l-5-5" />
-                </svg>
-              )}
-            </button>
-          ))}
-        </div>
-      )}
+      <GlassDropdown open={open} onClose={handleClose} anchorRef={btnRef} align="right" width={200}>
+        {filtered.map((client) => (
+          <button
+            key={client.presenceRef}
+            onClick={() => {
+              onSelect(client.clientId);
+              setOpen(false);
+            }}
+            className="w-full flex items-center gap-2 px-3 py-2 text-xs text-white/70 hover:bg-white/10 transition-colors cursor-pointer"
+          >
+            <div className="w-2 h-2 rounded-full bg-emerald-400 shrink-0" />
+            <span className="flex-1 text-left truncate">
+              {client.shortId} {client.label}
+            </span>
+            {selected === client.clientId && (
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className="text-emerald-400 shrink-0">
+                <path d="M20 6L9 17l-5-5" />
+              </svg>
+            )}
+          </button>
+        ))}
+      </GlassDropdown>
     </div>
   );
 }

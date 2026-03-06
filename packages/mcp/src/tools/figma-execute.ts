@@ -1,93 +1,15 @@
 import { z } from "zod"
-import { WebSocket } from "ws"
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js"
 import { createMcpSupabaseClient } from "../lib/supabase.js"
 
-const DEFAULT_BRIDGE_PORT = 3002
 const CHANNEL_BASE = "guardian:execute"
 
 type ExecResult = { success: boolean; result?: unknown; error?: string }
 
 /**
- * Connect to the local BridgeServer as an MCP controller, send an EXECUTE_CODE
- * message, wait for the EXECUTE_CODE_RESULT, and return the result.
- *
- * Requires:
- *   - The Guardian Electron overlay to be running (it hosts the BridgeServer).
- *   - At least one Figma plugin/widget client to be connected to the bridge.
- */
-function executeViaLocalBridge(
-  code: string,
-  requestId: string,
-  timeoutMs: number,
-  bridgePort: number
-): Promise<ExecResult> {
-  return new Promise((resolve) => {
-    const ws = new WebSocket(`ws://localhost:${bridgePort}`)
-
-    const cleanup = (result: ExecResult): void => {
-      clearTimeout(timer)
-      if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) {
-        ws.close()
-      }
-      resolve(result)
-    }
-
-    const timer = setTimeout(() => {
-      cleanup({
-        success: false,
-        error: `Timed out after ${timeoutMs}ms — make sure the Guardian Electron overlay is running and the Figma plugin is open.`,
-      })
-    }, timeoutMs)
-
-    ws.on("error", (err) => {
-      cleanup({
-        success: false,
-        error: `Cannot connect to Guardian bridge on ws://localhost:${bridgePort} — is the Electron overlay running? (${err.message})`,
-      })
-    })
-
-    ws.on("open", () => {
-      // Register as an MCP controller
-      ws.send(JSON.stringify({ type: "REGISTER", clientType: "mcp-controller" }))
-    })
-
-    ws.on("message", (raw) => {
-      try {
-        const msg = JSON.parse(raw.toString()) as Record<string, unknown>
-
-        if (msg["type"] === "REGISTERED") {
-          // Registered — now send the code execution request
-          ws.send(JSON.stringify({ type: "EXECUTE_CODE", id: requestId, code }))
-          return
-        }
-
-        if (msg["type"] === "EXECUTE_CODE_RESULT" && msg["id"] === requestId) {
-          cleanup({
-            success: msg["success"] === true,
-            result: msg["result"],
-            error: typeof msg["error"] === "string" ? msg["error"] : undefined,
-          })
-        }
-      } catch {
-        // ignore malformed messages
-      }
-    })
-
-    ws.on("close", () => {
-      // If the socket closes before we got a result, surface an error
-      cleanup({
-        success: false,
-        error: "Bridge connection closed before receiving EXECUTE_CODE_RESULT.",
-      })
-    })
-  })
-}
-
-/**
  * Execute code via Supabase Realtime broadcast channel.
  *
- * Flow: MCP broadcasts execute_request on "guardian:execute" channel,
+ * Flow: MCP broadcasts execute_request on "guardian:execute:{userId}" channel,
  * the webapp (subscribed to the same channel) receives it, executes via
  * postMessage to the Figma plugin, and broadcasts the result back.
  */
@@ -95,7 +17,8 @@ async function executeViaSupabase(
   code: string,
   requestId: string,
   timeoutMs: number,
-  userId?: string
+  userId?: string,
+  targetClientId?: string
 ): Promise<ExecResult> {
   const channelName = userId ? `${CHANNEL_BASE}:${userId}` : CHANNEL_BASE
   const supabase = createMcpSupabaseClient()
@@ -140,7 +63,7 @@ async function executeViaSupabase(
           await channel.send({
             type: "broadcast",
             event: "execute_request",
-            payload: { requestId, code, timeout: timeoutMs },
+            payload: { requestId, code, timeout: timeoutMs, targetClientId },
           })
         } else if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") {
           if (settled) return
@@ -164,12 +87,7 @@ Use this for one-off operations not covered by guardian_run_skill.
 Prefer guardian_run_skill for common DS operations (it uses pre-validated code templates).
 
 IMPORTANT: The Guardian Figma plugin must be open in Figma Desktop for this to work.
-
-## Transport modes
-
-- "overlay": connect via the Electron overlay BridgeServer (WebSocket, requires overlay running locally)
-- "cloud": connect via Supabase Realtime (works locally and remotely, no overlay needed)
-- "auto" (default): try overlay first (fast, 3s), fall back to Supabase Realtime
+Communication goes through Supabase Realtime (works locally and remotely).
 
 ## How to write code
 
@@ -233,33 +151,15 @@ Create a button (Frame with text label — NOT a Rectangle):
       timeout: z.number().optional().describe(
         "Execution timeout in milliseconds (default: 10000)"
       ),
-      transport: z.enum(["auto", "overlay", "cloud"]).optional().describe(
-        'Transport mode: "overlay" (WebSocket via Electron overlay), "cloud" (Supabase Realtime), "auto" (try overlay then cloud). Default: "auto".'
-      ),
-      bridge_port: z.number().optional().describe(
-        `Local BridgeServer port (default: ${DEFAULT_BRIDGE_PORT}). Override via GUARDIAN_BRIDGE_PORT env.`
+      targetClientId: z.string().optional().describe(
+        "Client ID of the target Figma plugin instance. Only this client will execute the code."
       ),
     },
-    async ({ code, timeout, transport, bridge_port }) => {
+    async ({ code, timeout, targetClientId }) => {
       const timeoutMs = timeout ?? 10_000
-      const port = bridge_port
-        ?? Number(process.env["GUARDIAN_BRIDGE_PORT"] ?? DEFAULT_BRIDGE_PORT)
-      const mode = transport ?? "auto"
       const requestId = `mcp-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
 
-      let result: ExecResult
-
-      if (mode === "overlay") {
-        result = await executeViaLocalBridge(code, requestId, timeoutMs, port)
-      } else if (mode === "cloud") {
-        result = await executeViaSupabase(code, requestId, timeoutMs, userId)
-      } else {
-        // auto: try overlay first with a short timeout, fall back to Supabase Realtime
-        result = await executeViaLocalBridge(code, requestId, 3_000, port)
-        if (!result.success) {
-          result = await executeViaSupabase(code, requestId, timeoutMs, userId)
-        }
-      }
+      const result = await executeViaSupabase(code, requestId, timeoutMs, userId, targetClientId)
 
       return {
         content: [

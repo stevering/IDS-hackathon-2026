@@ -1,15 +1,16 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
 import { type User } from "@supabase/supabase-js";
+import { GlassDropdown } from "./GlassDropdown";
 
 export function UserMenu() {
   const [user, setUser] = useState<User | null>(null);
   const [open, setOpen] = useState(false);
-  const menuRef = useRef<HTMLDivElement>(null);
+  const btnRef = useRef<HTMLButtonElement>(null);
   const router = useRouter();
 
   useEffect(() => {
@@ -21,16 +22,7 @@ export function UserMenu() {
     return () => subscription.unsubscribe();
   }, []);
 
-  // Close on outside click
-  useEffect(() => {
-    function handleClick(e: MouseEvent) {
-      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
-        setOpen(false);
-      }
-    }
-    if (open) document.addEventListener("mousedown", handleClick);
-    return () => document.removeEventListener("mousedown", handleClick);
-  }, [open]);
+  const handleClose = useCallback(() => setOpen(false), []);
 
   if (!user) return null;
 
@@ -47,8 +39,9 @@ export function UserMenu() {
   }
 
   return (
-    <div ref={menuRef} className="relative">
+    <div className="relative">
       <button
+        ref={btnRef}
         onClick={() => setOpen(!open)}
         className="flex items-center gap-1.5 rounded-full pl-1 pr-2 py-1 hover:bg-white/5 transition-colors cursor-pointer"
         title={email ?? ""}
@@ -69,40 +62,38 @@ export function UserMenu() {
         </svg>
       </button>
 
-      {open && (
-        <div className="absolute right-0 top-full mt-1.5 w-52 rounded-xl bg-[#0f0a1e] border border-white/10 shadow-2xl z-50 overflow-hidden">
-          {/* User info */}
-          <div className="px-3 py-2.5 border-b border-white/5">
-            <p className="text-xs font-medium text-white truncate">{name ?? email}</p>
-            {name && <p className="text-[11px] text-white/40 truncate mt-0.5">{email}</p>}
-          </div>
-          {/* Actions */}
-          <div className="p-1">
-            <Link
-              href="/account"
-              onClick={() => setOpen(false)}
-              className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-sm text-white/70 hover:bg-white/5 transition-colors cursor-pointer"
-            >
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <circle cx="12" cy="8" r="4" />
-                <path d="M4 20c0-4 3.6-7 8-7s8 3 8 7" />
-              </svg>
-              Account &amp; API keys
-            </Link>
-            <button
-              onClick={handleSignOut}
-              className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-sm text-red-400 hover:bg-red-500/10 transition-colors cursor-pointer text-left"
-            >
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
-                <polyline points="16 17 21 12 16 7" />
-                <line x1="21" y1="12" x2="9" y2="12" />
-              </svg>
-              Sign out
-            </button>
-          </div>
+      <GlassDropdown open={open} onClose={handleClose} anchorRef={btnRef} align="right" width={208}>
+        {/* User info */}
+        <div className="px-3 py-2.5 border-b border-white/5">
+          <p className="text-xs font-medium text-white truncate">{name ?? email}</p>
+          {name && <p className="text-[11px] text-white/40 truncate mt-0.5">{email}</p>}
         </div>
-      )}
+        {/* Actions */}
+        <div className="p-1">
+          <Link
+            href="/account"
+            onClick={() => setOpen(false)}
+            className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-sm text-white/70 hover:bg-white/5 transition-colors cursor-pointer"
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <circle cx="12" cy="8" r="4" />
+              <path d="M4 20c0-4 3.6-7 8-7s8 3 8 7" />
+            </svg>
+            Account &amp; API keys
+          </Link>
+          <button
+            onClick={handleSignOut}
+            className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-sm text-red-400 hover:bg-red-500/10 transition-colors cursor-pointer text-left"
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
+              <polyline points="16 17 21 12 16 7" />
+              <line x1="21" y1="12" x2="9" y2="12" />
+            </svg>
+            Sign out
+          </button>
+        </div>
+      </GlassDropdown>
     </div>
   );
 }
