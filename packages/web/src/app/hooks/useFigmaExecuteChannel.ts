@@ -13,6 +13,7 @@ export type ClientInfo = {
   fileKey?: string;
   mcpInfo?: PresenceClient["mcpInfo"];
   figmaContext?: PresenceClient["figmaContext"];
+  serverShortId?: string | null;
 };
 
 /**
@@ -31,10 +32,16 @@ export function useFigmaExecuteChannel(
   const [userId, setUserId] = useState<string | null>(null);
   const [clients, setClients] = useState<PresenceClient[]>([]);
 
-  // Self-generated stable client ID — lazy-init on first client-side access only
+  // Self-generated stable client ID — persists across navigations via sessionStorage
   const clientId = useRef("");
   if (clientId.current === "" && typeof window !== "undefined") {
-    clientId.current = Math.random().toString(36).slice(2, 10);
+    const stored = sessionStorage.getItem("guardian:clientId");
+    if (stored) {
+      clientId.current = stored;
+    } else {
+      clientId.current = Math.random().toString(36).slice(2, 10);
+      sessionStorage.setItem("guardian:clientId", clientId.current);
+    }
   }
 
   // Resolve userId from Supabase auth on mount
@@ -49,6 +56,7 @@ export function useFigmaExecuteChannel(
   // Stable reference to clientInfo to avoid re-subscribing on every render
   const clientInfoRef = useRef(clientInfo);
   clientInfoRef.current = clientInfo;
+  const channelRef = useRef<ReturnType<ReturnType<typeof createClient>["channel"]> | null>(null);
 
   const handlePresenceSync = useCallback(
     (state: Record<string, { presence_ref: string; [key: string]: unknown }[]>) => {
@@ -118,15 +126,35 @@ export function useFigmaExecuteChannel(
             fileKey: clientInfoRef.current.fileKey,
             mcpInfo: clientInfoRef.current.mcpInfo,
             figmaContext: clientInfoRef.current.figmaContext,
+            serverShortId: clientInfoRef.current.serverShortId ?? undefined,
             connectedAt: Date.now(),
           });
         }
       });
 
+    channelRef.current = channel;
+
     return () => {
+      channelRef.current = null;
       channel.unsubscribe();
     };
   }, [enabled, userId, handlePresenceSync]);
+
+  // Re-track presence when serverShortId becomes available
+  const serverShortId = clientInfo?.serverShortId;
+  useEffect(() => {
+    if (!serverShortId || !channelRef.current || !clientInfoRef.current) return;
+    channelRef.current.track({
+      clientId: clientId.current,
+      type: clientInfoRef.current.type,
+      label: clientInfoRef.current.label,
+      fileKey: clientInfoRef.current.fileKey,
+      mcpInfo: clientInfoRef.current.mcpInfo,
+      figmaContext: clientInfoRef.current.figmaContext,
+      serverShortId,
+      connectedAt: Date.now(),
+    });
+  }, [serverShortId]);
 
   return { clients, clientId: clientId.current };
 }

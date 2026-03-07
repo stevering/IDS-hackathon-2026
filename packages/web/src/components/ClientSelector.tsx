@@ -8,11 +8,12 @@ type Props = {
   clients: PresenceClient[];
   filterType: "figma-plugin" | "webapp" | "overlay";
   label: string;
+  tooltip?: string;
   selected: string | null;
   onSelect: (presenceRef: string | null) => void;
 };
 
-export function ClientSelector({ clients, filterType, label, selected, onSelect }: Props) {
+export function ClientSelector({ clients, filterType, label, tooltip, selected, onSelect }: Props) {
   const [open, setOpen] = useState(false);
   const btnRef = useRef<HTMLButtonElement>(null);
 
@@ -32,7 +33,7 @@ export function ClientSelector({ clients, filterType, label, selected, onSelect 
 
   if (filtered.length === 0) {
     return (
-      <div className="flex items-center gap-1.5 text-xs text-white/30">
+      <div className="flex items-center gap-1.5 text-xs text-white/30" title={tooltip}>
         <div className="w-2 h-2 rounded-full bg-white/15" />
         <span className="hidden sm:inline">{label}</span>
       </div>
@@ -41,7 +42,7 @@ export function ClientSelector({ clients, filterType, label, selected, onSelect 
 
   if (filtered.length === 1) {
     return (
-      <div className="flex items-center gap-1.5 text-xs text-white/70">
+      <div className="flex items-center gap-1.5 text-xs text-white/70" title={tooltip}>
         <div className="w-2 h-2 rounded-full bg-emerald-400" />
         <span className="hidden sm:inline">
           {filtered[0].shortId} {filtered[0].label}
@@ -55,6 +56,7 @@ export function ClientSelector({ clients, filterType, label, selected, onSelect 
       <button
         ref={btnRef}
         onClick={() => setOpen(!open)}
+        title={tooltip}
         className="flex items-center gap-1.5 text-xs text-white/70 hover:text-white/90 transition-colors cursor-pointer"
       >
         <div className="w-2 h-2 rounded-full bg-emerald-400" />
@@ -66,7 +68,7 @@ export function ClientSelector({ clients, filterType, label, selected, onSelect 
         </svg>
       </button>
 
-      <GlassDropdown open={open} onClose={handleClose} anchorRef={btnRef} align="right" width={200}>
+      <GlassDropdown open={open} onClose={handleClose} anchorRef={btnRef} side="top" align="left" width={200}>
         {filtered.map((client) => (
           <button
             key={client.presenceRef}

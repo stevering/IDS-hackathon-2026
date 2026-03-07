@@ -7,6 +7,7 @@ import Link from "next/link";
 import type { GatewayModel } from "./api/gateway-models/route";
 import { useFigmaPlugin } from "./hooks/useFigmaPlugin";
 import { useFigmaExecuteChannel } from "./hooks/useFigmaExecuteChannel";
+import { useClientRegistry } from "./hooks/useClientRegistry";
 import { ClientSelector } from "@/components/ClientSelector";
 import { UserMenu } from "@/components/UserMenu";
 import { GlassDropdown } from "@/components/GlassDropdown";
@@ -620,12 +621,19 @@ function parseTextWithImages(text: string, isStreaming: boolean): Segment[] {
 export default function Home() {
   // ── Figma plugin bridge ─────────────────────────────────────────────
   const { isFigmaPlugin, figmaContext, sendToPlugin, executeCode } = useFigmaPlugin();
+  const clientTypeForChannel: "figma-plugin" | "webapp" = isFigmaPlugin ? "figma-plugin" : "webapp";
+  const clientLabel = isFigmaPlugin
+    ? figmaContext?.currentPage?.name ?? "Figma Plugin"
+    : typeof navigator !== "undefined" ? navigator.userAgent.split(" ").pop()?.split("/")[0] ?? "Browser" : "Browser";
+  const clientFileKey = figmaContext?.fileKey ?? undefined;
+
+  // Get clientId from channel hook first, then register with server
+  const [registryShortId, setRegistryShortId] = useState<string | null>(null);
+
   const { clients, clientId: myClientId } = useFigmaExecuteChannel(executeCode, true, {
-    type: isFigmaPlugin ? "figma-plugin" : "webapp",
-    label: isFigmaPlugin
-      ? figmaContext?.currentPage?.name ?? "Figma Plugin"
-      : typeof navigator !== "undefined" ? navigator.userAgent.split(" ").pop()?.split("/")[0] ?? "Browser" : "Browser",
-    fileKey: figmaContext?.fileKey ?? undefined,
+    type: clientTypeForChannel,
+    label: clientLabel,
+    fileKey: clientFileKey,
     figmaContext: isFigmaPlugin && figmaContext ? {
       fileName: figmaContext.fileName,
       fileUrl: figmaContext.fileUrl,
@@ -633,7 +641,28 @@ export default function Home() {
       currentPage: figmaContext.currentPage,
       currentUser: figmaContext.currentUser,
     } : undefined,
+    serverShortId: registryShortId,
   });
+
+  // Register client with the server-side registry (needs clientId from channel hook)
+  const { shortId: serverShortId } = useClientRegistry(
+    myClientId,
+    clientTypeForChannel,
+    clientLabel,
+    clientFileKey,
+    !!myClientId,
+  );
+
+  // Sync server shortId to presence via state (avoids circular hook deps)
+  useEffect(() => {
+    if (serverShortId && serverShortId !== registryShortId) {
+      setRegistryShortId(serverShortId);
+    }
+  }, [serverShortId, registryShortId]);
+
+  // Use server-assigned shortId, falling back to presence-derived one
+  const myDisplayShortId = registryShortId ?? clients.find(c => c.clientId === myClientId)?.shortId ?? myClientId;
+
   const [selectedFigmaClient, setSelectedFigmaClient] = useState<string | null>(null);
   const [selectedCodeClient, setSelectedCodeClient] = useState<string | null>(null);
 
@@ -1525,21 +1554,7 @@ export default function Home() {
                 </svg>
               </button>
             )}
-            <span className="text-[10px] font-mono text-white/25" suppressHydrationWarning>{clients.find(c => c.clientId === myClientId)?.shortId ?? myClientId}</span>
-            <ClientSelector
-              clients={clients}
-              filterType="figma-plugin"
-              label="No plugin"
-              selected={selectedFigmaClient}
-              onSelect={setSelectedFigmaClient}
-            />
-            <ClientSelector
-              clients={clients}
-              filterType="webapp"
-              label="No code"
-              selected={selectedCodeClient}
-              onSelect={setSelectedCodeClient}
-            />
+            <span className="text-xs font-mono text-white/50" suppressHydrationWarning>{myDisplayShortId}</span>
             <div className="w-px h-4 bg-white/10 mx-1 hidden sm:block" />
             <UserMenu />
           </div>
@@ -1902,7 +1917,28 @@ export default function Home() {
               rows={3}
             />
             {/* Bottom bar inside the form */}
-            <div className="absolute bottom-0 left-0 right-0 flex items-center justify-end gap-2 px-3 py-2">
+            <div className="absolute bottom-0 left-0 right-0 flex items-center justify-between gap-2 px-3 py-2">
+              {/* Left: client selectors */}
+              <div className="flex items-center gap-2">
+                <ClientSelector
+                  clients={clients}
+                  filterType="figma-plugin"
+                  label="No plugin"
+                  tooltip="Edits on — select which Figma plugin receives commands"
+                  selected={selectedFigmaClient}
+                  onSelect={setSelectedFigmaClient}
+                />
+                <ClientSelector
+                  clients={clients}
+                  filterType="webapp"
+                  label="No code"
+                  tooltip="Code on — select which code MCP client to use"
+                  selected={selectedCodeClient}
+                  onSelect={setSelectedCodeClient}
+                />
+              </div>
+              {/* Right: model picker + send */}
+              <div className="flex items-center gap-2">
               {byokKeys.length === 0 ? (
                 /* Free tier */
                 <div className="flex items-center gap-2">
@@ -2026,6 +2062,7 @@ export default function Home() {
                   <path d="M5 12l7-7 7 7" />
                 </svg>
               </button>
+              </div>
             </div>
           </form>
           </div>

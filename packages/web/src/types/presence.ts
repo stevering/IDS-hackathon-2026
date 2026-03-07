@@ -37,7 +37,7 @@ export function parsePresenceState(
       clients.push({
         type,
         clientId: (p.clientId as string) ?? p.presence_ref,
-        shortId: generateShortId(type, p.presence_ref),
+        shortId: (p.serverShortId as string) ?? generateShortId(type, p.presence_ref),
         label: (p.label as string) ?? "Unknown",
         fileKey: p.fileKey as string | undefined,
         connectedAt: (p.connectedAt as number) ?? Date.now(),
