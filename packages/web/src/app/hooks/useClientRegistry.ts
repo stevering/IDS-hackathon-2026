@@ -66,9 +66,17 @@ export function useClientRegistry(
       }).catch(() => {});
     }, HEARTBEAT_INTERVAL_MS);
 
+    // Unregister when the tab/window is closed
+    const unregisterPayload = JSON.stringify({ clientId });
+    const handleBeforeUnload = () => {
+      navigator.sendBeacon("/api/clients/unregister", new Blob([unregisterPayload], { type: "application/json" }));
+    };
+    window.addEventListener("beforeunload", handleBeforeUnload);
+
     return () => {
       cancelled = true;
       clearInterval(heartbeatTimer);
+      window.removeEventListener("beforeunload", handleBeforeUnload);
     };
   }, [enabled, clientId, clientType, label, fileKey]);
 

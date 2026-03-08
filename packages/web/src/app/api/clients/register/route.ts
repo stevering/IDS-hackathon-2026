@@ -13,6 +13,9 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "clientId and clientType are required" }, { status: 400 });
   }
 
+  // Fire-and-forget: clean up stale clients (>24h without heartbeat)
+  Promise.resolve(supabase.rpc("cleanup_stale_clients")).catch(() => {});
+
   const { data, error } = await supabase.rpc("register_client", {
     p_client_id: clientId,
     p_client_type: clientType,

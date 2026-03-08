@@ -8,7 +8,7 @@ import type { GatewayModel } from "./api/gateway-models/route";
 import { useFigmaPlugin } from "./hooks/useFigmaPlugin";
 import { useFigmaExecuteChannel } from "./hooks/useFigmaExecuteChannel";
 import { useClientRegistry } from "./hooks/useClientRegistry";
-import { ClientSelector } from "@/components/ClientSelector";
+import { TargetSelector, type TargetItem } from "@/components/TargetSelector";
 import { UserMenu } from "@/components/UserMenu";
 import { GlassDropdown } from "@/components/GlassDropdown";
 import ReactMarkdown, { type Components } from "react-markdown";
@@ -663,8 +663,8 @@ export default function Home() {
   // Use server-assigned shortId, falling back to presence-derived one
   const myDisplayShortId = registryShortId ?? clients.find(c => c.clientId === myClientId)?.shortId ?? myClientId;
 
-  const [selectedFigmaClient, setSelectedFigmaClient] = useState<string | null>(null);
-  const [selectedCodeClient, setSelectedCodeClient] = useState<string | null>(null);
+  const [selectedDesignTarget, setSelectedDesignTarget] = useState<string | null>(null);
+  const [selectedCodeTarget, setSelectedCodeTarget] = useState<string | null>(null);
 
 
 
@@ -709,24 +709,182 @@ export default function Home() {
 
   // MCP Toggles - enabled/disabled state (lazy init from localStorage)
   const mcpDefaults = { figma: true, figmaConsole: false, github: false, code: true };
-  const [enabledMcps, setEnabledMcps] = useState<Record<string, boolean>>(() => {
-    if (typeof window !== 'undefined') {
-      const saved = localStorage.getItem('guardian-enabled-mcps');
-      if (saved) {
-        try {
-          return { ...mcpDefaults, ...JSON.parse(saved) };
-        } catch {
-          // ignore malformed data
-        }
+  const [enabledMcps, setEnabledMcps] = useState<Record<string, boolean>>(mcpDefaults);
+
+  // Hydrate from localStorage after mount (avoids SSR/client mismatch)
+  useEffect(() => {
+    const saved = localStorage.getItem('guardian-enabled-mcps');
+    if (saved) {
+      try {
+        setEnabledMcps(prev => ({ ...prev, ...JSON.parse(saved) }));
+      } catch {
+        // ignore malformed data
       }
     }
-    return mcpDefaults;
-  });
+  }, []);
 
   // Save enabled MCPs to localStorage when changed
   useEffect(() => {
     localStorage.setItem('guardian-enabled-mcps', JSON.stringify(enabledMcps));
   }, [enabledMcps]);
+
+  // ── Client-side MCP reachability check ──────────────────────────────
+  // URL-based MCPs: fetch via proxy (same-origin, no CORS).
+  // OAuth MCPs: check localStorage tokens (instant).
+  const [mcpReachable, setMcpReachable] = useState<Record<string, boolean>>({});
+  useEffect(() => {
+    let cancelled = false;
+
+    async function pingUrl(url: string): Promise<boolean> {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 3000);
+      try {
+        const res = await fetch(url, {
+          signal: controller.signal,
+          method: "GET",
+          headers: { Accept: "text/event-stream, application/json" },
+        });
+        clearTimeout(timer);
+        controller.abort();
+        return res.ok;
+      } catch {
+        clearTimeout(timer);
+        return false;
+      }
+    }
+
+    async function checkAll() {
+      const results: Record<string, boolean> = {};
+
+      // Code MCP — ping the proxy URL (same-origin)
+      if (codeProjectPath?.trim()) {
+        results.code = await pingUrl(codeProjectPath);
+      }
+
+      // Figma MCP — OAuth token check or ping local URL
+      if (figmaOAuth) {
+        results.figma = typeof window !== "undefined" && !!localStorage.getItem("figma_mcp_tokens");
+      } else if (figmaMcpUrl?.trim()) {
+        results.figma = await pingUrl(figmaMcpUrl);
+      }
+
+      // GitHub MCP — OAuth token check
+      results.github = typeof window !== "undefined" && !!localStorage.getItem("github_mcp_tokens");
+
+      // Figma Console — OAuth token check
+      results.figmaConsole = typeof window !== "undefined" && !!localStorage.getItem("southleft_access_token");
+
+      if (!cancelled) setMcpReachable(results);
+    }
+
+    checkAll();
+    const interval = setInterval(checkAll, 30_000);
+    return () => { cancelled = true; clearInterval(interval); };
+  }, [codeProjectPath, figmaMcpUrl, figmaOAuth]);
+
+  // ── Target items for Design and Code selectors ──────────────────────
+  const designTargets: TargetItem[] = useMemo(() => {
+    const items: TargetItem[] = [];
+
+    // Live Figma plugins from presence
+    const plugins = clients.filter(c => c.type === "figma-plugin");
+    if (plugins.length > 0) {
+      plugins.forEach(c => items.push({
+        id: `plugin:${c.clientId}`,
+        kind: "plugin",
+        label: `${c.shortId} ${c.label}`,
+        status: "active",
+        tooltip: "Active",
+        description: "Connected via real-time presence. Commands will be executed in this Figma instance.",
+        clientId: c.clientId,
+      }));
+    } else {
+      items.push({
+        id: "plugin:none",
+        kind: "plugin",
+        label: "Plugin",
+        status: "not-configured",
+        tooltip: "Not configured",
+        description: "No Figma plugin detected. Open the Guardian plugin in Figma Desktop or Web to connect.",
+      });
+    }
+
+    // Figma MCP (REST API)
+    if (enabledMcps.figma !== false) {
+      const configured = !!figmaMcpUrl || figmaOAuth || !!figmaAccessToken;
+      const reachable = mcpReachable.figma ?? false;
+      const status = !configured ? "not-configured" as const : reachable ? "active" as const : "offline" as const;
+      items.push({
+        id: "mcp:figma",
+        kind: "mcp",
+        label: "Figma MCP",
+        status,
+        tooltip: status === "active" ? "Active" : status === "offline" ? "Offline" : "Not configured",
+        description: !configured
+          ? "Set a Figma MCP URL or sign in with Figma OAuth in settings."
+          : reachable
+            ? "Figma REST API connected. Can read and analyze design files."
+            : "Figma MCP configured but not reachable. Check if the server is running or re-authenticate.",
+      });
+    }
+
+    // Figma Console MCP (Southleft)
+    if (enabledMcps.figmaConsole) {
+      const reachable = mcpReachable.figmaConsole ?? false;
+      items.push({
+        id: "mcp:figmaConsole",
+        kind: "mcp",
+        label: "Figma Console",
+        status: reachable ? "active" : "not-configured",
+        tooltip: reachable ? "Active" : "Not configured",
+        description: reachable
+          ? "Figma Console connected via OAuth. Provides advanced design introspection."
+          : "Sign in with Figma Console in settings to enable.",
+      });
+    }
+
+    return items;
+  }, [clients, enabledMcps, figmaOAuth, figmaAccessToken, figmaMcpUrl, mcpReachable]);
+
+  const codeTargets: TargetItem[] = useMemo(() => {
+    const items: TargetItem[] = [];
+
+    // Code Editor MCP (local SSE)
+    if (enabledMcps.code !== false) {
+      const configured = !!(codeProjectPath?.trim());
+      const reachable = mcpReachable.code ?? false;
+      const status = !configured ? "not-configured" as const : reachable ? "active" as const : "offline" as const;
+      items.push({
+        id: "mcp:code",
+        kind: "mcp",
+        label: "Code Editor",
+        status,
+        tooltip: status === "active" ? "Active" : status === "offline" ? "Offline" : "Not configured",
+        description: !configured
+          ? "Set a Code MCP URL in settings to connect your local editor."
+          : reachable
+            ? "Code MCP connected. Can read and write project files."
+            : "Code MCP configured but not reachable. Check if the server is running.",
+      });
+    }
+
+    // GitHub MCP
+    if (enabledMcps.github) {
+      const reachable = mcpReachable.github ?? false;
+      items.push({
+        id: "mcp:github",
+        kind: "mcp",
+        label: "GitHub MCP",
+        status: reachable ? "active" : "not-configured",
+        tooltip: reachable ? "Active" : "Not configured",
+        description: reachable
+          ? "GitHub API connected via OAuth. Can access repositories and issues."
+          : "Sign in with GitHub in settings to enable.",
+      });
+    }
+
+    return items;
+  }, [codeProjectPath, githubOAuth, enabledMcps, mcpReachable]);
 
   const handleModelDropdownClose = useCallback(() => {
     setModelDropdownOpen(false);
@@ -782,8 +940,10 @@ export default function Home() {
   figmaPluginContextRef.current = figmaPluginContext;
   const clientsRef = useRef(clients);
   clientsRef.current = clients;
-  const selectedFigmaClientRef = useRef(selectedFigmaClient);
-  selectedFigmaClientRef.current = selectedFigmaClient;
+  const selectedDesignTargetRef = useRef(selectedDesignTarget);
+  selectedDesignTargetRef.current = selectedDesignTarget;
+  const designTargetsRef = useRef(designTargets);
+  designTargetsRef.current = designTargets;
   const isFigmaPluginRef = useRef(isFigmaPlugin);
   isFigmaPluginRef.current = isFigmaPlugin;
   const myClientIdRef = useRef(myClientId);
@@ -1094,10 +1254,13 @@ export default function Home() {
           return headers;
         },
         body: () => {
-          // If standalone webapp with a selected plugin, derive figmaPluginContext from presence
+          // Derive figmaPluginContext and targetClientId from the selected design target
           let pluginContext = figmaPluginContextRef.current;
-          if (!pluginContext && selectedFigmaClientRef.current) {
-            const sel = clientsRef.current.find(c => c.clientId === selectedFigmaClientRef.current && c.type === "figma-plugin");
+          const selectedDesign = designTargetsRef.current.find(t => t.id === selectedDesignTargetRef.current);
+          // If a plugin is selected (not a server-side MCP), extract its context from presence
+          const targetPluginClientId = selectedDesign?.kind === "plugin" ? selectedDesign.clientId : undefined;
+          if (!pluginContext && targetPluginClientId) {
+            const sel = clientsRef.current.find(c => c.clientId === targetPluginClientId && c.type === "figma-plugin");
             if (sel?.figmaContext) {
               pluginContext = {
                 fileKey: sel.fileKey ?? "",
@@ -1109,10 +1272,9 @@ export default function Home() {
               };
             }
           }
-          // Plugin targets itself; standalone webapp targets the selected plugin
-          const targetClientId = isFigmaPluginRef.current
-            ? myClientIdRef.current
-            : selectedFigmaClientRef.current;
+          // Use the explicitly selected plugin target; fall back to self when inside a plugin
+          const targetClientId = targetPluginClientId
+            ?? (isFigmaPluginRef.current ? myClientIdRef.current : undefined);
           return { figmaMcpUrl: figmaMcpUrlRef.current || (figmaOAuthRef.current ? "https://mcp.figma.com/mcp" : ""), figmaAccessToken: figmaAccessTokenRef.current, codeProjectPath: codeProjectPathRef.current, figmaOAuth: figmaOAuthRef.current, model: selectedModelRef.current, selectedNode: selectedNodeRef.current, tunnelSecret: tunnelSecretRef.current, enabledMcps: enabledMcpsRef.current, figmaPluginContext: pluginContext, targetClientId };
         },
       }),
@@ -1918,23 +2080,23 @@ export default function Home() {
             />
             {/* Bottom bar inside the form */}
             <div className="absolute bottom-0 left-0 right-0 flex items-center justify-between gap-2 px-3 py-2">
-              {/* Left: client selectors */}
+              {/* Left: target selectors */}
               <div className="flex items-center gap-2">
-                <ClientSelector
-                  clients={clients}
-                  filterType="figma-plugin"
-                  label="No plugin"
-                  tooltip="Edits on — select which Figma plugin receives commands"
-                  selected={selectedFigmaClient}
-                  onSelect={setSelectedFigmaClient}
+                <TargetSelector
+                  items={designTargets}
+                  label="Design"
+                  tooltip="Select which design tool receives commands"
+                  emptyDescription="All design integrations are disabled. Enable Figma MCP, Plugin, or Console in settings."
+                  selected={selectedDesignTarget}
+                  onSelect={setSelectedDesignTarget}
                 />
-                <ClientSelector
-                  clients={clients}
-                  filterType="webapp"
-                  label="No code"
-                  tooltip="Code on — select which code MCP client to use"
-                  selected={selectedCodeClient}
-                  onSelect={setSelectedCodeClient}
+                <TargetSelector
+                  items={codeTargets}
+                  label="Code"
+                  tooltip="Select which code tool to use"
+                  emptyDescription="All code integrations are disabled. Enable Code Editor or GitHub MCP in settings."
+                  selected={selectedCodeTarget}
+                  onSelect={setSelectedCodeTarget}
                 />
               </div>
               {/* Right: model picker + send */}
