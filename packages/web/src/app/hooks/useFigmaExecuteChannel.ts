@@ -65,6 +65,23 @@ export function useFigmaExecuteChannel(
     []
   );
 
+  // Helper: re-track presence on the current channel
+  const retrackPresence = useCallback(async () => {
+    const ch = channelRef.current;
+    const info = clientInfoRef.current;
+    if (!ch || !info) return;
+    await ch.track({
+      clientId: clientId.current,
+      type: info.type,
+      label: info.label,
+      fileKey: info.fileKey,
+      mcpInfo: info.mcpInfo,
+      figmaContext: info.figmaContext,
+      serverShortId: info.serverShortId ?? undefined,
+      connectedAt: Date.now(),
+    });
+  }, []);
+
   // Subscribe to the user-scoped channel
   useEffect(() => {
     if (!enabled || !userId) return;
@@ -118,17 +135,8 @@ export function useFigmaExecuteChannel(
         );
       })
       .subscribe(async (status) => {
-        if (status === "SUBSCRIBED" && clientInfoRef.current) {
-          await channel.track({
-            clientId: clientId.current,
-            type: clientInfoRef.current.type,
-            label: clientInfoRef.current.label,
-            fileKey: clientInfoRef.current.fileKey,
-            mcpInfo: clientInfoRef.current.mcpInfo,
-            figmaContext: clientInfoRef.current.figmaContext,
-            serverShortId: clientInfoRef.current.serverShortId ?? undefined,
-            connectedAt: Date.now(),
-          });
+        if (status === "SUBSCRIBED") {
+          await retrackPresence();
         }
       });
 
@@ -138,7 +146,34 @@ export function useFigmaExecuteChannel(
       channelRef.current = null;
       channel.unsubscribe();
     };
-  }, [enabled, userId, handlePresenceSync]);
+  }, [enabled, userId, handlePresenceSync, retrackPresence]);
+
+  // Re-sync presence when the tab becomes visible after being hidden (e.g. overnight idle).
+  // The Supabase Realtime WebSocket may have silently disconnected; even if it auto-reconnects,
+  // the local presence state can be stale. Force a re-track + state read on visibility change.
+  useEffect(() => {
+    if (!enabled) return;
+
+    const handleVisibility = async () => {
+      if (document.visibilityState !== "visible") return;
+      const ch = channelRef.current;
+      if (!ch) return;
+
+      // Re-track our own presence so other clients see us
+      await retrackPresence();
+
+      // Read the latest presence state (other clients may have joined/left while hidden)
+      handlePresenceSync(
+        ch.presenceState() as Record<
+          string,
+          { presence_ref: string; [key: string]: unknown }[]
+        >
+      );
+    };
+
+    document.addEventListener("visibilitychange", handleVisibility);
+    return () => document.removeEventListener("visibilitychange", handleVisibility);
+  }, [enabled, handlePresenceSync, retrackPresence]);
 
   // Re-track presence when serverShortId becomes available
   const serverShortId = clientInfo?.serverShortId;
