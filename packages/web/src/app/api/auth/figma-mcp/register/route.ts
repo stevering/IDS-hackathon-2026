@@ -31,7 +31,7 @@ export async function POST(req: NextRequest) {
 
     // Attempt Dynamic Client Registration
     const clientMetadata = {
-      client_name: "DS AI Guardian",
+      client_name: "Guardian",
       redirect_uris: [await getRedirectUrl()],
       grant_types: ["authorization_code", "refresh_token"],
       response_types: ["code"],

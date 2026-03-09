@@ -1,13 +1,17 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { ClientType } from "@/types/presence";
 
 const HEARTBEAT_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
 
-type RegistryState = {
+type InternalState = {
   shortId: string | null;
   registered: boolean;
+};
+
+type RegistryState = InternalState & {
+  rename: (newShortId: string) => Promise<boolean>;
 };
 
 /**
@@ -21,11 +25,13 @@ export function useClientRegistry(
   fileKey?: string,
   enabled = true
 ): RegistryState {
-  const [state, setState] = useState<RegistryState>({ shortId: null, registered: false });
+  const [state, setState] = useState<InternalState>({ shortId: null, registered: false });
   const fileKeyRef = useRef(fileKey);
   fileKeyRef.current = fileKey;
   const labelRef = useRef(label);
   labelRef.current = label;
+  const clientIdRef = useRef(clientId);
+  clientIdRef.current = clientId;
 
   useEffect(() => {
     if (!enabled || !clientId) return;
@@ -80,5 +86,24 @@ export function useClientRegistry(
     };
   }, [enabled, clientId, clientType, label, fileKey]);
 
-  return state;
+  const rename = useCallback(async (newShortId: string): Promise<boolean> => {
+    const trimmed = newShortId.trim();
+    if (trimmed.length < 2 || trimmed.length > 30) return false;
+
+    try {
+      const res = await fetch("/api/clients/rename", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ clientId: clientIdRef.current, shortId: trimmed }),
+      });
+      if (!res.ok) return false;
+      const data = await res.json();
+      setState((s) => ({ ...s, shortId: data.shortId }));
+      return true;
+    } catch {
+      return false;
+    }
+  }, []);
+
+  return { ...state, rename };
 }

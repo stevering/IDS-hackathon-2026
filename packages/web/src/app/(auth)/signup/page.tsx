@@ -41,7 +41,7 @@ export default function SignupPage() {
       <div className="w-full max-w-sm">
         <div className="mb-8 text-center">
           <div className="text-3xl mb-2">🛡</div>
-          <h1 className="text-xl font-semibold">DS AI Guardian</h1>
+          <h1 className="text-xl font-semibold">Guardian</h1>
           <p className="text-sm text-white/50 mt-1">Create your account</p>
         </div>
 

@@ -22,8 +22,8 @@ export const viewport: Viewport = {
 };
 
 export const metadata: Metadata = {
-  title: "DS AI Guardian",
-  description: "Design System drift detector — Figma ↔ Code comparison agent2",
+  title: "Guardian",
+  description: "[Design ↔ Code] Design System Guardian",
 };
 
 export default function RootLayout({

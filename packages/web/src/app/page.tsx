@@ -10,6 +10,7 @@ import { useFigmaExecuteChannel } from "./hooks/useFigmaExecuteChannel";
 import { useClientRegistry } from "./hooks/useClientRegistry";
 import { TargetSelector, type TargetItem } from "@/components/TargetSelector";
 import { UserMenu } from "@/components/UserMenu";
+import { EditableClientId } from "@/components/EditableClientId";
 import { GlassDropdown } from "@/components/GlassDropdown";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -622,10 +623,29 @@ export default function Home() {
   // ── Figma plugin bridge ─────────────────────────────────────────────
   const { isFigmaPlugin, figmaContext, sendToPlugin, executeCode } = useFigmaPlugin();
   const clientTypeForChannel: "figma-plugin" | "webapp" = isFigmaPlugin ? "figma-plugin" : "webapp";
-  const clientLabel = isFigmaPlugin
-    ? figmaContext?.currentPage?.name ?? "Figma Plugin"
-    : typeof navigator !== "undefined" ? navigator.userAgent.split(" ").pop()?.split("/")[0] ?? "Browser" : "Browser";
+  const clientLabel = (() => {
+    if (typeof navigator === "undefined") return "Browser";
+    const ua = navigator.userAgent;
+    if (isFigmaPlugin) {
+      // Figma Desktop uses an Electron-like shell (no Chrome/Firefox in UA)
+      const isFigmaDesktop = /Figma/i.test(ua) || (!/Chrome|Firefox|Edg/i.test(ua) && /Safari/i.test(ua));
+      return isFigmaDesktop ? "Figma-Desktop" : "Figma-Web";
+    }
+    return ua.split(" ").pop()?.split("/")[0] ?? "Browser";
+  })();
   const clientFileKey = figmaContext?.fileKey ?? undefined;
+
+  // When inside an iframe, wait for the Figma handshake before registering.
+  // This avoids registering as "webapp/Safari" before isFigmaPlugin turns true.
+  const isInIframe = typeof window !== "undefined" && window.parent !== window;
+  const [iframeSettled, setIframeSettled] = useState(!isInIframe);
+  useEffect(() => {
+    if (!isInIframe) return;
+    if (isFigmaPlugin) { setIframeSettled(true); return; }
+    // Give the plugin handshake 500ms to complete, then settle as webapp
+    const timer = setTimeout(() => setIframeSettled(true), 500);
+    return () => clearTimeout(timer);
+  }, [isInIframe, isFigmaPlugin]);
 
   // Get clientId from channel hook first, then register with server
   const [registryShortId, setRegistryShortId] = useState<string | null>(null);
@@ -645,12 +665,13 @@ export default function Home() {
   });
 
   // Register client with the server-side registry (needs clientId from channel hook)
-  const { shortId: serverShortId } = useClientRegistry(
+  // Wait for iframe detection to settle so we send the correct type/label
+  const { shortId: serverShortId, rename: renameClient } = useClientRegistry(
     myClientId,
     clientTypeForChannel,
     clientLabel,
     clientFileKey,
-    !!myClientId,
+    !!myClientId && iframeSettled,
   );
 
   // Sync server shortId to presence via state (avoids circular hook deps)
@@ -792,7 +813,8 @@ export default function Home() {
       plugins.forEach(c => items.push({
         id: `plugin:${c.clientId}`,
         kind: "plugin",
-        label: `${c.shortId} ${c.label}`,
+        label: c.shortId,
+        subtitle: c.figmaContext?.currentPage?.name ?? undefined,
         status: "active",
         tooltip: "Active",
         description: "Connected via real-time presence. Commands will be executed in this Figma instance.",
@@ -1686,9 +1708,9 @@ export default function Home() {
               </svg>
             </button>
             <div className="min-w-0">
-              <h1 className="text-sm font-semibold truncate">DS AI Guardian</h1>
+              <h1 className="text-sm font-semibold truncate">Guardian</h1>
               <p className="text-xs text-white/65 hidden sm:block">
-                [Figma ↔ Code] Design System drift detector
+                [Design ↔ Code] Design System Guardian
               </p>
             </div>
           </div>
@@ -1716,7 +1738,14 @@ export default function Home() {
                 </svg>
               </button>
             )}
-            <span className="text-xs font-mono text-white/50" suppressHydrationWarning>{myDisplayShortId}</span>
+            <EditableClientId
+              shortId={myDisplayShortId}
+              onRenamed={async (newShortId) => {
+                const ok = await renameClient(newShortId);
+                if (ok) setRegistryShortId(newShortId);
+                return ok;
+              }}
+            />
             <div className="w-px h-4 bg-white/10 mx-1 hidden sm:block" />
             <UserMenu />
           </div>
@@ -1727,7 +1756,7 @@ export default function Home() {
             <div className="flex flex-col items-center justify-center h-full text-center px-4">
               <div className="text-4xl mb-4">🛡️</div>
               <h2 className="text-lg font-semibold mb-2">
-                Welcome to DS AI Guardian
+                Welcome to Guardian
               </h2>
               <p className="text-sm text-white/70 max-w-md mb-6">
                 I can compare your Figma design system components with their

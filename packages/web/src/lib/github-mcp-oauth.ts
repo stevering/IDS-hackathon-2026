@@ -37,7 +37,7 @@ export async function createGithubMcpOAuthProvider(
 
     get clientMetadata() {
       return {
-        client_name: "DS AI Guardian",
+        client_name: "Guardian",
         redirect_uris: [redirectUrl],
         grant_types: ["authorization_code", "refresh_token"],
         response_types: ["code"],

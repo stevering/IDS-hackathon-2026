@@ -9,6 +9,7 @@ export type TargetItem = {
   id: string;
   kind: "plugin" | "mcp";
   label: string;
+  subtitle?: string;
   status: DotStatus;
   tooltip: string;
   description: string;
@@ -103,8 +104,11 @@ export function TargetSelector({ items, label, tooltip, emptyDescription, select
               key={item.id}
               className="w-full flex items-center gap-2 px-3 py-2 text-xs text-white/30 cursor-default"
             >
-              <StatusDot status={item.status} />
-              <span className="flex-1 text-left truncate">{item.label}</span>
+              <StatusDot status={item.status} className={item.subtitle ? "mt-0.5" : ""} />
+              <div className="flex-1 text-left min-w-0">
+                <span className="truncate block">{item.label}</span>
+                {item.subtitle && <span className="truncate block text-[10px] text-white/25">{item.subtitle}</span>}
+              </div>
               <InfoIcon title={item.description} />
             </div>
           ))}
@@ -117,8 +121,11 @@ export function TargetSelector({ items, label, tooltip, emptyDescription, select
   if (activeItems.length === 1 && items.length === 1) {
     return (
       <div className="flex items-center gap-1.5 text-xs text-white/70" title={tooltip}>
-        <StatusDot status="active" />
-        <span className="hidden sm:inline">{activeItems[0].label}</span>
+        <StatusDot status="active" className={activeItems[0].subtitle ? "mt-0.5" : ""} />
+        <div className="hidden sm:block min-w-0">
+          <span className="truncate block">{activeItems[0].label}</span>
+          {activeItems[0].subtitle && <span className="truncate block text-[10px] text-white/40">{activeItems[0].subtitle}</span>}
+        </div>
       </div>
     );
   }
@@ -133,9 +140,10 @@ export function TargetSelector({ items, label, tooltip, emptyDescription, select
         className="flex items-center gap-1.5 text-xs text-white/70 hover:text-white/90 transition-colors cursor-pointer"
       >
         <StatusDot status={selectedItem?.status ?? "not-configured"} />
-        <span className="hidden sm:inline">
-          {selectedItem ? selectedItem.label : label}
-        </span>
+        <div className="hidden sm:block min-w-0 text-left">
+          <span className="truncate block">{selectedItem ? selectedItem.label : label}</span>
+          {selectedItem?.subtitle && <span className="truncate block text-[10px] text-white/40">{selectedItem.subtitle}</span>}
+        </div>
         <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
           <path d="M6 9l6 6 6-6" />
         </svg>
@@ -160,8 +168,11 @@ export function TargetSelector({ items, label, tooltip, emptyDescription, select
                   : "text-white/25 cursor-default"
               }`}
             >
-              <StatusDot status={item.status} />
-              <span className="flex-1 text-left truncate">{item.label}</span>
+              <StatusDot status={item.status} className={item.subtitle ? "mt-0.5" : ""} />
+              <div className="flex-1 text-left min-w-0">
+                <span className="truncate block">{item.label}</span>
+                {item.subtitle && <span className="truncate block text-[10px] text-white/30">{item.subtitle}</span>}
+              </div>
               <InfoIcon title={item.description} />
               {selected === item.id && (
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className="text-emerald-400 shrink-0">
