@@ -1,3 +1,5 @@
+import type { AgentRole } from "./orchestration"
+
 export type ClientType = "figma-plugin" | "webapp" | "overlay"
 
 export type PresenceClient = {
@@ -8,6 +10,8 @@ export type PresenceClient = {
   fileKey?: string
   connectedAt: number
   presenceRef: string
+  agentRole?: AgentRole
+  orchestrationId?: string
   mcpInfo?: {
     figma?: { connected: boolean; mode: string }
     code?: { connected: boolean; path: string }
@@ -42,6 +46,8 @@ export function parsePresenceState(
         fileKey: p.fileKey as string | undefined,
         connectedAt: (p.connectedAt as number) ?? Date.now(),
         presenceRef: p.presence_ref,
+        agentRole: (p.agentRole as AgentRole) ?? "idle",
+        orchestrationId: p.orchestrationId as string | undefined,
         mcpInfo: p.mcpInfo as PresenceClient["mcpInfo"],
         figmaContext: p.figmaContext as PresenceClient["figmaContext"],
       })

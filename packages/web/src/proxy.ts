@@ -24,6 +24,9 @@ const PUBLIC_AUTH_ROUTES = [
   "/api/gateway-models",   // Public Vercel AI Gateway model catalog (no auth needed)
   "/api/figma-execute",    // MCP Guardian HTTP bridge for code execution
   "/api/clients",          // Client registry — protected by Supabase auth
+  "/api/conversations",    // Conversation persistence — protected by Supabase auth
+  "/api/orchestrations",   // Collaborative Agents orchestrations — protected by Supabase auth
+  "/api/user/settings",    // User collaboration settings — protected by Supabase auth
 ];
 
 function getMcpCodeUrl(request: NextRequest): string | undefined {

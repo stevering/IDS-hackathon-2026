@@ -15,6 +15,16 @@ import { GlassDropdown } from "@/components/GlassDropdown";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import remarkBreaks from "remark-breaks";
+import { useConversations } from "./hooks/useConversations";
+import { useMessagePersistence } from "./hooks/useMessagePersistence";
+import { useOrchestration, type OrchestrationCallbacks, type CollaboratorInfo } from "./hooks/useOrchestration";
+import type { AgentRole, Orchestration } from "@/types/orchestration";
+import { ConversationSwitcher } from "@/components/ConversationSwitcher";
+import { OrchestrationStatusBar } from "@/components/OrchestrationStatusBar";
+import { OrchestrationInviteModal } from "@/components/OrchestrationInviteModal";
+import { AgentMessageBubble } from "@/components/AgentMessageBubble";
+import { MentionAutocomplete, type MentionSuggestion, parseMentions } from "@/components/MentionAutocomplete";
+import { AutoAcceptToggle } from "@/components/AutoAcceptToggle";
 
 type TextSegment = { type: "text"; content: string };
 type ImageSegment = { type: "image"; src: string; complete: boolean };
@@ -27,7 +37,8 @@ type QCMSegment = { kind: "qcm"; choices: string[] };
 type MCPErrorSegment = { kind: "mcp-error"; errorText: string };
 type MCPStatusSegment = { kind: "mcp-status"; status: "connecting" | "connected" | "error" };
 type AnalyzeBtnSegment = { kind: "analyze-btn" };
-type StructuredSegment = ThinkingSegment | ContentSegment | DetailsSegment | QCMSegment | MCPErrorSegment | MCPStatusSegment | AnalyzeBtnSegment;
+type OrchestrateBtnSegment = { kind: "orchestrate-btn"; agents: string[] };
+type StructuredSegment = ThinkingSegment | ContentSegment | DetailsSegment | QCMSegment | MCPErrorSegment | MCPStatusSegment | AnalyzeBtnSegment | OrchestrateBtnSegment;
 
 const markdownComponents: Components = {
   a: ({ href, children, ...props }) => (
@@ -179,6 +190,15 @@ function parseStructuredContent(text: string, isStreamingMsg: boolean = false): 
     analyzeBtnBlocks.push({ index: match.index, length: match[0].length });
   }
 
+  const orchestrateBtnBlocks: { index: number; length: number; agents: string[] }[] = [];
+  const orchestrateRegex = /\[ORCHESTRATE:([\w#,\-\s]+)\]/g;
+  while ((match = orchestrateRegex.exec(cleanedText)) !== null) {
+    const agents = match[1].split(",").map(a => a.trim()).filter(Boolean);
+    if (agents.length > 0) {
+      orchestrateBtnBlocks.push({ index: match.index, length: match[0].length, agents });
+    }
+  }
+
   const mcpErrorRegex = /\[MCP_ERROR_BLOCK\]([\s\S]*?)\[\/MCP_ERROR_BLOCK\]/g;
   while ((match = mcpErrorRegex.exec(cleanedText)) !== null) {
     mcpErrorBlocks.push({ index: match.index, length: match[0].length, errorText: match[1].trim() });
@@ -221,6 +241,7 @@ function parseStructuredContent(text: string, isStreamingMsg: boolean = false): 
     ...mcpErrorBlocks.map(b => ({ ...b, kind: "mcp-error" as const, streaming: false })),
     ...mcpStatusBlocks.map(b => ({ ...b, kind: "mcp-status" as const, streaming: false })),
     ...analyzeBtnBlocks.map(b => ({ ...b, kind: "analyze-btn" as const, streaming: false })),
+    ...orchestrateBtnBlocks.map(b => ({ ...b, kind: "orchestrate-btn" as const, streaming: false })),
   ].sort((a, b) => a.index - b.index);
 
   if (allBlocks.length === 0) {
@@ -244,6 +265,8 @@ function parseStructuredContent(text: string, isStreamingMsg: boolean = false): 
       segments.push({ kind: "mcp-status", status: (block as typeof mcpStatusBlocks[number] & { kind: "mcp-status" }).status });
     } else if (block.kind === "analyze-btn") {
       segments.push({ kind: "analyze-btn" });
+    } else if (block.kind === "orchestrate-btn") {
+      segments.push({ kind: "orchestrate-btn", agents: (block as typeof orchestrateBtnBlocks[number] & { kind: "orchestrate-btn" }).agents });
     } else {
       segments.push({ kind: block.kind, text: (block as { text: string }).text });
     }
@@ -619,6 +642,112 @@ function parseTextWithImages(text: string, isStreaming: boolean): Segment[] {
   return segments;
 }
 
+/** Clipboard helper — falls back to execCommand for iframes without clipboard API */
+function copyToClipboard(text: string): Promise<void> {
+  if (navigator.clipboard?.writeText) {
+    return navigator.clipboard.writeText(text).catch(() => execCommandCopy(text));
+  }
+  return execCommandCopy(text);
+}
+
+function execCommandCopy(text: string): Promise<void> {
+  return new Promise((resolve) => {
+    const ta = document.createElement("textarea");
+    ta.value = text;
+    ta.style.position = "fixed";
+    ta.style.opacity = "0";
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand("copy");
+    document.body.removeChild(ta);
+    resolve();
+  });
+}
+
+// ---------------------------------------------------------------------------
+// CopyDebugButton — copies full debug context to clipboard
+// ---------------------------------------------------------------------------
+function CopyDebugButton({
+  messages,
+  clients,
+  myClientId,
+  myShortId,
+  agentRole,
+  orchestration,
+  collaborators,
+  activeConversationId,
+  conversations,
+}: {
+  messages: { id: string; role: string; parts: { type: string; text?: string }[] }[];
+  clients: { clientId: string; shortId: string; label: string; type: string; fileKey?: string; agentRole?: AgentRole; figmaContext?: { fileName?: string } }[];
+  myClientId: string;
+  myShortId: string;
+  agentRole: AgentRole;
+  orchestration: Orchestration | null;
+  collaborators: CollaboratorInfo[];
+  activeConversationId: string | null;
+  conversations: { id: string; title: string; orchestration_id: string | null }[];
+}) {
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = () => {
+    const debugData = {
+      timestamp: new Date().toISOString(),
+      thisClient: { clientId: myClientId, shortId: myShortId, agentRole },
+      orchestration: orchestration
+        ? { id: orchestration.id, status: orchestration.status, orchestratorClientId: orchestration.orchestratorClientId, conversationId: orchestration.conversationId }
+        : null,
+      collaborators: collaborators.map(c => ({ clientId: c.clientId, shortId: c.shortId, label: c.label, status: c.status, task: c.task, conversationId: c.conversationId })),
+      connectedClients: clients.map(c => ({ clientId: c.clientId, shortId: c.shortId, label: c.label, type: c.type, agentRole: c.agentRole, fileName: c.figmaContext?.fileName })),
+      activeConversationId,
+      conversations: conversations.map(c => ({ id: c.id, title: c.title, orchestrationId: c.orchestration_id })),
+      messages: messages.map(m => ({
+        id: m.id,
+        role: m.role,
+        text: m.parts
+          .filter((p): p is { type: string; text: string } => p.type === "text" && !!p.text)
+          .map(p => p.text)
+          .join("\n")
+          .slice(0, 2000) + (m.parts.some(p => p.type === "text" && (p.text?.length ?? 0) > 2000) ? "..." : ""),
+        toolCalls: m.parts.filter(p => p.type?.startsWith?.("tool-") || p.type === "dynamic-tool").length || undefined,
+      })),
+    };
+
+    const text = "```json\n" + JSON.stringify(debugData, null, 2) + "\n```";
+    copyToClipboard(text).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    });
+  };
+
+  return (
+    <div className="flex mt-1">
+      <button
+        onClick={handleCopy}
+        className="flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] text-white/15 hover:text-white/50 hover:bg-white/5 transition-colors cursor-pointer"
+        title="Copy debug context to clipboard"
+      >
+        {copied ? (
+          <>
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M20 6L9 17l-5-5" />
+            </svg>
+            Copied
+          </>
+        ) : (
+          <>
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <rect x="9" y="9" width="13" height="13" rx="2" />
+              <path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1" />
+            </svg>
+            Debug
+          </>
+        )}
+      </button>
+    </div>
+  );
+}
+
 export default function Home() {
   // ── Figma plugin bridge ─────────────────────────────────────────────
   const { isFigmaPlugin, figmaContext, sendToPlugin, executeCode } = useFigmaPlugin();
@@ -650,7 +779,12 @@ export default function Home() {
   // Get clientId from channel hook first, then register with server
   const [registryShortId, setRegistryShortId] = useState<string | null>(null);
 
-  const { clients, clientId: myClientId } = useFigmaExecuteChannel(executeCode, true, {
+  // Forward ref for orchestration callbacks — created early so it can be
+  // passed to useFigmaExecuteChannel, then synced with the ref from
+  // useOrchestration via a useEffect below.
+  const orchestrationCallbacksFwdRef = useRef<OrchestrationCallbacks>({});
+
+  const { clients, clientId: myClientId, channelRef } = useFigmaExecuteChannel(executeCode, true, {
     type: clientTypeForChannel,
     label: clientLabel,
     fileKey: clientFileKey,
@@ -662,7 +796,7 @@ export default function Home() {
       currentUser: figmaContext.currentUser,
     } : undefined,
     serverShortId: registryShortId,
-  });
+  }, orchestrationCallbacksFwdRef);
 
   // Register client with the server-side registry (needs clientId from channel hook)
   // Wait for iframe detection to settle so we send the correct type/label
@@ -683,6 +817,50 @@ export default function Home() {
 
   // Use server-assigned shortId, falling back to presence-derived one
   const myDisplayShortId = registryShortId ?? clients.find(c => c.clientId === myClientId)?.shortId ?? myClientId;
+
+  // ── Conversation persistence ────────────────────────────────────────
+  const {
+    conversations,
+    activeConversation,
+    activeConversationId,
+    parallelConversations,
+    createConversation,
+    switchConversation,
+    deleteConversation,
+    updateTitle,
+    loadConversations,
+    ensureConversation,
+  } = useConversations(myClientId, !!myClientId);
+
+  // ── Collaborative Agents orchestration ──────────────────────────────
+  const {
+    role: agentRole,
+    orchestration,
+    collaborators,
+    pendingInvites,
+    settings: collabSettings,
+    becomeOrchestrator,
+    inviteCollaborator,
+    sendAgentRequest,
+    completeOrchestration,
+    acceptInvite,
+    declineInvite,
+    sendAgentResponse,
+    sendAgentMessage,
+    updateSettings: updateCollabSettings,
+    releaseRole,
+    orchestrationCallbacksRef,
+    onAgentRequest,
+    onAgentResponse,
+    onAgentMessage,
+    onCollaboratorReady,
+  } = useOrchestration(myClientId, myDisplayShortId, channelRef, !!myClientId);
+
+  // Sync orchestration callbacks from useOrchestration into the forward
+  // ref consumed by useFigmaExecuteChannel (avoids circular hook deps).
+  useEffect(() => {
+    Object.assign(orchestrationCallbacksFwdRef.current, orchestrationCallbacksRef.current);
+  });
 
   const [selectedDesignTarget, setSelectedDesignTarget] = useState<string | null>(null);
   const [selectedCodeTarget, setSelectedCodeTarget] = useState<string | null>(null);
@@ -744,10 +922,15 @@ export default function Home() {
     }
   }, []);
 
-  // Save enabled MCPs to localStorage when changed
-  useEffect(() => {
-    localStorage.setItem('guardian-enabled-mcps', JSON.stringify(enabledMcps));
-  }, [enabledMcps]);
+  // Toggle a single MCP and persist immediately (avoids race condition
+  // where a save effect on mount would overwrite saved values with defaults)
+  const toggleMcp = (key: string) => {
+    setEnabledMcps(prev => {
+      const next = { ...prev, [key]: !prev[key] };
+      localStorage.setItem('guardian-enabled-mcps', JSON.stringify(next));
+      return next;
+    });
+  };
 
   // ── Client-side MCP reachability check ──────────────────────────────
   // URL-based MCPs: fetch via proxy (same-origin, no CORS).
@@ -778,22 +961,28 @@ export default function Home() {
       const results: Record<string, boolean> = {};
 
       // Code MCP — ping the proxy URL (same-origin)
-      if (codeProjectPath?.trim()) {
+      if (enabledMcps.code !== false && codeProjectPath?.trim()) {
         results.code = await pingUrl(codeProjectPath);
       }
 
       // Figma MCP — OAuth token check or ping local URL
-      if (figmaOAuth) {
-        results.figma = typeof window !== "undefined" && !!localStorage.getItem("figma_mcp_tokens");
-      } else if (figmaMcpUrl?.trim()) {
-        results.figma = await pingUrl(figmaMcpUrl);
+      if (enabledMcps.figma !== false) {
+        if (figmaOAuth) {
+          results.figma = typeof window !== "undefined" && !!localStorage.getItem("figma_mcp_tokens");
+        } else if (figmaMcpUrl?.trim()) {
+          results.figma = await pingUrl(figmaMcpUrl);
+        }
       }
 
       // GitHub MCP — OAuth token check
-      results.github = typeof window !== "undefined" && !!localStorage.getItem("github_mcp_tokens");
+      if (enabledMcps.github) {
+        results.github = typeof window !== "undefined" && !!localStorage.getItem("github_mcp_tokens");
+      }
 
       // Figma Console — OAuth token check
-      results.figmaConsole = typeof window !== "undefined" && !!localStorage.getItem("southleft_access_token");
+      if (enabledMcps.figmaConsole) {
+        results.figmaConsole = typeof window !== "undefined" && !!localStorage.getItem("southleft_access_token");
+      }
 
       if (!cancelled) setMcpReachable(results);
     }
@@ -801,7 +990,7 @@ export default function Home() {
     checkAll();
     const interval = setInterval(checkAll, 30_000);
     return () => { cancelled = true; clearInterval(interval); };
-  }, [codeProjectPath, figmaMcpUrl, figmaOAuth]);
+  }, [codeProjectPath, figmaMcpUrl, figmaOAuth, enabledMcps]);
 
   // ── Target items for Design and Code selectors ──────────────────────
   const designTargets: TargetItem[] = useMemo(() => {
@@ -913,18 +1102,34 @@ export default function Home() {
     setModelSearch("");
   }, []);
 
-  // Load user's BYOK keys + full model catalog on mount
+  // Load user's BYOK keys + full model catalog + default model on mount
   useEffect(() => {
     Promise.all([
       fetch("/api/user/api-keys").then((r) => r.ok ? r.json() : { keys: [] }),
       fetch("/api/gateway-models").then((r) => r.ok ? r.json() : { models: [] }).catch(() => ({ models: [] })),
-    ]).then(([keysData, gwData]) => {
-      const keys: { provider: string; is_default: boolean }[] = keysData.keys ?? [];
-      const models: GatewayModel[] = gwData.models ?? [];
+      fetch("/api/user/settings").then((r) => r.ok ? r.json() : { defaultModel: null }).catch(() => ({ defaultModel: null })),
+    ]).then(([keysData, gwData, settingsData]: [Record<string, unknown>, Record<string, unknown>, { defaultModel: string | null }]) => {
+      const keys: { provider: string; is_default: boolean }[] = (keysData.keys ?? []) as { provider: string; is_default: boolean }[];
+      const models: GatewayModel[] = (gwData.models ?? []) as GatewayModel[];
+      const userDefaultModel: string | null = settingsData.defaultModel ?? null;
       setByokKeys(keys);
       setGatewayModels(models);
 
-      // Auto-select first model matching the default key's provider
+      // Priority: user's saved default model > first model from default key's provider
+      if (userDefaultModel && models.length > 0) {
+        // Verify the saved model is still accessible with current keys
+        const hasGateway = keys.some((k) => k.provider === "gateway");
+        const directProviders = new Set(keys.filter((k) => k.provider !== "gateway").map((k) => k.provider));
+        const getModelValue = (m: GatewayModel) =>
+          hasGateway ? m.id : `${m.owned_by}/${m.id.split("/").pop()}`;
+        const isAccessible = keys.length === 0 || models.some((m) => getModelValue(m) === userDefaultModel);
+        if (isAccessible) {
+          setSelectedModel(userDefaultModel);
+          return;
+        }
+      }
+
+      // Fallback: auto-select first model matching the default key's provider
       const defaultKey = keys.find((k) => k.is_default);
       if (defaultKey && models.length > 0) {
         const firstMatch = defaultKey.provider === "gateway"
@@ -983,6 +1188,19 @@ export default function Home() {
   sendToPluginRef.current = sendToPlugin;
   const executeCodeRef = useRef(executeCode);
   executeCodeRef.current = executeCode;
+  const agentRoleRef = useRef(agentRole);
+  agentRoleRef.current = agentRole;
+  const orchestrationRef = useRef(orchestration);
+  orchestrationRef.current = orchestration;
+  const collaboratorsRef = useRef(collaborators);
+  collaboratorsRef.current = collaborators;
+  // Stores the original user request when orchestration starts, so we can dispatch
+  // it directly to collaborators instead of relying on AI-generated @mentions.
+  const orchestrationTaskRef = useRef<string | null>(null);
+  // Snapshot of useChat messages taken just before becomeOrchestrator — used to
+  // recover if messages are unexpectedly cleared during the async orchestration flow.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const preOrchMessagesRef = useRef<any[] | null>(null);
 
   // Notify the Figma plugin that the user is authenticated
   useEffect(() => {
@@ -1294,16 +1512,48 @@ export default function Home() {
               };
             }
           }
-          // Use the explicitly selected plugin target; fall back to self when inside a plugin
-          const targetClientId = targetPluginClientId
-            ?? (isFigmaPluginRef.current ? myClientIdRef.current : undefined);
-          return { figmaMcpUrl: figmaMcpUrlRef.current || (figmaOAuthRef.current ? "https://mcp.figma.com/mcp" : ""), figmaAccessToken: figmaAccessTokenRef.current, codeProjectPath: codeProjectPathRef.current, figmaOAuth: figmaOAuthRef.current, model: selectedModelRef.current, selectedNode: selectedNodeRef.current, tunnelSecret: tunnelSecretRef.current, enabledMcps: enabledMcpsRef.current, figmaPluginContext: pluginContext, targetClientId };
+          // In collaborator mode, ALWAYS target self — the collaborator works on its own file,
+          // regardless of what's selected in the design target dropdown.
+          const targetClientId = agentRoleRef.current === 'collaborator'
+            ? myClientIdRef.current
+            : (targetPluginClientId ?? (isFigmaPluginRef.current ? myClientIdRef.current : undefined));
+          // Build list of other connected agents for AI awareness (when idle)
+          const otherAgents = agentRoleRef.current === 'idle'
+            ? clientsRef.current
+                .filter(c => c.clientId !== myClientIdRef.current && c.type !== "overlay")
+                .map(c => ({ shortId: c.shortId, label: c.label, type: c.type, fileName: c.figmaContext?.fileName }))
+            : undefined;
+          // When in collaborator mode, only enable essential MCPs (figma for reading + guardian)
+          // to avoid connection failures for Code MCP / GitHub / FigmaConsole which may not be
+          // configured on the collaborator's plugin instance.
+          const effectiveMcps = agentRoleRef.current === 'collaborator'
+            ? { figma: enabledMcpsRef.current.figma, figmaConsole: false, github: false, code: false }
+            : enabledMcpsRef.current;
+          // Is the plugin context from our own plugin (local) or from a remote target?
+          const isLocalPlugin = !!figmaPluginContextRef.current;
+          return { figmaMcpUrl: figmaMcpUrlRef.current || (figmaOAuthRef.current ? "https://mcp.figma.com/mcp" : ""), figmaAccessToken: figmaAccessTokenRef.current, codeProjectPath: codeProjectPathRef.current, figmaOAuth: figmaOAuthRef.current, model: selectedModelRef.current, selectedNode: selectedNodeRef.current, tunnelSecret: tunnelSecretRef.current, enabledMcps: effectiveMcps, figmaPluginContext: pluginContext, isLocalPlugin, targetClientId, orchestrationId: orchestrationRef.current?.id, agentRole: agentRoleRef.current, connectedAgents: otherAgents, orchestrationContext: agentRoleRef.current !== 'idle' ? { collaborators: collaboratorsRef.current?.map(c => ({ shortId: c.shortId, label: c.label })), orchestratorShortId: orchestrationRef.current ? myClientIdRef.current : undefined, } : undefined };
         },
       }),
     [],
   );
 
   const { messages, sendMessage, status, error, setMessages } = useChat({ transport });
+
+  // ── Message persistence ─────────────────────────────────────────────
+  const { loaded: messagesLoaded } = useMessagePersistence(
+    activeConversationId,
+    messages,
+    setMessages,
+    status,
+    myClientId,
+    myDisplayShortId,
+  );
+
+  // ── Conversation switching handler ──────────────────────────────────
+  // Only update activeConversationId — useMessagePersistence handles message loading
+  const handleSwitchConversation = useCallback((id: string) => {
+    switchConversation(id);
+  }, [switchConversation]);
 
   const [errorVisible, setErrorVisible] = useState(false);
   useEffect(() => {
@@ -1314,8 +1564,200 @@ export default function Home() {
   const messagesRef = useRef(messages);
   messagesRef.current = messages;
 
+  // ── Auto-rename conversation based on first user message ──────────
+  const renamedConvIds = useRef(new Set<string>());
+
+  useEffect(() => {
+    if (!activeConversationId || !activeConversation) return;
+    // Only rename conversations still titled "New conversation"
+    if (activeConversation.title !== "New conversation") {
+      renamedConvIds.current.add(activeConversationId);
+      return;
+    }
+    if (renamedConvIds.current.has(activeConversationId)) return;
+
+    // Find the first user message
+    const firstUserMsg = messages.find((m) => m.role === "user");
+    if (!firstUserMsg) return;
+
+    // Wait until the assistant has responded (stream complete)
+    const hasAssistantReply = messages.some((m) => m.role === "assistant");
+    if (!hasAssistantReply || status !== "ready") return;
+
+    // Mark as renamed to avoid re-triggering
+    renamedConvIds.current.add(activeConversationId);
+
+    // Extract title from first user message (first 60 chars, trimmed at word boundary)
+    const text = firstUserMsg.parts
+      .filter((p): p is { type: "text"; text: string } => p.type === "text")
+      .map((p) => p.text)
+      .join(" ")
+      .replace(/\s+/g, " ")
+      .trim();
+
+    if (!text) return;
+
+    const title = text.length <= 60 ? text : text.slice(0, 57).replace(/\s\S*$/, "") + "…";
+    updateTitle(activeConversationId, title);
+  }, [activeConversationId, activeConversation, messages, status, updateTitle]);
+
   // Wire the stable ref (declared early) to sendMessage now that it's available
   sendMessageEarlyRef.current = sendMessage;
+
+  // ── Collaborative Agents: handle incoming agent_request (collaborator side) ──
+  // When the orchestrator sends us a task, switch to the collaborative conversation
+  // and auto-trigger the LLM with the task content.
+  onAgentRequest.current = (payload) => {
+    // Use refs to avoid stale closure — agentRole/conversations may be outdated at callback time
+    if (agentRoleRef.current !== "collaborator") return;
+    if (payload.targetClientId && payload.targetClientId !== myClientIdRef.current) return;
+
+    // The collaborative conversation was already created during acceptInvite.
+    // Find it by orchestrationId and switch to it.
+    const findAndSwitch = (convs: { id: string; orchestration_id: string | null }[]) => {
+      const conv = convs.find(c => c.orchestration_id === payload.orchestrationId);
+      if (conv) {
+        switchConversation(conv.id);
+        return true;
+      }
+      return false;
+    };
+
+    if (!findAndSwitch(conversations)) {
+      // Refresh conversations list in case it was just created
+      loadConversations().then((convs) => {
+        if (convs && !findAndSwitch(convs)) {
+          // Last resort: retry after state propagation
+          setTimeout(() => findAndSwitch(conversations), 500);
+        }
+      });
+    }
+
+    // Auto-send the task as a user message to trigger the LLM
+    setTimeout(() => {
+      sendMessageEarlyRef.current?.({
+        text: `[Orchestrator task] ${payload.content}${payload.expectedResult ? `\n\nExpected result: ${payload.expectedResult}` : ""}`,
+      });
+    }, 1500);
+  };
+
+  // ── Collaborative Agents: dispatch task directly when collaborator accepts ──
+  const notifiedCollaborators = useRef(new Set<string>());
+  const dispatchedCollaborators = useRef(new Set<string>());
+  // Queue for notifications to send to orchestrator chat (avoids concurrent sendMessage crashes)
+  const pendingNotifications = useRef<string[]>([]);
+  const notificationTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  onCollaboratorReady.current = (senderId, senderShortId) => {
+    // Dedup: only notify once per collaborator per orchestration
+    if (notifiedCollaborators.current.has(senderId)) return;
+    notifiedCollaborators.current.add(senderId);
+
+    // Find the collaborator's info
+    const client = clientsRef.current.find(c => c.clientId === senderId);
+    const fileName = client?.figmaContext?.fileName || "unknown file";
+    const task = orchestrationTaskRef.current || "Collaborative task";
+
+    // Directly dispatch the original task to this collaborator (no AI middleman)
+    if (!dispatchedCollaborators.current.has(senderId)) {
+      const perAgentTask = `${task}\n\nYour target: "${fileName}". Execute the part of this task that applies to your file.`;
+      sendAgentRequest(senderId, perAgentTask, {}, `Complete the task on ${fileName}`);
+      dispatchedCollaborators.current.add(senderId);
+    }
+
+    // Queue notification — batch multiple acceptances into one message.
+    // We inject via setMessages (not sendMessage) to avoid:
+    // 1. Triggering a useless AI response to "agents joined"
+    // 2. Potential message loss from sendMessage if useChat state was cleared
+    pendingNotifications.current.push(`${senderShortId} (${fileName})`);
+    if (notificationTimerRef.current) clearTimeout(notificationTimerRef.current);
+    notificationTimerRef.current = setTimeout(() => {
+      const agents = pendingNotifications.current.splice(0);
+      if (agents.length > 0) {
+        const joined = agents.map(a => `#${a.replace(/^#/, "")}`).join(", ");
+        const notifText = `[${joined} joined the session and received their tasks. Wait for their reports before taking action.]`;
+        // If messages were lost (cleared by something during orchestration flow),
+        // restore from the snapshot taken before becomeOrchestrator.
+        const currentMsgs = messagesRef.current;
+        const base = (currentMsgs.length === 0 && preOrchMessagesRef.current?.length)
+          ? preOrchMessagesRef.current
+          : currentMsgs;
+        // Inject notification as a system-style user message (no API call)
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        setMessages([...base, {
+          id: `orch-notif-${Date.now()}`,
+          role: "user",
+          parts: [{ type: "text" as const, text: notifText }],
+        }] as any);
+      }
+    }, 2000);
+  };
+
+  // ── Collaborative Agents: collaborator auto-reports result back to orchestrator ──
+  const lastReportedMsgId = useRef<string | null>(null);
+  useEffect(() => {
+    if (agentRole !== "collaborator" || status !== "ready") return;
+    if (!orchestration) return;
+
+    // Find the last assistant message
+    const lastAssistant = [...messages].reverse().find(m => m.role === "assistant");
+    if (!lastAssistant || lastReportedMsgId.current === lastAssistant.id) return;
+
+    // Only report if the first user message was an orchestrator task
+    const firstUser = messages.find(m => m.role === "user");
+    const isTaskResponse = firstUser?.parts?.some(
+      (p): p is { type: "text"; text: string } => p.type === "text" && p.text?.startsWith("[Orchestrator task]"),
+    );
+    if (!isTaskResponse) return;
+
+    lastReportedMsgId.current = lastAssistant.id;
+
+    // Extract the AI's response text, stripping MCP noise
+    const responseText = lastAssistant.parts
+      .filter((p): p is { type: "text"; text: string } => p.type === "text")
+      .map(p => p.text)
+      .join("\n")
+      .replace(/\[MCP_STATUS:\w+\]/g, "")
+      .replace(/\[MCP_ERROR_BLOCK\][\s\S]*?\[\/MCP_ERROR_BLOCK\]/g, "")
+      .trim();
+
+    if (!responseText || responseText.length < 5) return;
+
+    // Send agent_response back to the orchestrator
+    sendAgentResponse("task", "completed", responseText);
+  }, [agentRole, status, orchestration, messages, sendAgentResponse]);
+
+  // ── Collaborative Agents: reset per-orchestration tracking when role goes idle ──
+  useEffect(() => {
+    if (agentRole === "idle") {
+      notifiedCollaborators.current.clear();
+      dispatchedCollaborators.current.clear();
+      orchestrationTaskRef.current = null;
+      preOrchMessagesRef.current = null;
+    }
+  }, [agentRole]);
+
+  // ── Collaborative Agents: orchestrator displays agent responses in chat ──
+  onAgentResponse.current = (payload) => {
+    if (agentRoleRef.current !== "orchestrator") return;
+
+    const collab = collaborators.find(c => c.clientId === payload.senderId);
+    const label = collab?.shortId || payload.senderShortId;
+    const reportText = `[Agent report from ${label}] ${payload.summary || "Task completed"}`;
+
+    // If messages were lost during orchestration, restore from snapshot before sending.
+    // This ensures the AI sees the full conversation context (original request + notification + reports).
+    if (messagesRef.current.length === 0 && preOrchMessagesRef.current?.length) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      setMessages(preOrchMessagesRef.current as any);
+      // Wait for state to propagate before triggering AI
+      setTimeout(() => {
+        sendMessageEarlyRef.current?.({ text: reportText });
+      }, 200);
+    } else {
+      sendMessageEarlyRef.current?.({ text: reportText });
+    }
+  };
 
   // Inject fake agent message from plugin mini-mode tooltip
   // (user message sending is triggered separately via trigger-user-analysis)
@@ -1427,7 +1869,7 @@ export default function Home() {
                 <input
                   type="checkbox"
                   checked={enabledMcps.figma}
-                  onChange={() => setEnabledMcps(prev => ({ ...prev, figma: !prev.figma }))}
+                  onChange={() => toggleMcp('figma')}
                   className="w-4 h-4 rounded border-white/20 bg-white/5 text-violet-500 focus:ring-violet-500/50"
                 />
                 <span className="text-xs text-white/70">Figma MCP</span>
@@ -1436,7 +1878,7 @@ export default function Home() {
                 <input
                   type="checkbox"
                   checked={enabledMcps.figmaConsole}
-                  onChange={() => setEnabledMcps(prev => ({ ...prev, figmaConsole: !prev.figmaConsole }))}
+                  onChange={() => toggleMcp('figmaConsole')}
                   className="w-4 h-4 rounded border-white/20 bg-white/5 text-violet-500 focus:ring-violet-500/50"
                 />
                 <span className="text-xs text-white/70">Figma Console (Southleft)</span>
@@ -1445,7 +1887,7 @@ export default function Home() {
                 <input
                   type="checkbox"
                   checked={enabledMcps.github}
-                  onChange={() => setEnabledMcps(prev => ({ ...prev, github: !prev.github }))}
+                  onChange={() => toggleMcp('github')}
                   className="w-4 h-4 rounded border-white/20 bg-white/5 text-violet-500 focus:ring-violet-500/50"
                 />
                 <span className="text-xs text-white/70">GitHub MCP</span>
@@ -1454,7 +1896,7 @@ export default function Home() {
                 <input
                   type="checkbox"
                   checked={enabledMcps.code}
-                  onChange={() => setEnabledMcps(prev => ({ ...prev, code: !prev.code }))}
+                  onChange={() => toggleMcp('code')}
                   className="w-4 h-4 rounded border-white/20 bg-white/5 text-violet-500 focus:ring-violet-500/50"
                 />
                 <span className="text-xs text-white/70">Code MCP</span>
@@ -1738,6 +2180,13 @@ export default function Home() {
                 </svg>
               </button>
             )}
+            <ConversationSwitcher
+              conversations={conversations}
+              activeId={activeConversationId}
+              onSwitch={handleSwitchConversation}
+              onCreate={() => createConversation()}
+              onDelete={deleteConversation}
+            />
             <EditableClientId
               shortId={myDisplayShortId}
               onRenamed={async (newShortId) => {
@@ -1751,7 +2200,14 @@ export default function Home() {
           </div>
         </header>
 
-        <div ref={scrollContainerRef} onScroll={handleScroll} className="relative z-10 flex-1 overflow-y-auto px-3 sm:px-4 pt-16 pb-28">
+        <OrchestrationStatusBar
+          role={agentRole}
+          orchestratorShortId={orchestration ? collaborators.find(c => c.status === 'active')?.shortId : undefined}
+          collaborators={agentRole === 'orchestrator' ? collaborators : undefined}
+          onCancel={agentRole === 'orchestrator' ? () => completeOrchestration('cancelled') : undefined}
+        />
+
+        <div ref={scrollContainerRef} onScroll={handleScroll} className="relative flex-1 overflow-y-auto px-3 sm:px-4 pt-16 pb-40">
           {messages.length === 0 && (
             <div className="flex flex-col items-center justify-center h-full text-center px-4">
               <div className="text-4xl mb-4">🛡️</div>
@@ -1826,13 +2282,57 @@ export default function Home() {
             </div>
           )}
 
-          {messages.map((m) => (
+          {messages.filter((m, idx, arr) => {
+            // Deduplicate by ID (keep last occurrence — most complete from streaming)
+            if (arr.findLastIndex(x => x.id === m.id) !== idx) return false;
+            // Skip empty assistant messages (only MCP_STATUS markers, no real content)
+            if (m.role === "assistant") {
+              const stripped = m.parts
+                ?.filter((p): p is { type: "text"; text: string } => p.type === "text")
+                .map(p => p.text)
+                .join("")
+                .replace(/\[MCP_STATUS:\w+\]/g, "")
+                .trim();
+              if (!stripped) return false;
+            }
+            return true;
+          }).map((m, mi) => {
+            // Detect inter-agent messages (injected by orchestration hooks)
+            const msgText = m.parts?.find((p): p is { type: "text"; text: string } => p.type === "text")?.text ?? "";
+            const agentJoinMatch = msgText.match(/^Agent (#[\w-]+) \((.+?)\) has joined/);
+            const agentReportMatch = msgText.match(/^\[Agent report from (#[\w-]+)\] ([\s\S]*)/);
+
+            if (m.role === "user" && (agentJoinMatch || agentReportMatch)) {
+              if (agentJoinMatch) {
+                return (
+                  <div key={m.id} className="flex justify-center my-2">
+                    <div className="px-3 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/15 text-[11px] text-emerald-400/70">
+                      <span className="font-medium">{agentJoinMatch[1]}</span> ({agentJoinMatch[2]}) joined the session
+                    </div>
+                  </div>
+                );
+              }
+              if (agentReportMatch) {
+                return (
+                  <div key={m.id} className="mb-3">
+                    <AgentMessageBubble
+                      senderShortId={agentReportMatch[1]}
+                      content={agentReportMatch[2]}
+                      isOrchestrator={false}
+                    />
+                  </div>
+                );
+              }
+            }
+
+            return (
             <div
               key={m.id}
-              className={`mb-4 ${m.role === "user" ? "flex justify-end" : ""}`}
+              className={`group mb-4 ${m.role === "user" ? "flex justify-end" : ""}`}
             >
+              <div className="max-w-full sm:max-w-[80%] inline-block">
               <div
-                className={`max-w-full sm:max-w-[80%] rounded-lg px-3 sm:px-4 py-2.5 sm:py-3 text-sm leading-relaxed ${
+                className={`rounded-lg px-3 sm:px-4 py-2.5 sm:py-3 text-sm leading-relaxed ${
                   m.role === "user"
                     ? "glass-msg-user"
                     : "glass-msg-ai"
@@ -1886,6 +2386,41 @@ export default function Home() {
                                   <path d="M12 2.5c0 0 .9 4 2.8 5.5C16.7 9.5 21 9.5 21 9.5s-4.3.1-6.2 1.6C12.9 12.5 12 16.5 12 16.5s-.9-4-2.8-5.5C7.3 9.6 3 9.5 3 9.5s4.3 0 6.2-1.5C11.1 6.5 12 2.5 12 2.5z"/>
                                   <path d="M19.5 15c0 0 .5 2 1.5 2.7 1 .7 2.5.8 2.5.8s-1.5 0-2.5.8c-1 .7-1.5 2.7-1.5 2.7s-.5-2-1.5-2.7c-1-.7-2.5-.8-2.5-.8s1.5-.1 2.5-.8c1-.7 1.5-2.7 1.5-2.7z"/>
                                 </svg>
+                              </button>
+                            );
+                          }
+                          if (structSeg.kind === "orchestrate-btn") {
+                            return (
+                              <button
+                                key={sj}
+                                onClick={async () => {
+                                  if (agentRole !== 'idle') return;
+                                  const convId = activeConversationId ?? await ensureConversation();
+                                  if (!convId) return;
+                                  // Extract task BEFORE async becomeOrchestrator — messages may
+                                  // be affected by React re-renders during the await.
+                                  const lastUserText = messagesRef.current.filter(m => m.role === "user").map(m => m.parts.filter((p): p is { type: "text"; text: string } => p.type === "text").map(p => p.text).join(" ")).pop() || "Collaborative task";
+                                  orchestrationTaskRef.current = lastUserText;
+                                  // Also snapshot messages so we can restore if they get lost
+                                  preOrchMessagesRef.current = [...messagesRef.current];
+                                  const orch = await becomeOrchestrator(convId);
+                                  if (!orch) return;
+                                  // Invite all suggested agents
+                                  for (const agentShortId of structSeg.agents) {
+                                    const target = clients.find(c => c.shortId === agentShortId && c.clientId !== myClientId);
+                                    if (target) {
+                                      inviteCollaborator(target.clientId, lastUserText, {}, `Complete the task on ${target.label}`, target.shortId, target.label);
+                                    }
+                                  }
+                                }}
+                                disabled={isLoading || agentRole !== 'idle'}
+                                className="my-3 flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm font-medium border transition-all cursor-pointer bg-amber-500/10 border-amber-500/25 text-amber-300 hover:bg-amber-500/20 hover:border-amber-500/40 disabled:opacity-40 disabled:cursor-not-allowed"
+                              >
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="shrink-0">
+                                  <path d="M16 3h5v5M4 20L21 3M21 16v5h-5M3 4l17 17" />
+                                </svg>
+                                Start Collaborative Mode
+                                <span className="text-xs text-amber-400/50 ml-1">({structSeg.agents.join(", ")})</span>
                               </button>
                             );
                           }
@@ -2031,6 +2566,29 @@ export default function Home() {
                   return null;
                 })}
               </div>
+              {m.role === "assistant" && (
+                <div className="flex mt-1">
+                  <button
+                    onClick={() => {
+                      const text = m.parts
+                        ?.filter((p: { type: string; text?: string }) => p.type === "text" && p.text)
+                        .map((p: { type: string; text?: string }) => p.text)
+                        .join("\n")
+                        .replace(/\[MCP_STATUS:\w+\]/g, "")
+                        .replace(/\[MCP_ERROR_BLOCK\][\s\S]*?\[\/MCP_ERROR_BLOCK\]/g, "")
+                        .replace(/\[ORCHESTRATE:[^\]]+\]/g, "")
+                        .replace(/\[CONTINUATION_AVAILABLE\]/g, "")
+                        .replace(/\[ANALYZE_BTN\]/g, "")
+                        .trim() || "";
+                      copyToClipboard(text);
+                    }}
+                    className="flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] text-white/15 hover:text-white/50 hover:bg-white/5 transition-colors cursor-pointer"
+                    title="Copy message"
+                  >
+                    <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="9" y="9" width="13" height="13" rx="2" /><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1" /></svg>
+                  </button>
+                </div>
+              )}
               {m === messages[messages.length - 1] && m.role === "assistant" && !isLoading && m.parts?.some(part => part.type === "text" && part.text.includes("[CONTINUATION_AVAILABLE]")) && (
                 <button
                   onClick={() => {
@@ -2042,10 +2600,27 @@ export default function Home() {
                   Continue the response
                 </button>
               )}
+              </div>
             </div>
-          ))}
+          );
+          })}
 
           {isLoading && <ThinkingIndicator />}
+
+          {/* Copy debug context button — always visible after all messages */}
+          {messages.length > 0 && !isLoading && (
+            <CopyDebugButton
+              messages={messages}
+              clients={clients}
+              myClientId={myClientId}
+              myShortId={myDisplayShortId}
+              agentRole={agentRole}
+              orchestration={orchestration}
+              collaborators={collaborators}
+              activeConversationId={activeConversationId}
+              conversations={conversations}
+            />
+          )}
 
           {selectedNode && (
             <div className={`mb-4 flex items-start gap-2 px-3 py-2.5 rounded-lg bg-purple-500/10 border border-purple-500/20 text-xs text-purple-300/80 italic${selectionGlow ? " teleport-in" : ""}`}>
@@ -2375,6 +2950,14 @@ export default function Home() {
             </div>
           </div>
         </div>
+      )}
+
+      {pendingInvites.length > 0 && (
+        <OrchestrationInviteModal
+          invite={pendingInvites[0]}
+          onAccept={acceptInvite}
+          onDecline={declineInvite}
+        />
       )}
     </div>
   );

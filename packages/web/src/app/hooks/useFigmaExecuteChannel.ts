@@ -4,6 +4,7 @@ import { useEffect, useRef, useState, useCallback } from "react";
 import { createClient } from "@/lib/supabase/client";
 import type { ExecuteCodeResult } from "./useFigmaPlugin";
 import { parsePresenceState, type ClientType, type PresenceClient } from "@/types/presence";
+import type { OrchestrationCallbacks } from "./useOrchestration";
 
 const CHANNEL_BASE = "guardian:execute";
 
@@ -24,8 +25,9 @@ export type ClientInfo = {
 export function useFigmaExecuteChannel(
   executeCode: (code: string, timeout?: number) => Promise<ExecuteCodeResult>,
   enabled: boolean,
-  clientInfo?: ClientInfo
-): { clients: PresenceClient[]; clientId: string } {
+  clientInfo?: ClientInfo,
+  orchestrationCallbacksRef?: React.RefObject<OrchestrationCallbacks>,
+): { clients: PresenceClient[]; clientId: string; channelRef: React.RefObject<ReturnType<ReturnType<typeof createClient>["channel"]> | null> } {
   const busy = useRef(false);
   const executeCodeRef = useRef(executeCode);
   executeCodeRef.current = executeCode;
@@ -126,6 +128,25 @@ export function useFigmaExecuteChannel(
           busy.current = false;
         }
       })
+      // Collaborative Agents — orchestration events forwarded to useOrchestration via callback ref
+      .on("broadcast", { event: "orchestration_invite" }, (payload) => {
+        orchestrationCallbacksRef?.current?.onInvite?.(payload.payload);
+      })
+      .on("broadcast", { event: "orchestration_accept" }, (payload) => {
+        orchestrationCallbacksRef?.current?.onAccept?.(payload.payload);
+      })
+      .on("broadcast", { event: "orchestration_decline" }, (payload) => {
+        orchestrationCallbacksRef?.current?.onDecline?.(payload.payload);
+      })
+      .on("broadcast", { event: "agent_request" }, (payload) => {
+        orchestrationCallbacksRef?.current?.onAgentRequest?.(payload.payload);
+      })
+      .on("broadcast", { event: "agent_response" }, (payload) => {
+        orchestrationCallbacksRef?.current?.onAgentResponse?.(payload.payload);
+      })
+      .on("broadcast", { event: "agent_message" }, (payload) => {
+        orchestrationCallbacksRef?.current?.onAgentMessage?.(payload.payload);
+      })
       .on("presence", { event: "sync" }, () => {
         handlePresenceSync(
           channel.presenceState() as Record<
@@ -191,5 +212,5 @@ export function useFigmaExecuteChannel(
     });
   }, [serverShortId]);
 
-  return { clients, clientId: clientId.current };
+  return { clients, clientId: clientId.current, channelRef };
 }

@@ -20,6 +20,13 @@ type DynamicProvider = {
   name: string; // Human-readable label
 };
 
+type CatalogModel = {
+  id: string;       // "openai/gpt-4.1"
+  name: string;     // "GPT-4.1"
+  owned_by: string; // "openai"
+  tags?: string[];
+};
+
 const PROVIDER_HINTS: Record<string, string> = {
   openai: "sk-...",
   anthropic: "sk-ant-...",
@@ -60,19 +67,53 @@ export default function AccountPage() {
   const [search, setSearch] = useState("");
   const dropdownBtnRef = useRef<HTMLButtonElement>(null);
 
+  // Default model selection
+  const [catalogModels, setCatalogModels] = useState<CatalogModel[]>([]);
+  const [defaultModel, setDefaultModel] = useState<string | null>(null);
+  const [savingDefaultModel, setSavingDefaultModel] = useState(false);
+  const [defaultModelDropdownOpen, setDefaultModelDropdownOpen] = useState(false);
+  const [defaultModelSearch, setDefaultModelSearch] = useState("");
+  const defaultModelBtnRef = useRef<HTMLButtonElement>(null);
+
   const handleDropdownClose = useCallback(() => {
     setDropdownOpen(false);
     setSearch("");
   }, []);
 
+  const handleDefaultModelDropdownClose = useCallback(() => {
+    setDefaultModelDropdownOpen(false);
+    setDefaultModelSearch("");
+  }, []);
+
+  async function handleSaveDefaultModel(modelId: string | null) {
+    setSavingDefaultModel(true);
+    setError(null);
+    try {
+      const res = await fetch("/api/user/settings", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ defaultModel: modelId }),
+      });
+      if (!res.ok) {
+        const d = await res.json();
+        setError(d.error ?? "Failed to save default model");
+      } else {
+        setDefaultModel(modelId);
+      }
+    } finally {
+      setSavingDefaultModel(false);
+    }
+  }
+
   const loadData = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const [keysRes, usageRes, modelsRes] = await Promise.all([
+      const [keysRes, usageRes, modelsRes, settingsRes] = await Promise.all([
         fetch("/api/user/api-keys"),
         fetch("/api/user/usage"),
         fetch("/api/gateway-models"),
+        fetch("/api/user/settings"),
       ]);
 
       if (keysRes.status === 401) { router.push("/login"); return; }
@@ -82,10 +123,17 @@ export default function AccountPage() {
       setKeys(keysData.keys ?? []);
       setUsage(usageData.daily ? usageData : null);
 
+      // Load default model from user settings
+      if (settingsRes.ok) {
+        const settingsData = await settingsRes.json();
+        setDefaultModel(settingsData.defaultModel ?? null);
+      }
+
       // Build dynamic provider list from Gateway catalog
       if (modelsRes.ok) {
         const modelsData = await modelsRes.json();
-        const models: Array<{ id: string; owned_by: string; name: string }> = modelsData.models ?? [];
+        const models: CatalogModel[] = modelsData.models ?? [];
+        setCatalogModels(models);
         // Extract unique owned_by values preserving first-seen order
         const seen = new Set<string>();
         const dynamic: DynamicProvider[] = [];
@@ -439,6 +487,144 @@ export default function AccountPage() {
             ))}
           </div>
         )}
+      </section>
+
+      {/* Default model */}
+      <section className="mt-8 mb-8 p-4 rounded-xl bg-white/[0.06] border border-white/[0.15] backdrop-blur-md">
+        <h2 className="text-sm font-medium mb-1">Default model</h2>
+        <p className="text-xs text-white/40 mb-4">
+          Choose the model used by default when you open a new chat. Only models available with your configured keys are shown.
+        </p>
+
+        {loading ? (
+          <div className="h-10 w-full rounded-lg bg-white/10 animate-pulse" />
+        ) : (() => {
+          // Compute visible models based on user's keys (same logic as chat page)
+          const hasGateway = keys.some((k) => k.provider === "gateway");
+          const directProviders = new Set(keys.filter((k) => k.provider !== "gateway").map((k) => k.provider));
+          const visibleModels = hasGateway
+            ? catalogModels
+            : keys.length > 0
+              ? catalogModels.filter((m) => directProviders.has(m.owned_by))
+              : catalogModels; // Show all models for free-tier users
+          const getModelValue = (m: CatalogModel) =>
+            hasGateway ? m.id : `${m.owned_by}/${m.id.split("/").pop()}`;
+
+          // Group models by provider
+          const grouped = visibleModels.reduce<Record<string, CatalogModel[]>>((acc, m) => {
+            (acc[m.owned_by] ??= []).push(m);
+            return acc;
+          }, {});
+
+          const query = defaultModelSearch.toLowerCase();
+          const filteredGrouped = Object.entries(grouped).reduce<Record<string, CatalogModel[]>>((acc, [provider, models]) => {
+            const filtered = models.filter((m) =>
+              m.name.toLowerCase().includes(query) || provider.toLowerCase().includes(query)
+            );
+            if (filtered.length > 0) acc[provider] = filtered;
+            return acc;
+          }, {});
+
+          // Find the currently selected model label
+          const selectedGw = visibleModels.find((m) => getModelValue(m) === defaultModel);
+          const selectedLabel = selectedGw
+            ? `${selectedGw.name}${selectedGw.tags?.includes("reasoning") ? " ✦" : ""}`
+            : defaultModel ?? "None (auto-select)";
+
+          return (
+            <div className="flex items-center gap-3">
+              <div className="relative flex-1">
+                <button
+                  ref={defaultModelBtnRef}
+                  type="button"
+                  onClick={() => { setDefaultModelDropdownOpen(!defaultModelDropdownOpen); setDefaultModelSearch(""); }}
+                  disabled={savingDefaultModel}
+                  className="w-full flex items-center justify-between px-4 py-2.5 rounded-lg bg-white/5 border border-white/10 text-sm transition-colors hover:border-white/20 cursor-pointer disabled:opacity-40"
+                >
+                  <span className="truncate">{selectedLabel}</span>
+                  <svg
+                    width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                    strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
+                    className={`shrink-0 text-white/40 transition-transform ${defaultModelDropdownOpen ? "rotate-180" : ""}`}
+                  >
+                    <path d="M6 9l6 6 6-6" />
+                  </svg>
+                </button>
+
+                <GlassDropdown open={defaultModelDropdownOpen} onClose={handleDefaultModelDropdownClose} anchorRef={defaultModelBtnRef}>
+                  {/* Search input */}
+                  <div className="p-2 border-b border-white/[0.06]">
+                    <input
+                      type="text"
+                      placeholder="Search models..."
+                      value={defaultModelSearch}
+                      onChange={(e) => setDefaultModelSearch(e.target.value)}
+                      autoFocus
+                      className="w-full px-3 py-1.5 rounded-md bg-white/5 border border-white/10 text-sm outline-none focus:border-white/25 transition-colors placeholder:text-white/25"
+                    />
+                  </div>
+                  {/* Options list */}
+                  <div className="max-h-60 overflow-y-auto py-1">
+                    {/* "None" option to clear default */}
+                    {(!query || "none".includes(query) || "auto".includes(query)) && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          handleSaveDefaultModel(null);
+                          setDefaultModelDropdownOpen(false);
+                          setDefaultModelSearch("");
+                        }}
+                        className={`w-full text-left px-4 py-2 text-sm transition-colors cursor-pointer ${
+                          defaultModel === null
+                            ? "bg-violet-600/30 text-white"
+                            : "text-white/60 hover:bg-white/5 hover:text-white/90"
+                        }`}
+                      >
+                        None (auto-select)
+                      </button>
+                    )}
+                    {/* Grouped models */}
+                    {Object.entries(filteredGrouped).map(([provider, models]) => (
+                      <div key={provider}>
+                        <div className="px-4 py-1.5 text-[10px] font-semibold text-white/30 uppercase tracking-wider">
+                          {capitalize(provider)}
+                        </div>
+                        {models.map((m) => {
+                          const value = getModelValue(m);
+                          const isReasoning = m.tags?.includes("reasoning");
+                          return (
+                            <button
+                              key={m.id}
+                              type="button"
+                              onClick={() => {
+                                handleSaveDefaultModel(value);
+                                setDefaultModelDropdownOpen(false);
+                                setDefaultModelSearch("");
+                              }}
+                              className={`w-full text-left px-4 py-2 text-sm transition-colors cursor-pointer ${
+                                defaultModel === value
+                                  ? "bg-violet-600/30 text-white"
+                                  : "text-white/60 hover:bg-white/5 hover:text-white/90"
+                              }`}
+                            >
+                              {m.name}{isReasoning ? <span title="Supports reasoning">{" "}✦</span> : ""}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    ))}
+                    {Object.keys(filteredGrouped).length === 0 && !(!query || "none".includes(query) || "auto".includes(query)) && (
+                      <p className="px-4 py-3 text-sm text-white/30 text-center">No model found</p>
+                    )}
+                  </div>
+                </GlassDropdown>
+              </div>
+              {savingDefaultModel && (
+                <span className="text-xs text-white/40 shrink-0">Saving...</span>
+              )}
+            </div>
+          );
+        })()}
       </section>
 
       {/* Connected Clients */}

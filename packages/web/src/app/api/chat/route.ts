@@ -825,7 +825,16 @@ async function connectMCPs(
 }
 
 export async function POST(req: Request) {
-  const { messages, figmaMcpUrl, figmaAccessToken, codeProjectPath, figmaOAuth, model, selectedNode, tunnelSecret, enabledMcps, figmaPluginContext, targetClientId } = await req.json();
+  const {
+    messages, figmaMcpUrl, figmaAccessToken, codeProjectPath, figmaOAuth,
+    model, selectedNode, tunnelSecret, enabledMcps, figmaPluginContext,
+    isLocalPlugin,  // true when webapp runs inside a Figma plugin, false when targeting remote
+    targetClientId,
+    orchestrationId,
+    agentRole,        // 'idle' | 'orchestrator' | 'collaborator'
+    orchestrationContext,  // { task?, collaborators?, orchestratorShortId? }
+    connectedAgents,  // other agents available for collaboration (when idle)
+  } = await req.json();
 
   // Resolve the AI model (BYOK or free tier)
   const supabase = await createSupabaseUserClient();
@@ -926,6 +935,85 @@ RULES:
     console.debug('DYNAMIC SYSTEM PROMPT:');
     console.debug(system);
 
+  }
+
+  // Collaborative Agents — agent awareness (idle mode with other agents connected)
+  if ((!agentRole || agentRole === 'idle') && connectedAgents && connectedAgents.length > 0) {
+    const ownershipNote = isLocalPlugin
+      ? `You are running inside a Figma plugin and have your own file (see plugin context above). The other agents below each have their own separate files.`
+      : `You are a standalone webapp. The Figma plugin context above (if present) is a REMOTE target — you can send commands to it, but you do not "own" that file. Each plugin agent below owns its own file.`;
+    system += `\n\n## Collaborative Agents — Available Agents
+
+${ownershipNote}
+
+Other AI agents connected to this session:
+${connectedAgents.map((a: { shortId: string; label: string; type: string; fileName?: string }) => `- ${a.shortId} (${a.label}${a.type === 'figma-plugin' ? `, Figma plugin, file: "${a.fileName || 'unknown'}"` : a.type === 'webapp' ? ', webapp' : ''})` ).join('\n')}
+
+### When to suggest collaboration:
+- If the user's request involves work on ONE specific file, you can handle it directly by sending commands to that plugin (via guardian_figma_execute).
+- If the user's request involves work on MULTIPLE files simultaneously, or explicitly asks for "collab" / "collaborative" mode, suggest **Collaborative Mode** so each plugin agent works autonomously on its own file.
+- Examples of when to suggest: "create shapes in each file", "synchronize colors across files", "en mode collab"
+- Examples of when NOT to suggest: "change this button color", "export this component" — single-file tasks
+
+### How to suggest:
+When collaboration is needed, explain your plan (what each agent will do on which file) and include this marker at the end:
+\`[ORCHESTRATE:${connectedAgents.map((a: { shortId: string }) => a.shortId).join(',')}]\`
+Replace the shortIds with only the agents needed. The user will see a "Start Collaborative Mode" button.
+Do NOT start orchestration yourself — wait for the user to click the button.
+`;
+  }
+
+  // Collaborative Agents — orchestration context
+  if (agentRole === 'orchestrator' && orchestrationId) {
+    system += `\n\n## Collaborative Agents — Orchestrator Mode
+
+You are currently the ORCHESTRATOR in a collaborative session (ID: ${orchestrationId}).
+
+### Your responsibilities:
+- You coordinate other AI agents to accomplish the user's task
+- You can delegate sub-tasks to collaborator agents via natural language
+- You receive progress reports and results from collaborators
+- You verify the quality of completed work
+- When all sub-tasks are done, consolidate results and report to the user
+
+### Available collaborators:
+${orchestrationContext?.collaborators?.map((c: { shortId: string; label: string }) => `- ${c.shortId} (${c.label})`).join('\n') || 'None connected yet'}
+
+### Communication:
+- Use @mentions (e.g. @#shortId) to address specific collaborators
+- Be specific and structured when delegating tasks: describe WHAT to do, provide CONTEXT, and define the EXPECTED RESULT
+- You can request screenshots or re-dos from collaborators
+- If a collaborator needs help, you can provide guidance or take over with Direct Control
+`;
+  }
+
+  if (agentRole === 'collaborator' && orchestrationId) {
+    system += `\n\n## Collaborative Agents — Collaborator Mode
+
+You are a COLLABORATOR in a collaborative session (ID: ${orchestrationId}).
+You received a task from the orchestrator (${orchestrationContext?.orchestratorShortId || 'unknown'}).
+
+### Your responsibilities:
+- Work autonomously on the assigned task using your available tools
+- Use the Figma Plugin API and other MCP tools as needed
+- Report your progress and results back to @orchestrator
+- If you encounter a blocker or need clarification, message @orchestrator
+- Summarize all changes you made when reporting completion
+
+### Task context:
+${orchestrationContext?.task || 'No specific task provided — await instructions from the orchestrator.'}
+
+### Tools:
+- Your PRIMARY tool for modifying designs is \`guardian_guardian_figma_execute\`. This tool runs Figma Plugin API JavaScript code on the local plugin via broadcast.
+- Use it to create, modify, or delete Figma nodes. Example: \`figma.currentPage.findAll(n => n.type === 'FRAME')\`
+- If Figma MCP tools (prefixed with \`figma_\`) are also available, use them for reading design context (file structure, node details). But for WRITING changes, prefer \`guardian_guardian_figma_execute\`.
+- Ignore any MCP connection errors for Code MCP or other non-essential MCPs — they are not needed for your task.
+
+### Communication:
+- Use @orchestrator to message the orchestrator
+- The local user can also interact with you directly
+- If the local user gives instructions that conflict with the orchestrator, prioritize the local user (they are physically present)
+`;
   }
 
   // Build the final system prompt
