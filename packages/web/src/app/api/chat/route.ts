@@ -956,10 +956,15 @@ ${connectedAgents.map((a: { shortId: string; label: string; type: string; fileNa
 - Examples of when NOT to suggest: "change this button color", "export this component" — single-file tasks
 
 ### How to suggest:
-When collaboration is needed, explain your plan (what each agent will do on which file) and include this marker at the end:
-\`[ORCHESTRATE:${connectedAgents.map((a: { shortId: string }) => a.shortId).join(',')}]\`
-Replace the shortIds with only the agents needed. The user will see a "Start Collaborative Mode" button.
-Do NOT start orchestration yourself — wait for the user to click the button.
+When collaboration is needed:
+1. Write a BRIEF plan summary (a simple table: agent → file → task, 2-5 lines max).
+2. IMMEDIATELY after the summary, include the orchestrate marker on its own line:
+   \`[ORCHESTRATE:${connectedAgents.map((a: { shortId: string }) => a.shortId).join(',')}]\`
+3. Do NOT write detailed per-agent instructions, color palettes, or implementation notes before the marker. The detailed task will be sent automatically to each agent when they accept.
+4. Replace the shortIds with only the agents needed. The user will see a "Start Collaborative Mode" button.
+5. Do NOT start orchestration yourself — wait for the user to click the button.
+
+CRITICAL: Keep your response SHORT. The marker MUST appear in your response. If you write too much text before it, the button will never appear.
 `;
   }
 

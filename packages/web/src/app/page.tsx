@@ -1550,10 +1550,14 @@ export default function Home() {
   );
 
   // ── Conversation switching handler ──────────────────────────────────
-  // Only update activeConversationId — useMessagePersistence handles message loading
+  // When switching away from the orchestration conversation, auto-release the role
+  // so the user starts fresh in the new conversation (idle mode, [ORCHESTRATE:] available).
   const handleSwitchConversation = useCallback((id: string) => {
+    if (agentRole !== "idle" && orchestration && id !== orchestration.conversationId) {
+      completeOrchestration("cancelled");
+    }
     switchConversation(id);
-  }, [switchConversation]);
+  }, [switchConversation, agentRole, orchestration, completeOrchestration]);
 
   const [errorVisible, setErrorVisible] = useState(false);
   useEffect(() => {
