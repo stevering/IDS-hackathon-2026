@@ -188,6 +188,10 @@ export function useFigmaExecuteChannel(
         if (eventLogRef?.current) pushPluginEvent(eventLogRef.current, { dir: "in", channel: "supabase", type: "orchestration_tick" });
         orchestrationCallbacksRef?.current?.onTick?.(payload.payload);
       })
+      .on("broadcast", { event: "orchestration_end" }, (payload) => {
+        if (eventLogRef?.current) pushPluginEvent(eventLogRef.current, { dir: "in", channel: "supabase", type: "orchestration_end" });
+        orchestrationCallbacksRef?.current?.onEnd?.(payload.payload);
+      })
       .on("broadcast", { event: "sub_conversation_start" }, (payload) => {
         if (eventLogRef?.current) pushPluginEvent(eventLogRef.current, { dir: "in", channel: "supabase", type: "sub_conversation_start" });
         orchestrationCallbacksRef?.current?.onSubConversationStart?.(payload.payload);

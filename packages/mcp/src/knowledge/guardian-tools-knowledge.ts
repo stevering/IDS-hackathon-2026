@@ -61,6 +61,8 @@ Never give up after a single failure. If two consecutive attempts fail, explain 
 - For text nodes, always call \`await figma.loadFontAsync({ family, style })\` before setting \`.characters\`.
 - Only Frame, Group, Component, ComponentSet support \`.appendChild()\`. Rectangle does NOT.
 - \`.paddingAll\` does not exist — use \`.paddingTop\`, \`.paddingRight\`, \`.paddingBottom\`, \`.paddingLeft\`.
+- **Selection**: Use \`figma.currentPage.selection\` to read/write the current selection. There is NO \`figma.currentSelection\` or \`figma.selection\` — using them throws "object is not extensible" because the \`figma\` global is sealed.
+- The \`figma\` object itself is sealed/frozen. Always access mutable properties through \`figma.currentPage\` or specific node references.
 
 ### Prerequisites
 The Guardian Figma plugin must be open in Figma Desktop for execution tools to work.

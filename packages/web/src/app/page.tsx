@@ -2243,6 +2243,7 @@ export default function Home() {
       reportCount.current = 0;
       lastReportedMsgId.current = null;
       lastRelayedMsgId.current = null;
+      lastIncomingSenderRef.current = null;
       stallNudgeCount.current = 0;
     }
   }, [agentRole]);
@@ -2256,9 +2257,25 @@ export default function Home() {
   const statusRef = useRef(status);
   statusRef.current = status;
 
+  // Guard: check if the last assistant message has pending tool calls (state !== "result").
+  // Status can be briefly "ready" between multi-step tool call rounds — we must NOT inject
+  // messages during those gaps or the AI SDK will error "Tool result is missing".
+  const hasPendingToolCalls = useCallback(() => {
+    const msgs = messagesRef.current;
+    for (let i = msgs.length - 1; i >= 0; i--) {
+      const m = msgs[i];
+      if (m.role !== "assistant") continue;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      if (m.parts?.some((p: any) => p.type === "tool-invocation" && p.state !== "result")) return true;
+      break;
+    }
+    return false;
+  }, []);
+
   const orchProcessQueue = useCallback(() => {
     if (orchSendActive.current || orchSendQueue.current.length === 0) return;
     if (statusRef.current !== "ready") return;
+    if (hasPendingToolCalls()) return; // Don't inject during multi-step tool call cycles
 
     orchSendActive.current = true;
     const text = orchSendQueue.current.shift()!;
@@ -2272,7 +2289,7 @@ export default function Home() {
       sendMessageEarlyRef.current?.({ text });
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [hasPendingToolCalls]);
 
   const orchQueueSend = useCallback((text: string) => {
     orchSendQueue.current.push(text);
@@ -2302,6 +2319,10 @@ export default function Home() {
     }
   }, [status, agentRole, orchProcessQueue]);
 
+  // Track the clientId of the last incoming agent message/response that was queued.
+  // Used by auto-relay to exclude the original sender from the broadcast.
+  const lastIncomingSenderRef = useRef<string | null>(null);
+
   // ── Collaborative Agents: orchestrator displays agent responses in chat ──
   onAgentResponse.current = (payload) => {
     if (agentRoleRef.current !== "orchestrator") return;
@@ -2311,6 +2332,7 @@ export default function Home() {
     const statusLabel = payload.status === "in_progress" ? "progress update" : "final report";
     const reportText = `[Agent ${statusLabel} from ${label}] ${payload.summary || "Task completed"}`;
 
+    lastIncomingSenderRef.current = payload.senderId;
     // Queue the message — orchProcessQueue handles sending one at a time
     orchQueueSend(reportText);
   };
@@ -2327,6 +2349,7 @@ export default function Home() {
     const label = payload.senderShortId || payload.senderId;
     const msgText = `[Message from ${label}] ${payload.content}`;
 
+    lastIncomingSenderRef.current = payload.senderId;
     // Queue for both roles to avoid concurrent sendMessage crashes
     orchQueueSend(msgText);
   };
@@ -2371,9 +2394,10 @@ export default function Home() {
     // Skip very short ack-only responses
     if (!responseText || responseText.length < 20) return;
 
-    // Broadcast to ALL active collaborators — the orchestrator's response
-    // likely contains instructions, relayed messages, or coordination directives
-    sendAgentMessage(responseText);
+    // Broadcast to active collaborators, excluding the original sender to prevent
+    // ping-pong loops (A sends report → orchestrator responds → relay back to A → A responds → ...)
+    const excludeIds = lastIncomingSenderRef.current ? [lastIncomingSenderRef.current] : undefined;
+    sendAgentMessage(responseText, undefined, undefined, excludeIds);
   }, [agentRole, status, orchestration, messages, sendAgentMessage]);
 
   // ── Collaborative Agents: dead air watchdog ──

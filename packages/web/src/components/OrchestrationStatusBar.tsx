@@ -6,7 +6,7 @@ type CollaboratorInfo = {
   clientId: string;
   shortId: string;
   label: string;
-  status: "invited" | "active" | "completed";
+  status: "invited" | "active" | "completed" | "standby";
 };
 
 type Props = {
@@ -77,6 +77,8 @@ export function OrchestrationStatusBar({
                       className={
                         c.status === "active"
                           ? "text-emerald-400/70"
+                          : c.status === "standby"
+                          ? "text-amber-400/60"
                           : c.status === "completed"
                           ? "text-white/30"
                           : "text-white/40"
@@ -86,6 +88,9 @@ export function OrchestrationStatusBar({
                     </span>
                     {c.status === "invited" && (
                       <span className="text-white/30 ml-0.5">(pending)</span>
+                    )}
+                    {c.status === "standby" && (
+                      <span className="text-amber-400/40 ml-0.5">(standby)</span>
                     )}
                   </span>
                 ))}

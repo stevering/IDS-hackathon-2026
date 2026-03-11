@@ -90,7 +90,12 @@ export type AgentMessagePayload = OrchestrationEventBase & {
   content: string;
   mentions?: string[];
   insertInActive?: boolean;
+  /** Client IDs that should ignore this message (e.g. exclude the original sender in auto-relay) */
+  excludeClientIds?: string[];
 };
+
+/** Orchestrator signals end of collaboration to all collaborators */
+export type OrchestrationEndPayload = OrchestrationEventBase;
 
 /** Timer tick broadcast (orchestrator → all, every 30s) */
 export type OrchestrationTickPayload = OrchestrationEventBase & {
@@ -127,6 +132,7 @@ export type OrchestrationEvent =
   | { event: "agent_response"; payload: AgentResponsePayload }
   | { event: "agent_message"; payload: AgentMessagePayload }
   | { event: "orchestration_tick"; payload: OrchestrationTickPayload }
+  | { event: "orchestration_end"; payload: OrchestrationEndPayload }
   | { event: "sub_conversation_start"; payload: SubConversationStartPayload }
   | { event: "sub_conversation_end"; payload: SubConversationEndPayload };
 

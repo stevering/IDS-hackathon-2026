@@ -12,6 +12,7 @@ import type {
   AgentResponsePayload,
   AgentMessagePayload,
   OrchestrationTickPayload,
+  OrchestrationEndPayload,
   SubConversationStartPayload,
   SubConversationEndPayload,
   UserCollaborationSettings,
@@ -24,7 +25,7 @@ export type CollaboratorInfo = {
   clientId: string;
   shortId: string;
   label: string;
-  status: "invited" | "active" | "completed";
+  status: "invited" | "active" | "completed" | "standby";
   conversationId?: string;
   task?: string;
 };
@@ -59,6 +60,7 @@ export type OrchestrationCallbacks = {
   onAgentResponse?: (payload: AgentResponsePayload) => void;
   onAgentMessage?: (payload: AgentMessagePayload) => void;
   onTick?: (payload: OrchestrationTickPayload) => void;
+  onEnd?: (payload: OrchestrationEndPayload) => void;
   onSubConversationStart?: (payload: SubConversationStartPayload) => void;
   onSubConversationEnd?: (payload: SubConversationEndPayload) => void;
 };
@@ -117,6 +119,7 @@ export type UseOrchestrationReturn = {
     content: string,
     mentions?: string[],
     insertInActive?: boolean,
+    excludeClientIds?: string[],
   ) => void;
   updateSettings: (autoAccept: boolean) => Promise<void>;
   releaseRole: () => Promise<void>;
@@ -339,10 +342,22 @@ export function useOrchestration(
       },
 
       onAgentResponse: (payload: AgentResponsePayload) => {
+        // Orchestrator: update collaborator status when they report completion
+        if (roleRef.current === "orchestrator" && payload.status === "completed") {
+          setCollaborators((prev) =>
+            prev.map((c) =>
+              c.clientId === payload.senderId
+                ? { ...c, status: "completed" as const }
+                : c,
+            ),
+          );
+        }
         onAgentResponse.current?.(payload);
       },
 
       onAgentMessage: (payload: AgentMessagePayload) => {
+        // Skip if this client is in the exclude list (e.g. auto-relay excludes the original sender)
+        if (payload.excludeClientIds?.includes(clientIdRef.current)) return;
         onAgentMessage.current?.(payload);
       },
 
@@ -353,6 +368,22 @@ export function useOrchestration(
           if (!startedAtRef.current) {
             setStartedAt(new Date(payload.startedAt).getTime());
           }
+        }
+      },
+
+      onEnd: (payload: OrchestrationEndPayload) => {
+        // Collaborator receives end signal from orchestrator → reset to idle
+        if (roleRef.current === "collaborator") {
+          // Clean up timers
+          if (tickIntervalRef.current) { clearInterval(tickIntervalRef.current); tickIntervalRef.current = null; }
+          if (timerIntervalRef.current) { clearInterval(timerIntervalRef.current); timerIntervalRef.current = null; }
+          if (subConvTimeoutRef.current) { clearTimeout(subConvTimeoutRef.current); subConvTimeoutRef.current = null; }
+
+          setRole("idle");
+          setOrchestration(null);
+          setStartedAt(null);
+          setTimerRemainingMs(null);
+          setActiveSubConversation(null);
         }
       },
 
@@ -570,6 +601,18 @@ export function useOrchestration(
       const orch = orchestrationRef.current;
       if (!orch) return;
 
+      // Broadcast orchestration_end to all collaborators so they can go idle
+      const ch = channelRef.current;
+      if (ch) {
+        const endPayload: OrchestrationEndPayload = {
+          orchestrationId: orch.id,
+          senderId: clientIdRef.current,
+          senderShortId: shortIdRef.current ?? clientIdRef.current,
+          conversationId: orch.conversationId,
+        };
+        ch.send({ type: "broadcast", event: "orchestration_end", payload: endPayload });
+      }
+
       try {
         await fetch(`/api/orchestrations/${orch.id}`, {
           method: "PATCH",
@@ -593,7 +636,7 @@ export function useOrchestration(
       setTimerRemainingMs(null);
       setActiveSubConversation(null);
     },
-    [],
+    [channelRef],
   );
 
   // -------------------------------------------------------------------------
@@ -659,7 +702,7 @@ export function useOrchestration(
   // -------------------------------------------------------------------------
 
   const sendAgentMessage = useCallback(
-    (content: string, mentions?: string[], insertInActive?: boolean) => {
+    (content: string, mentions?: string[], insertInActive?: boolean, excludeClientIds?: string[]) => {
       const orch = orchestrationRef.current;
       if (!orch) return;
 
@@ -674,6 +717,7 @@ export function useOrchestration(
         content,
         mentions,
         insertInActive,
+        excludeClientIds,
       };
 
       ch.send({ type: "broadcast", event: "agent_message", payload });
