@@ -1719,6 +1719,18 @@ export default function Home() {
   // Ref to break the retry loop on errors (declared before useChat so callbacks can access it)
   const chatErrorRecoveryRef = useRef(false);
 
+  // Serialize figma_plugin_execute calls — the AI can issue multiple in the same turn,
+  // but concurrent addToolResult calls corrupt the SDK's internal state, causing
+  // "Tool result is missing for tool call figma_plugin_execute:N" errors.
+  const figmaExecQueueRef = useRef<Promise<void>>(Promise.resolve());
+  // Cooldown flag: true while a figma_plugin_execute is executing or within 300ms
+  // after addToolResult. Prevents orchProcessQueue from injecting messages during
+  // the brief "ready" gap between addToolResult and the SDK starting the next
+  // maxSteps stream, which would cause "Tool result is missing" errors.
+  const figmaExecInFlightRef = useRef(false);
+  // Forward ref so onToolCall's setTimeout can call orchProcessQueue (defined later)
+  const orchProcessQueueRef = useRef<(() => void) | null>(null);
+
   const { messages, sendMessage, status, error, setMessages, addToolResult: rawAddToolResult } = useChat({
     transport,
     // When the webapp runs inside a Figma plugin, handle figma_plugin_execute
@@ -1751,12 +1763,33 @@ export default function Home() {
           return;
         }
 
+        // Serialize: wait for any previous figma_plugin_execute to complete
+        // before executing this one. Concurrent addToolResult calls crash the SDK.
+        const prevQueue = figmaExecQueueRef.current;
+        let resolveQueue!: () => void;
+        figmaExecQueueRef.current = new Promise(r => { resolveQueue = r; });
+        await prevQueue;
+
+        // Block orchProcessQueue from injecting messages while we execute + cooldown
+        figmaExecInFlightRef.current = true;
+
         console.log("[FigmaPluginTool] Executing directly via postMessage:", code.substring(0, 80));
         try {
           const result = await executeCodeRef.current(code, input.timeout ?? 10000);
           safeAddToolResult(toolCall.toolCallId, result);
         } catch (err) {
           safeAddToolResult(toolCall.toolCallId, `Error: ${err instanceof Error ? err.message : String(err)}`);
+        } finally {
+          resolveQueue();
+          // Keep the in-flight flag for 300ms after addToolResult — the SDK needs
+          // time to transition from "ready" to "streaming" for the next maxSteps
+          // round. Without this cooldown, orchProcessQueue can inject a message
+          // during the gap, causing "Tool result is missing" errors.
+          setTimeout(() => {
+            figmaExecInFlightRef.current = false;
+            // Re-trigger queue now that cooldown is over
+            orchProcessQueueRef.current?.();
+          }, 300);
         }
       }
     },
@@ -2276,6 +2309,7 @@ export default function Home() {
     if (orchSendActive.current || orchSendQueue.current.length === 0) return;
     if (statusRef.current !== "ready") return;
     if (hasPendingToolCalls()) return; // Don't inject during multi-step tool call cycles
+    if (figmaExecInFlightRef.current) return; // Cooldown after figma_plugin_execute addToolResult
 
     orchSendActive.current = true;
     const text = orchSendQueue.current.shift()!;
@@ -2290,6 +2324,7 @@ export default function Home() {
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hasPendingToolCalls]);
+  orchProcessQueueRef.current = orchProcessQueue;
 
   const orchQueueSend = useCallback((text: string) => {
     orchSendQueue.current.push(text);

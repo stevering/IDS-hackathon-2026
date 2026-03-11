@@ -63,7 +63,7 @@ const varEntries = Object.entries(vars ?? {}).map(([prop, binding]) => ({
   property: prop,
   variableId: Array.isArray(binding)
     ? binding.map(b => b.id)
-    : (binding as any)?.id,
+    : binding?.id,
 }));
 return {
   nodeId: node.id,

@@ -58,12 +58,17 @@ Never give up after a single failure. If two consecutive attempts fail, explain 
 ### Figma Plugin API Reminders
 - Code runs as the BODY of an async function — do NOT wrap in \`(async () => { ... })()\`.
 - Use \`return\` to return JSON-serializable values (no raw Figma node objects).
+- **Node lookup**: ALWAYS use \`await figma.getNodeByIdAsync(id)\` — NEVER use \`figma.getNodeById(id)\`. The sync version throws "Cannot call with documentAccess: dynamic-page" in modern Figma plugins.
 - For text nodes, always call \`await figma.loadFontAsync({ family, style })\` before setting \`.characters\`.
 - Only Frame, Group, Component, ComponentSet support \`.appendChild()\`. Rectangle does NOT.
 - \`.paddingAll\` does not exist — use \`.paddingTop\`, \`.paddingRight\`, \`.paddingBottom\`, \`.paddingLeft\`.
 - **Selection**: Use \`figma.currentPage.selection\` to read/write the current selection. There is NO \`figma.currentSelection\` or \`figma.selection\` — using them throws "object is not extensible" because the \`figma\` global is sealed.
 - The \`figma\` object itself is sealed/frozen. Always access mutable properties through \`figma.currentPage\` or specific node references.
 - **Triangles & Polygons**: Use \`figma.createPolygon()\` with \`.pointCount = 3\` for triangles, \`.pointCount = 5\` for pentagons, etc. Set size with \`.resize(w, h)\`. Do NOT use \`figma.createStar()\` for simple polygons — StarNode has \`.innerRadius\` (0-1 ratio) which creates star shapes, not regular polygons.
+- **Colors**: Figma uses RGB in 0–1 range, NOT 0–255 and NOT hex strings. Convert hex: \`#2563EB\` → \`{ r: 0x25/255, g: 0x63/255, b: 0xEB/255 }\` i.e. \`{ r: 0.145, g: 0.388, b: 0.922 }\`. Always use \`{ type: 'SOLID', color: { r, g, b } }\` in \`.fills\`.
+- **Auto-layout**: Set \`.layoutMode = "VERTICAL"\` or \`"HORIZONTAL"\` on a Frame. Key properties: \`.itemSpacing\` (gap between children), \`.paddingTop/Right/Bottom/Left\`, \`.primaryAxisAlignItems\` (\`"MIN" | "CENTER" | "MAX" | "SPACE_BETWEEN"\`), \`.counterAxisAlignItems\` (\`"MIN" | "CENTER" | "MAX"\`), \`.primaryAxisSizingMode\` / \`.counterAxisSizingMode\` (\`"FIXED" | "AUTO"\` — AUTO = hug contents). Children of auto-layout frames are positioned automatically — do NOT set \`.x\` / \`.y\` on them.
+- **Text properties**: \`.fontSize = number\`, \`.fontName = { family: "Inter", style: "Bold" }\` (set AFTER loadFontAsync). Common styles: \`"Regular"\`, \`"Medium"\`, \`"Semi Bold"\`, \`"Bold"\`, \`"Light"\`. \`.textAutoResize = "WIDTH_AND_HEIGHT"\` to auto-size.
+- **Frame creation pattern**: \`const frame = figma.createFrame(); frame.name = "..."; frame.resize(w, h); frame.fills = []; frame.layoutMode = "VERTICAL"; frame.itemSpacing = 16;\` then \`frame.appendChild(child)\`.
 
 ### Prerequisites
 The Guardian Figma plugin must be open in Figma Desktop for execution tools to work.
