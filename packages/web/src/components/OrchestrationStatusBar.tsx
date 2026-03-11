@@ -47,7 +47,7 @@ export function OrchestrationStatusBar({
 
   return (
     <div
-      className={`flex items-center gap-2 px-3 py-1.5 text-xs border-t border-b border-white/30 ${
+      className={`flex items-center gap-2 px-3 py-1.5 text-xs border-b border-white/30 ${
         isOrchestrator
           ? "bg-amber-500/5 text-amber-300/80"
           : "bg-violet-500/5 text-violet-300/80"
