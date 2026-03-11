@@ -21,6 +21,9 @@ export const GUARDIAN_TOOLS_KNOWLEDGE = `
 - \`guardian_surface_pattern\` — Flag when a pattern appears in 3+ places and may warrant DS inclusion.
 - \`guardian_document_gap\` — Build a case for a DS extension request when a gap is identified.
 
+### Page Inspection Tools
+- \`guardian_list_page_children\` — List all top-level nodes on the current page (name, type, position, size). Use this instead of get_selection_context to check what exists on a page without requiring a selection.
+
 ### Figma Execution Tools
 - \`guardian_figma_execute\` — Execute arbitrary Figma Plugin API code in the open Figma plugin. Use for one-off operations.
 - \`guardian_list_skills\` — List available pre-validated Figma code templates (skills).

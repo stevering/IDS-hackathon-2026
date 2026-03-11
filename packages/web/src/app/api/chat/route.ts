@@ -3,7 +3,7 @@ import { createOpenAI } from "@ai-sdk/openai";
 import { createAnthropic } from "@ai-sdk/anthropic";
 import { createGoogleGenerativeAI } from "@ai-sdk/google";
 import { createGateway } from "@ai-sdk/gateway";
-import { streamText, stepCountIs, convertToModelMessages, tool as defineTool, jsonSchema, type LanguageModel, wrapLanguageModel, extractReasoningMiddleware } from "ai";
+import { streamText, stepCountIs, convertToModelMessages, type LanguageModel, wrapLanguageModel, extractReasoningMiddleware } from "ai";
 import { createClient as createSupabaseUserClient } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { FREE_TIER_MODEL } from "@/lib/providers";
@@ -27,6 +27,9 @@ import {
   GITHUB_MCP_URL,
   GITHUB_COOKIE_TOKENS,
 } from "@/lib/github-mcp-oauth";
+import { figmaPluginExecuteTool } from "@/tools/figma-plugin-execute";
+import { signalTaskCompleteTool } from "@/tools/signal-task-complete";
+import { orchestratorFigmaGuardTool } from "@/tools/orchestrator-figma-guard";
 
 export const maxDuration = 300; // 5 minutes to avoid Cloudflare timeout
 export const dynamic = 'force-dynamic';
@@ -226,27 +229,16 @@ function createKeepaliveStream(
             // Remove the MCP figma_execute tool (goes through Supabase RT — slow/timeout-prone)
             delete finalTools["guardian_guardian_figma_execute"];
             // Add a client-side tool (no execute → handled by useChat onToolCall)
-            finalTools["figma_plugin_execute"] = defineTool({
-              description: `Execute Figma Plugin API code directly on the local Figma plugin. The code runs in the plugin sandbox with access to the full Figma Plugin API.
-
-CRITICAL RULES:
-- Keep code SHORT (under 40 lines). Split large operations into multiple calls.
-- Do ONE thing per call: create a node, set properties, add text, etc.
-- Store node IDs from return values and reference them in subsequent calls.
-- NEVER generate very long code blocks — they get truncated and cause syntax errors.
-- The code body is wrapped in an async IIFE automatically — just write the body directly.
-- Return a value to get it back as the result.`,
-              inputSchema: jsonSchema({
-                type: "object" as const,
-                properties: {
-                  code: { type: "string" as const, description: "JavaScript code to execute in the Figma plugin sandbox. Has access to the full Figma Plugin API." },
-                  timeout: { type: "number" as const, description: "Timeout in milliseconds (default: 10000)" },
-                },
-                required: ["code"],
-              }),
-              // No execute function → client-side tool, handled by useChat onToolCall
-            });
+            finalTools["figma_plugin_execute"] = figmaPluginExecuteTool;
             console.log("[Chat] Local plugin detected — added figma_plugin_execute (client-side), removed guardian_guardian_figma_execute");
+          }
+
+          // Collaborator mode: add signal_task_complete tool (client-side)
+          // The agent calls this tool to signal that its task is done.
+          // Intercepted by onToolCall in page.tsx → sends sendAgentResponse("completed").
+          if (agentRole === 'collaborator') {
+            finalTools["signal_task_complete"] = signalTaskCompleteTool;
+            console.log("[Chat] Collaborator mode — added signal_task_complete (client-side)");
           }
 
           // Orchestrator mode: replace Figma execution tool with a guarded version
@@ -255,23 +247,7 @@ CRITICAL RULES:
           // Tool descriptions alone are not reliable — LLMs ignore them.
           if (agentRole === 'orchestrator') {
             if (finalTools["guardian_guardian_figma_execute"]) {
-              finalTools["guardian_guardian_figma_execute"] = defineTool({
-                description: `Execute Figma Plugin API code on a connected Figma plugin. ORCHESTRATOR MODE: this tool is GUARDED — collaborators execute autonomously via their own AI agents. Use guardian_guardian_run_skill with get_selection_context to verify results instead.`,
-                inputSchema: jsonSchema({
-                  type: "object" as const,
-                  properties: {
-                    code: { type: "string" as const, description: "Figma Plugin API code to execute" },
-                    targetClientId: { type: "string" as const, description: "Target client shortId or clientId" },
-                    timeout: { type: "number" as const, description: "Timeout in ms" },
-                  },
-                  required: ["code"],
-                }),
-                execute: async () => ({
-                  blocked: true,
-                  success: false,
-                  reason: "ORCHESTRATOR GUARD: Direct Figma execution is blocked in orchestrator mode. Each collaborator has its own AI agent that executes tasks autonomously — calling this tool creates DUPLICATES. Wait for agent reports instead. To verify results, use guardian_guardian_run_skill with get_selection_context.",
-                }),
-              });
+              finalTools["guardian_guardian_figma_execute"] = orchestratorFigmaGuardTool;
               console.log("[Chat] Orchestrator mode — replaced guardian_guardian_figma_execute with guarded version (blocks execution)");
             }
           }
@@ -1105,7 +1081,7 @@ ${peerList ? `Peers: ${peerList}` : ''}
 - Messages from the orchestrator relay contain instructions or peer contributions. Engage with them.
 - If the task involves discussion/collaboration (not just Figma work), focus on contributing your perspective and responding to what others have said
 
-**When done:** Clearly state what you accomplished and any issues encountered.
+**When done:** Call the \`signal_task_complete\` tool with a summary of what you accomplished. This is the ONLY way to signal completion — do NOT just write text about being done. Call the tool ONCE after all work is verified.
 `;
   }
 

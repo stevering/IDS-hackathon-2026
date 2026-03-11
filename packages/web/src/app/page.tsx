@@ -1792,6 +1792,23 @@ export default function Home() {
           }, 300);
         }
       }
+
+      if (toolCall.toolName === "signal_task_complete") {
+        const input = toolCall.input as { summary: string };
+        const summary = input.summary || "Task completed";
+
+        // Mark this collaborator as completed — used by Fix EE to drop late messages
+        collaboratorCompletedRef.current = true;
+
+        // Send completed status via Supabase RT (instantaneous, bypasses queue)
+        sendAgentResponse("task", "completed", summary);
+
+        safeAddToolResult(toolCall.toolCallId, JSON.stringify({
+          success: true,
+          message: "Task completion signaled to orchestrator. You can stop working now.",
+        }));
+        return;
+      }
     },
     // Auto-send tool results back to the server when all tool calls are resolved
     sendAutomaticallyWhen: lastAssistantMessageIsCompleteWithToolCalls,
@@ -2227,6 +2244,7 @@ export default function Home() {
   // by outputting [AGENT_DONE:#shortId] markers.
   const lastReportedMsgId = useRef<string | null>(null);
   const reportCount = useRef(0);
+  const collaboratorCompletedRef = useRef(false);
   useEffect(() => {
     if (agentRole !== "collaborator" || status !== "ready") return;
     if (!orchestration) return;
@@ -2274,6 +2292,7 @@ export default function Home() {
       orchSendQueue.current = [];
       orchSendActive.current = false;
       reportCount.current = 0;
+      collaboratorCompletedRef.current = false;
       lastReportedMsgId.current = null;
       lastRelayedMsgId.current = null;
       lastIncomingSenderRef.current = null;
@@ -2379,6 +2398,14 @@ export default function Home() {
     if (payload.senderId === myClientIdRef.current) return;
     // Only process if we're part of an orchestration
     if (agentRoleRef.current === "idle") return;
+
+    // Fix EE: collaborator called signal_task_complete → it declared itself done.
+    // Drop late orchestrator messages — they were sent before our completion report
+    // arrived and would trigger redundant "I already finished" responses.
+    if (agentRoleRef.current === "collaborator" && collaboratorCompletedRef.current) {
+      console.log("[Orchestration] Dropping message — collaborator called signal_task_complete");
+      return;
+    }
 
     const label = payload.senderShortId || payload.senderId;
     const msgText = `[Message from ${label}] ${payload.content}`;

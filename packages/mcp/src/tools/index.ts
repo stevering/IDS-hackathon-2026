@@ -22,6 +22,7 @@ import { registerSurfacePatternTool } from "./surface-pattern.js"
 import { registerDocumentGapTool } from "./document-gap.js"
 import { registerFigmaExecuteTool } from "./figma-execute.js"
 import { registerSkillsTools } from "./skills.js"
+import { registerListPageChildrenTool } from "./list-page-children.js"
 
 export function registerAllTools(server: McpServer, userId?: string): void {
   // Investigation tools
@@ -34,4 +35,7 @@ export function registerAllTools(server: McpServer, userId?: string): void {
   // Execution tools (Figma plugin bridge via Supabase Realtime)
   registerFigmaExecuteTool(server, userId)
   registerSkillsTools(server, userId)
+
+  // Page inspection tools (Figma plugin bridge)
+  registerListPageChildrenTool(server, userId)
 }
