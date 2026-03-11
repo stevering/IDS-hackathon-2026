@@ -122,28 +122,28 @@ Params:
   timeout  (number, optional) — execution timeout in ms (default: 10000)
 ```
 
-#### `guardian_list_skills`
+#### `guardian_list_actions`
 
-List all available Guardian skills (built-in + user-defined).
+List all available Guardian actions (built-in + user-defined).
 
 ```
 Params:
   category  (string, optional) — filter: "ds-inspection" | "ds-annotation" | "variables" | "nodes" | "components" | "user"
 ```
 
-#### `guardian_run_skill`
+#### `guardian_run_action`
 
-Run a named skill with parameters. Skills are pre-validated Figma Plugin API code templates.
+Run a named action with parameters. Actions are pre-validated code templates executed on a target runtime.
 
 ```
 Params:
-  name    (string, required) — skill name from guardian_list_skills
-  params  (object, optional) — parameters for the skill
+  name    (string, required) — action name from guardian_list_actions
+  params  (object, optional) — parameters for the action
 ```
 
-## Built-in skills
+## Built-in actions
 
-| Skill | Category | Params | Description |
+| Action | Category | Params | Description |
 |---|---|---|---|
 | `get_selection_context` | ds-inspection | — | Snapshot of selected node(s): type, size, fills, strokes, variables |
 | `get_node_variables` | ds-inspection | `nodeId` | List all design variables bound to a node |
@@ -152,19 +152,19 @@ Params:
 | `get_ds_variables` | ds-inspection | `filterName?` | List all local tokens in file, grouped by collection |
 | `annotate_drift` | ds-annotation | `nodeId`, `message?` | Add yellow warning sticky near a drifted node |
 
-### Custom skills
+### Custom actions
 
-Add user-defined skills as JSON files in `skills/user/<skill-name>.json`:
+Add user-defined actions as JSON files in `actions/user/<action-name>.json`:
 
 ```json
 {
-  "name": "my_skill",
+  "name": "my_action",
   "description": "What it does",
   "category": "user",
   "params": [
     { "name": "nodeId", "type": "string", "required": true, "description": "Target node" }
   ],
-  "codeTemplate": "const node = figma.getNodeById('{{nodeId}}'); return { name: node.name };",
+  "template": "const node = figma.getNodeById('{{nodeId}}'); return { name: node.name };",
   "version": "1.0.0"
 }
 ```
@@ -180,7 +180,7 @@ Add user-defined skills as JSON files in `skills/user/<skill-name>.json`:
                                      │  │ Investigation   │  │
 ┌─────────────────┐    http :3847    │  │ Playbooks       │  │
 │  Next.js webapp │◄────────────────►│  ├────────────────┤  │
-│  (@guardian/web) │                 │  │ Skills Registry │  │
+│  (@guardian/web) │                 │  │ Actions Registry│  │
 └─────────────────┘                  │  ├────────────────┤  │
                                      │  │ Figma Bridge    │  │
                                      │  │ (Phase 2)       │  │
@@ -195,7 +195,7 @@ Add user-defined skills as JSON files in `skills/user/<skill-name>.json`:
 
 **Playbook-driven**: The server provides investigation *strategy* (what to look for, where, how to interpret). The AI agent uses its own tools (Figma MCP, GitHub, code search) to execute the steps.
 
-**Skills**: Pre-validated Figma Plugin API code templates that run inside the Figma plugin sandbox. Built-in skills cover common DS compliance checks; custom skills can be added as JSON.
+**Actions**: Pre-validated code templates that run on a target runtime (currently Figma plugin sandbox). Built-in actions cover common DS compliance checks; custom actions can be added as JSON.
 
 ## Dependencies
 

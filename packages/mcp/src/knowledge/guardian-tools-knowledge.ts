@@ -26,10 +26,10 @@ export const GUARDIAN_TOOLS_KNOWLEDGE = `
 
 ### Figma Execution Tools
 - \`guardian_figma_execute\` — Execute arbitrary Figma Plugin API code in the open Figma plugin. Use for one-off operations.
-- \`guardian_list_skills\` — List available pre-validated Figma code templates (skills).
-- \`guardian_run_skill\` — Run a named skill with parameters. Prefer this over \`guardian_figma_execute\` for common operations.
+- \`guardian_list_actions\` — List available pre-validated Figma code templates (actions).
+- \`guardian_run_action\` — Run a named action with parameters. Prefer this over \`guardian_figma_execute\` for common operations.
 
-### Built-in Skills (via guardian_run_skill)
+### Built-in Actions (via guardian_run_action)
 - \`get_selection_context\` — Snapshot of selected node(s): name, type, size, fills, strokes, variables.
 - \`get_node_variables\` — Variables (tokens) bound to a node.
 - \`detect_token_overrides\` — Find hardcoded non-token values on a node.
@@ -54,7 +54,7 @@ When \`guardian_figma_execute\` returns \`success: false\`:
 2. **Diagnose** — common causes: wrong API (e.g. \`RectangleNode\` has no \`appendChild\`, use a \`Frame\` instead), missing \`await\`, invalid property value, non-existent node ID.
 3. **Fix** — correct the code. Do NOT ask the user; fix it yourself.
 4. **Retry** — call \`guardian_figma_execute\` again with the corrected code.
-5. **Verify** — after a successful call, always verify the result using a **different tool** (not \`guardian_figma_execute\` again). Use \`guardian_run_skill\` with \`get_selection_context\` or \`get_node_variables\` to inspect the created/modified node, or use a Figma MCP read tool (\`figma_get_design_context\`, \`figma_get_metadata\`) if a node ID was returned. Confirm that the node exists, has the expected properties, and looks correct before reporting success to the user.
+5. **Verify** — after a successful call, always verify the result using a **different tool** (not \`guardian_figma_execute\` again). Use \`guardian_run_action\` with \`get_selection_context\` or \`get_node_variables\` to inspect the created/modified node, or use a Figma MCP read tool (\`figma_get_design_context\`, \`figma_get_metadata\`) if a node ID was returned. Confirm that the node exists, has the expected properties, and looks correct before reporting success to the user.
 6. **Continue** — once verification passes, carry on with the rest of the task.
 Never give up after a single failure. If two consecutive attempts fail, explain the error to the user and propose a solution.
 

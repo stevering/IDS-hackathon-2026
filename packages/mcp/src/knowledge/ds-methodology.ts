@@ -51,7 +51,7 @@ Use available code tools proactively. Always read before edit. Plan all edits fi
 
 export const DS_ROUTING_RULES = `
 # ROUTING & ANALYSIS RULES
-- Figma query (read) → use Figma MCP tools (\`figma_\`) or Guardian skills.
+- Figma query (read) → use Figma MCP tools (\`figma_\`) or Guardian actions.
 - Figma action (create/modify/script) → use \`guardian_figma_execute\` or Figma Console MCP tools (\`figmaconsole_\`).
 - Code query → use Code MCP tools (\`code_\`).
 - DS compliance check → use Guardian MCP tools (\`guardian_\`).

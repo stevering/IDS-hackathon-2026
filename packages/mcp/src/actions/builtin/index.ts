@@ -1,14 +1,14 @@
 /**
- * Built-in Guardian skills
+ * Built-in Guardian actions
  *
  * Focused on DS compliance use cases:
  * inspection, drift detection, and annotation.
- * All skills require the Guardian Figma plugin bridge to be active.
+ * All actions require the Guardian Figma plugin bridge to be active.
  */
 
-import type { Skill } from "../types.js"
+import type { Action } from "../types.js"
 
-export const BUILTIN_SKILLS: Skill[] = [
+export const BUILTIN_ACTIONS: Action[] = [
   {
     name: "get_selection_context",
     description:
@@ -17,7 +17,7 @@ export const BUILTIN_SKILLS: Skill[] = [
       "Use this as a first step in any drift or snowflake investigation.",
     category: "ds-inspection",
     params: [],
-    codeTemplate: `
+    template: `
 const nodes = figma.currentPage.selection;
 if (nodes.length === 0) return { error: "No node selected" };
 return nodes.map(node => ({
@@ -36,6 +36,7 @@ return nodes.map(node => ({
   isInstance: node.type === "INSTANCE",
 }));
     `.trim(),
+    target: "figma",
     source: "builtin",
     version: "0.1.0",
   },
@@ -55,7 +56,7 @@ return nodes.map(node => ({
         description: "Figma node ID (e.g. '123:456')",
       },
     ],
-    codeTemplate: `
+    template: `
 const node = await figma.getNodeByIdAsync("{{nodeId}}");
 if (!node) return { error: "Node not found: {{nodeId}}" };
 const vars = "boundVariables" in node ? node.boundVariables : {};
@@ -73,6 +74,7 @@ return {
   hasVariables: varEntries.length > 0,
 };
     `.trim(),
+    target: "figma",
     source: "builtin",
     version: "0.1.0",
   },
@@ -92,7 +94,7 @@ return {
         description: "Figma node ID to inspect for token overrides",
       },
     ],
-    codeTemplate: `
+    template: `
 const node = await figma.getNodeByIdAsync("{{nodeId}}");
 if (!node) return { error: "Node not found: {{nodeId}}" };
 const boundVars = ("boundVariables" in node ? node.boundVariables : {}) ?? {};
@@ -132,6 +134,7 @@ return {
     : "All visual properties are token-bound or empty",
 };
     `.trim(),
+    target: "figma",
     source: "builtin",
     version: "0.1.0",
   },
@@ -151,7 +154,7 @@ return {
         description: "Figma node ID of the component instance",
       },
     ],
-    codeTemplate: `
+    template: `
 const node = await figma.getNodeByIdAsync("{{nodeId}}");
 if (!node) return { error: "Node not found: {{nodeId}}" };
 if (node.type !== "INSTANCE") {
@@ -171,6 +174,7 @@ return {
   detached: false,
 };
     `.trim(),
+    target: "figma",
     source: "builtin",
     version: "0.1.0",
   },
@@ -191,7 +195,7 @@ return {
         default: "",
       },
     ],
-    codeTemplate: `
+    template: `
 const collections = await figma.variables.getLocalVariableCollectionsAsync();
 const allVars = await figma.variables.getLocalVariablesAsync();
 const filter = "{{filterName}}";
@@ -217,6 +221,7 @@ return {
   collections: grouped,
 };
     `.trim(),
+    target: "figma",
     source: "builtin",
     version: "0.1.0",
   },
@@ -243,7 +248,7 @@ return {
         default: "Drift detected — check DS token usage",
       },
     ],
-    codeTemplate: `
+    template: `
 const node = await figma.getNodeByIdAsync("{{nodeId}}");
 if (!node || !("x" in node)) return { error: "Node not found or not positionable" };
 const msg = "{{message}}" || "Drift detected — check DS token usage";
@@ -271,6 +276,7 @@ return {
   message: msg,
 };
     `.trim(),
+    target: "figma",
     source: "builtin",
     version: "0.1.0",
   },

@@ -10,8 +10,8 @@
  *
  * Execution tools (require Guardian Figma plugin bridge — Phase 2):
  *   guardian_figma_execute          — run arbitrary Plugin API code
- *   guardian_list_skills            — discover available skills
- *   guardian_run_skill              — run a named parameterized skill
+ *   guardian_list_actions           — discover available actions
+ *   guardian_run_action             — run a named parameterized action
  */
 
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js"
@@ -21,7 +21,7 @@ import { registerAssessSnowflakeTool } from "./assess-snowflake.js"
 import { registerSurfacePatternTool } from "./surface-pattern.js"
 import { registerDocumentGapTool } from "./document-gap.js"
 import { registerFigmaExecuteTool } from "./figma-execute.js"
-import { registerSkillsTools } from "./skills.js"
+import { registerActionTools } from "./actions.js"
 import { registerListPageChildrenTool } from "./list-page-children.js"
 
 export function registerAllTools(server: McpServer, userId?: string): void {
@@ -34,7 +34,7 @@ export function registerAllTools(server: McpServer, userId?: string): void {
 
   // Execution tools (Figma plugin bridge via Supabase Realtime)
   registerFigmaExecuteTool(server, userId)
-  registerSkillsTools(server, userId)
+  registerActionTools(server, userId)
 
   // Page inspection tools (Figma plugin bridge)
   registerListPageChildrenTool(server, userId)

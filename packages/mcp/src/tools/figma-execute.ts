@@ -7,8 +7,8 @@ export function registerFigmaExecuteTool(server: McpServer, userId?: string): vo
     "guardian_figma_execute",
     `Execute arbitrary Figma Plugin API code via the Guardian Figma plugin bridge.
 
-Use this for one-off operations not covered by guardian_run_skill.
-Prefer guardian_run_skill for common DS operations (it uses pre-validated code templates).
+Use this for one-off operations not covered by guardian_run_action.
+Prefer guardian_run_action for common DS operations (it uses pre-validated code templates).
 
 IMPORTANT: The Guardian Figma plugin must be open in Figma Desktop for this to work.
 Communication goes through Supabase Realtime (works locally and remotely).
