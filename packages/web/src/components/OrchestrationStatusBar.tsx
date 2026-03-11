@@ -44,29 +44,39 @@ export function OrchestrationStatusBar({
   const isOrchestrator = role === "orchestrator";
   const hasTimer = timerRemainingMs != null && timerRemainingMs >= 0;
   const isLowTime = hasTimer && timerRemainingMs < 60_000; // < 1 min
+  const allCompleted = isOrchestrator && collaborators && collaborators.length > 0
+    && collaborators.every(c => c.status === "completed" || c.status === "standby");
 
   return (
     <div
       className={`flex items-center gap-2 px-3 py-1.5 text-xs border-b border-white/30 ${
-        isOrchestrator
-          ? "bg-amber-500/5 text-amber-300/80"
-          : "bg-violet-500/5 text-violet-300/80"
+        allCompleted
+          ? "bg-emerald-500/5 text-emerald-300/80"
+          : isOrchestrator
+            ? "bg-amber-500/5 text-amber-300/80"
+            : "bg-violet-500/5 text-violet-300/80"
       }`}
     >
       {/* Role badge */}
       <span
         className={`shrink-0 px-1.5 py-0.5 rounded text-[10px] font-medium uppercase tracking-wider ${
-          isOrchestrator
-            ? "bg-amber-500/15 text-amber-400"
-            : "bg-violet-500/15 text-violet-400"
+          allCompleted
+            ? "bg-emerald-500/15 text-emerald-400"
+            : isOrchestrator
+              ? "bg-amber-500/15 text-amber-400"
+              : "bg-violet-500/15 text-violet-400"
         }`}
       >
-        {isOrchestrator ? "Orchestrator" : "Collaborator"}
+        {allCompleted ? "Done" : isOrchestrator ? "Orchestrator" : "Collaborator"}
       </span>
 
       {/* Content */}
       <div className="flex-1 min-w-0 truncate">
-        {isOrchestrator && collaborators ? (
+        {allCompleted ? (
+          <span className="text-emerald-400/70">
+            All tasks completed — closing session…
+          </span>
+        ) : isOrchestrator && collaborators ? (
           <span>
             {collaborators.length === 0
               ? "No collaborators yet"

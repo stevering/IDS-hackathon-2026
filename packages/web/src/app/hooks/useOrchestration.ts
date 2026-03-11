@@ -17,6 +17,16 @@ import type {
   SubConversationEndPayload,
   UserCollaborationSettings,
 } from "@/types/orchestration";
+
+/** Match shortId with suffix support — LLM may abbreviate "#Figma-Desktop-zivihi" to "#zivihi" */
+export function matchesShortId(fullShortId: string | undefined, abbreviated: string): boolean {
+  if (!fullShortId) return false;
+  if (fullShortId === abbreviated) return true;
+  const full = fullShortId.replace(/^#/, "");
+  const abbr = abbreviated.replace(/^#/, "");
+  return full.endsWith(`-${abbr}`);
+}
+
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -121,6 +131,7 @@ export type UseOrchestrationReturn = {
     insertInActive?: boolean,
     excludeClientIds?: string[],
   ) => void;
+  markCollaboratorDone: (shortId: string) => void;
   updateSettings: (autoAccept: boolean) => Promise<void>;
   releaseRole: () => Promise<void>;
 
@@ -342,6 +353,10 @@ export function useOrchestration(
       },
 
       onAgentResponse: (payload: AgentResponsePayload) => {
+        // Ignore responses from a different orchestration (ghost reports from previous sessions)
+        const currentOrch = orchestrationRef.current;
+        if (currentOrch && payload.orchestrationId && payload.orchestrationId !== currentOrch.id) return;
+
         // Orchestrator: update collaborator status when they report completion
         if (roleRef.current === "orchestrator" && payload.status === "completed") {
           setCollaborators((prev) =>
@@ -725,6 +740,18 @@ export function useOrchestration(
     [channelRef],
   );
 
+  const markCollaboratorDone = useCallback((shortId: string) => {
+    setCollaborators((prev) => {
+      // Skip update if already completed — avoids creating a new array reference
+      // which would reset the auto-end timer in the useEffect that depends on collaborators.
+      const target = prev.find((c) => matchesShortId(c.shortId, shortId));
+      if (!target || target.status === "completed") return prev;
+      return prev.map((c) =>
+        matchesShortId(c.shortId, shortId) ? { ...c, status: "completed" as const } : c,
+      );
+    });
+  }, []);
+
   const updateSettings = useCallback(async (autoAccept: boolean): Promise<void> => {
     try {
       const res = await fetch("/api/user/settings", {
@@ -814,6 +841,26 @@ export function useOrchestration(
       if (tickIntervalRef.current) { clearInterval(tickIntervalRef.current); tickIntervalRef.current = null; }
     };
   }, [role, startedAt, channelRef, completeOrchestration]);
+
+  // -------------------------------------------------------------------------
+  // Auto-end orchestration when all collaborators have completed
+  // -------------------------------------------------------------------------
+  useEffect(() => {
+    if (role !== "orchestrator") return;
+    if (collaborators.length === 0) return;
+    const allDone = collaborators.every(c => c.status === "completed" || c.status === "standby");
+    if (!allDone) return;
+
+    const timer = setTimeout(() => {
+      // Re-check: still orchestrator and all still done?
+      if (roleRef.current === "orchestrator" && orchestrationRef.current) {
+        console.log("[Orchestration] All collaborators completed — auto-ending after grace period");
+        completeOrchestration("completed");
+      }
+    }, 15_000); // 15s grace period for orchestrator to finalize
+
+    return () => clearTimeout(timer);
+  }, [role, collaborators, completeOrchestration]);
 
   // -------------------------------------------------------------------------
   // Sub-conversation actions
@@ -931,6 +978,7 @@ export function useOrchestration(
 
     // Shared actions
     sendAgentMessage,
+    markCollaboratorDone,
     updateSettings,
     releaseRole,
 

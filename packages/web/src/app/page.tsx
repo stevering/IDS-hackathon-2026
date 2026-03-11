@@ -17,7 +17,7 @@ import remarkGfm from "remark-gfm";
 import remarkBreaks from "remark-breaks";
 import { useConversations } from "./hooks/useConversations";
 import { useMessagePersistence } from "./hooks/useMessagePersistence";
-import { useOrchestration, type OrchestrationCallbacks, type CollaboratorInfo } from "./hooks/useOrchestration";
+import { useOrchestration, matchesShortId, type OrchestrationCallbacks, type CollaboratorInfo } from "./hooks/useOrchestration";
 import type { AgentRole, Orchestration } from "@/types/orchestration";
 import { ConversationSwitcher } from "@/components/ConversationSwitcher";
 import { OrchestrationStatusBar } from "@/components/OrchestrationStatusBar";
@@ -210,10 +210,11 @@ function parseStructuredContent(text: string, isStreamingMsg: boolean = false): 
     mcpStatusBlocks.push(lastMcpStatus);
   }
 
-  // Remove MCP tags from text to avoid displaying them
+  // Remove internal markers from text to avoid displaying them
   cleanedText = cleanedText
     .replace(/\[MCP_STATUS:\w+\]/g, "")
-    .replace(/\[MCP_ERROR_BLOCK\][\s\S]*?\[\/MCP_ERROR_BLOCK\]/g, "");
+    .replace(/\[MCP_ERROR_BLOCK\][\s\S]*?\[\/MCP_ERROR_BLOCK\]/g, "")
+    .replace(/\[AGENT_DONE:[^\]]*\]/g, "");
 
   if (isStreamingMsg) {
     const openTag = "<!-- DETAILS_START -->";
@@ -1008,6 +1009,7 @@ export default function Home() {
     startSubConversation,
     endSubConversation,
     sendAgentMessage,
+    markCollaboratorDone,
     updateSettings: updateCollabSettings,
     releaseRole,
     orchestrationCallbacksRef,
@@ -1686,9 +1688,13 @@ export default function Home() {
           }
           // In collaborator mode, ALWAYS target self — the collaborator works on its own file,
           // regardless of what's selected in the design target dropdown.
+          // In orchestrator mode, do NOT force a targetClientId — let the LLM choose
+          // the target via tool params so it can route to different plugins.
           const targetClientId = agentRoleRef.current === 'collaborator'
             ? myClientIdRef.current
-            : (targetPluginClientId ?? (isFigmaPluginRef.current ? myClientIdRef.current : undefined));
+            : agentRoleRef.current === 'orchestrator'
+              ? undefined
+              : (targetPluginClientId ?? (isFigmaPluginRef.current ? myClientIdRef.current : undefined));
           // Build list of other connected agents for AI awareness (all roles, not just idle)
           const otherAgents = clientsRef.current
             .filter(c => c.clientId !== myClientIdRef.current && c.type !== "overlay")
@@ -2183,9 +2189,9 @@ export default function Home() {
     }, 2000);
   };
 
-  // ── Collaborative Agents: collaborator auto-reports result back to orchestrator ──
-  // Supports both intermediate (in_progress) and final (completed) reports.
-  // Intermediate reports are sent after each LLM turn except the first (to give the agent time to work).
+  // ── Collaborative Agents: collaborator auto-reports progress back to orchestrator ──
+  // Always sends "in_progress" — the orchestrator decides when a task is done
+  // by outputting [AGENT_DONE:#shortId] markers.
   const lastReportedMsgId = useRef<string | null>(null);
   const reportCount = useRef(0);
   useEffect(() => {
@@ -2217,14 +2223,8 @@ export default function Home() {
     if (!responseText || responseText.length < 5) return;
 
     reportCount.current += 1;
-    const assistantMsgCount = messages.filter(m => m.role === "assistant").length;
 
-    // Determine report status: completed on last turn, in_progress otherwise
-    // Heuristic: if the AI mentions completion words or the report count is high
-    const isDone = /\b(done|completed|finished|terminé|fini|voilà)\b/i.test(responseText)
-      || assistantMsgCount >= 3;
-
-    sendAgentResponse("task", isDone ? "completed" : "in_progress", responseText);
+    sendAgentResponse("task", "in_progress", responseText);
   }, [agentRole, status, orchestration, messages, sendAgentResponse]);
 
   // ── Collaborative Agents: tracking refs (declared early so the idle reset below can reference them) ──
@@ -2329,8 +2329,7 @@ export default function Home() {
 
     const collab = collaborators.find(c => c.clientId === payload.senderId);
     const label = collab?.shortId || payload.senderShortId;
-    const statusLabel = payload.status === "in_progress" ? "progress update" : "final report";
-    const reportText = `[Agent ${statusLabel} from ${label}] ${payload.summary || "Task completed"}`;
+    const reportText = `[Agent report from ${label}] ${payload.summary || "Task completed"}`;
 
     lastIncomingSenderRef.current = payload.senderId;
     // Queue the message — orchProcessQueue handles sending one at a time
@@ -2366,19 +2365,7 @@ export default function Home() {
     const lastAssistant = [...messages].reverse().find(m => m.role === "assistant");
     if (!lastAssistant || lastRelayedMsgId.current === lastAssistant.id) return;
 
-    // Only relay if the previous message was an agent report (i.e. this response
-    // was triggered by agent communication, not by the human user)
-    const prevMsgs = messages.slice(0, messages.indexOf(lastAssistant));
-    const lastUserMsg = [...prevMsgs].reverse().find(m => m.role === "user");
-    const isAgentTriggered = lastUserMsg?.parts?.some(
-      (p): p is { type: "text"; text: string } =>
-        p.type === "text" && (
-          p.text?.startsWith("[Agent ") ||
-          p.text?.startsWith("[Message from ")
-        ),
-    );
-    if (!isAgentTriggered) return;
-
+    // Mark as processed FIRST — prevents re-processing regardless of relay decision
     lastRelayedMsgId.current = lastAssistant.id;
 
     // Extract the AI's response text, stripping noise
@@ -2391,14 +2378,59 @@ export default function Home() {
       .replace(/\[ORCHESTRATE:[^\]]*\]/g, "")
       .trim();
 
-    // Skip very short ack-only responses
-    if (!responseText || responseText.length < 20) return;
+    // Parse [AGENT_DONE:#shortId] or [AGENT_DONE:#id1,#id2,...] markers — ALWAYS,
+    // regardless of what triggered the response. Without this, AGENT_DONE markers
+    // in responses to watchdog/system messages would never be parsed.
+    const doneRegex = /\[AGENT_DONE:([^\]]+)\]/g;
+    const justDoneShortIds: string[] = [];
+    let doneMatch;
+    while ((doneMatch = doneRegex.exec(responseText)) !== null) {
+      const ids = doneMatch[1].split(",").map(s => s.trim());
+      for (const raw of ids) {
+        const doneShortId = raw.startsWith("#") ? raw : `#${raw}`;
+        markCollaboratorDone(doneShortId);
+        justDoneShortIds.push(doneShortId);
+      }
+    }
 
-    // Broadcast to active collaborators, excluding the original sender to prevent
-    // ping-pong loops (A sends report → orchestrator responds → relay back to A → A responds → ...)
-    const excludeIds = lastIncomingSenderRef.current ? [lastIncomingSenderRef.current] : undefined;
-    sendAgentMessage(responseText, undefined, undefined, excludeIds);
-  }, [agentRole, status, orchestration, messages, sendAgentMessage]);
+    // Only relay if the previous message was an agent report (i.e. this response
+    // was triggered by agent communication, not by the human user or watchdog)
+    const prevMsgs = messages.slice(0, messages.indexOf(lastAssistant));
+    const lastUserMsg = [...prevMsgs].reverse().find(m => m.role === "user");
+    const isAgentTriggered = lastUserMsg?.parts?.some(
+      (p): p is { type: "text"; text: string } =>
+        p.type === "text" && (
+          p.text?.startsWith("[Agent ") ||
+          p.text?.startsWith("[Message from ")
+        ),
+    );
+    if (!isAgentTriggered) return;
+
+    // Strip AGENT_DONE markers from relayed text
+    const relayText = responseText.replace(/\[AGENT_DONE:[^\]]*\]/g, "").trim();
+
+    // Skip very short ack-only responses
+    if (!relayText || relayText.length < 20) return;
+
+    // Don't relay to agents that are done — they have no more work to do and
+    // any message they receive triggers an LLM response → auto-report → loop.
+    // Collect: already-completed agents + agents just marked done in this response.
+    const allCollabs = collaboratorsRef.current ?? [];
+    const doneClientIds = allCollabs
+      .filter(c => c.status === "completed" || justDoneShortIds.some(sid => matchesShortId(c.shortId, sid)))
+      .map(c => c.clientId);
+
+    // Also exclude the original sender (prevents direct ping-pong)
+    const excludeIds = [
+      ...(lastIncomingSenderRef.current ? [lastIncomingSenderRef.current] : []),
+      ...doneClientIds,
+    ];
+
+    // If all collaborators are excluded, skip the relay entirely
+    if (allCollabs.length > 0 && allCollabs.every(c => excludeIds.includes(c.clientId))) return;
+
+    sendAgentMessage(relayText, undefined, undefined, excludeIds.length > 0 ? excludeIds : undefined);
+  }, [agentRole, status, orchestration, messages, sendAgentMessage, markCollaboratorDone]);
 
   // ── Collaborative Agents: dead air watchdog ──
   // Detects when the orchestrator is idle with active collaborators but nothing
@@ -2427,7 +2459,7 @@ export default function Home() {
         stallNudgeCount.current += 1;
         console.log("[Orchestration] Dead air detected — nudging orchestrator AI");
         const collabNames = activeCollabs.map(c => c.shortId).join(", ");
-        orchQueueSend(`[System] No activity for ${Math.round(idleMs / 1000)}s. Active agents: ${collabNames}. Check if you have pending agent reports to process or if you need to send instructions to agents.`);
+        orchQueueSend(`[System — automated watchdog, NOT a user message] No activity for ${Math.round(idleMs / 1000)}s. Active agents: ${collabNames}. If all agents have reported, mark them done with [AGENT_DONE:#shortId] and synthesize the final summary for the user. Do NOT re-execute tasks that agents already completed.`);
       }
     }, 10_000);
 
@@ -2995,13 +3027,32 @@ export default function Home() {
             const agentMsgMatch = !agentReportMatch && msgText.match(/^\[Message from (#?[\w-]+)\] ([\s\S]*)/);
             // Match orchestrator task injection: [Orchestrator task] ...
             const orchTaskMatch = !agentReportMatch && !agentMsgMatch && msgText.match(/^\[Orchestrator task\]/);
+            // Match system messages (watchdog, nudges): [System ...] ...
+            const systemMsgMatch = !agentReportMatch && !agentMsgMatch && !orchTaskMatch && msgText.match(/^\[System[^\]]*\] ([\s\S]*)/);
+            // Match collaborator join notifications: [#agent1 (file A), #agent2 (file B) joined the session ...]
+            const collabJoinMatch = !agentReportMatch && !agentMsgMatch && !orchTaskMatch && !systemMsgMatch
+              && msgText.match(/^\[(.+?) joined the session/);
 
-            if (m.role === "user" && (agentJoinMatch || agentReportMatch || agentMsgMatch || orchTaskMatch)) {
+            if (m.role === "user" && (agentJoinMatch || agentReportMatch || agentMsgMatch || orchTaskMatch || systemMsgMatch || collabJoinMatch)) {
               if (agentJoinMatch) {
                 return (
                   <div key={m.id} className="flex justify-center my-2">
                     <div className="px-3 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/15 text-[11px] text-emerald-400/70">
                       <span className="font-medium">{agentJoinMatch[1]}</span> ({agentJoinMatch[2]}) joined the session
+                    </div>
+                  </div>
+                );
+              }
+              if (collabJoinMatch) {
+                // Parse agent list: "#Agent1 (file A), #Agent2 (file B)"
+                const agentList = collabJoinMatch[1].split(/,\s*/).map(a => a.trim());
+                return (
+                  <div key={m.id} className="flex justify-center my-2">
+                    <div className="px-3 py-1.5 rounded-full bg-emerald-500/10 border border-emerald-500/15 text-[11px] text-emerald-400/70">
+                      {agentList.map((agent, i) => (
+                        <span key={i}>{i > 0 && ", "}<span className="font-medium">{agent}</span></span>
+                      ))}
+                      {" "}joined the session
                     </div>
                   </div>
                 );
@@ -3033,6 +3084,15 @@ export default function Home() {
                   <div key={m.id} className="flex justify-center my-2">
                     <div className="px-3 py-1 rounded-full bg-amber-500/10 border border-amber-500/15 text-[11px] text-amber-400/70">
                       Task assigned by orchestrator
+                    </div>
+                  </div>
+                );
+              }
+              if (systemMsgMatch) {
+                return (
+                  <div key={m.id} className="flex justify-center my-2">
+                    <div className="px-3 py-1.5 rounded-full bg-white/5 border border-white/10 text-[11px] text-white/40 italic">
+                      {systemMsgMatch[1]}
                     </div>
                   </div>
                 );
@@ -3371,6 +3431,7 @@ export default function Home() {
                         .replace(/\[MCP_STATUS:\w+\]/g, "")
                         .replace(/\[MCP_ERROR_BLOCK\][\s\S]*?\[\/MCP_ERROR_BLOCK\]/g, "")
                         .replace(/\[ORCHESTRATE:[^\]]+\]/g, "")
+                        .replace(/\[AGENT_DONE:[^\]]*\]/g, "")
                         .replace(/\[CONTINUATION_AVAILABLE\]/g, "")
                         .replace(/\[ANALYZE_BTN\]/g, "")
                         .trim() || "";

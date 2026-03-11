@@ -63,6 +63,7 @@ Never give up after a single failure. If two consecutive attempts fail, explain 
 - \`.paddingAll\` does not exist — use \`.paddingTop\`, \`.paddingRight\`, \`.paddingBottom\`, \`.paddingLeft\`.
 - **Selection**: Use \`figma.currentPage.selection\` to read/write the current selection. There is NO \`figma.currentSelection\` or \`figma.selection\` — using them throws "object is not extensible" because the \`figma\` global is sealed.
 - The \`figma\` object itself is sealed/frozen. Always access mutable properties through \`figma.currentPage\` or specific node references.
+- **Triangles & Polygons**: Use \`figma.createPolygon()\` with \`.pointCount = 3\` for triangles, \`.pointCount = 5\` for pentagons, etc. Set size with \`.resize(w, h)\`. Do NOT use \`figma.createStar()\` for simple polygons — StarNode has \`.innerRadius\` (0-1 ratio) which creates star shapes, not regular polygons.
 
 ### Prerequisites
 The Guardian Figma plugin must be open in Figma Desktop for execution tools to work.

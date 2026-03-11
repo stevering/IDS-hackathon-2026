@@ -146,6 +146,7 @@ function createKeepaliveStream(
   freeTierModelId?: string | null,
   isLocalPlugin?: boolean,
   supportsReasoning?: boolean,
+  agentRole?: string,
 ): ReadableStream {
   const encoder = new TextEncoder();
 
@@ -246,6 +247,33 @@ CRITICAL RULES:
               // No execute function → client-side tool, handled by useChat onToolCall
             });
             console.log("[Chat] Local plugin detected — added figma_plugin_execute (client-side), removed guardian_guardian_figma_execute");
+          }
+
+          // Orchestrator mode: replace Figma execution tool with a guarded version
+          // that blocks execution and returns guidance. This prevents the double-execution
+          // bug where both the orchestrator AND the collaborator create the same shape.
+          // Tool descriptions alone are not reliable — LLMs ignore them.
+          if (agentRole === 'orchestrator') {
+            if (finalTools["guardian_guardian_figma_execute"]) {
+              finalTools["guardian_guardian_figma_execute"] = defineTool({
+                description: `Execute Figma Plugin API code on a connected Figma plugin. ORCHESTRATOR MODE: this tool is GUARDED — collaborators execute autonomously via their own AI agents. Use guardian_guardian_run_skill with get_selection_context to verify results instead.`,
+                inputSchema: jsonSchema({
+                  type: "object" as const,
+                  properties: {
+                    code: { type: "string" as const, description: "Figma Plugin API code to execute" },
+                    targetClientId: { type: "string" as const, description: "Target client shortId or clientId" },
+                    timeout: { type: "number" as const, description: "Timeout in ms" },
+                  },
+                  required: ["code"],
+                }),
+                execute: async () => ({
+                  blocked: true,
+                  success: false,
+                  reason: "ORCHESTRATOR GUARD: Direct Figma execution is blocked in orchestrator mode. Each collaborator has its own AI agent that executes tasks autonomously — calling this tool creates DUPLICATES. Wait for agent reports instead. To verify results, use guardian_guardian_run_skill with get_selection_context.",
+                }),
+              });
+              console.log("[Chat] Orchestrator mode — replaced guardian_guardian_figma_execute with guarded version (blocks execution)");
+            }
           }
 
           // Wrap model with extractReasoningMiddleware for non-reasoning models
@@ -850,7 +878,12 @@ async function connectMCPs(
           ...origTool,
           execute: async (...args: unknown[]) => {
             if (args.length > 0) {
-              args[0] = { ...(args[0] as Record<string, unknown>), targetClientId };
+              const existingArgs = args[0] as Record<string, unknown>;
+              // Only inject targetClientId as fallback — if the LLM explicitly
+              // specified one (e.g. targeting a specific plugin by shortId), respect it.
+              if (!existingArgs.targetClientId) {
+                args[0] = { ...existingArgs, targetClientId };
+              }
             }
             return origExecute(...args);
           },
@@ -1007,9 +1040,11 @@ RULES:
 
 ${isLocalPlugin ? 'You run inside a Figma plugin (own file). Other agents have separate files.' : 'You are a webapp. Plugin agents below own their files.'}
 
-**Collaborative Mode:** When the task spans MULTIPLE files or user says "collab"/"collaborative", output a SHORT plan (agent/file/task table) then on the NEXT line:
+**Collaborative Mode (MANDATORY for multi-file tasks):** If the task involves 2+ files, or user says "collab"/"collaborative", you MUST propose orchestration. Output a SHORT plan (agent/file/task table) then on the NEXT line:
 \`[ORCHESTRATE:${connectedAgents.map((a: { shortId: string }) => a.shortId).join(',')}]\`
 Do NOT write detailed instructions before the marker. Keep it SHORT so the button appears.
+Propose orchestration first — do NOT execute on multiple files yourself without asking.
+If the user declines or ignores orchestration, you may then execute directly on remote plugins via guardian_guardian_figma_execute with their targetClientId (use the agent shortId).
 For single-file tasks, handle directly via ${isLocalPlugin ? 'figma_plugin_execute' : 'guardian_guardian_figma_execute'}.
 `;
   }
@@ -1026,18 +1061,18 @@ For single-file tasks, handle directly via ${isLocalPlugin ? 'figma_plugin_execu
     system += `\n\n## Orchestrator Mode
 Session: ${orchestrationId} | Collaborators: ${collabList}${timerStr}
 
-**You coordinate agents. Your job:**
-1. Receive agent reports (prefixed \`[Agent report from ...]\` or \`[Agent progress update from ...]\`)
-2. Relay messages between agents when needed
-3. Verify quality and request re-dos if needed
-4. Synthesize a final summary when all agents report completion
+You coordinate agents. Each collaborator works autonomously with its own AI + Figma access.
 
-**Communication rules:**
-- Progress updates (in_progress) = agent is still working. Acknowledge briefly, don't ask for more.
-- Final reports (completed/failed) = agent is done. Evaluate the result.
-- To send a follow-up to an agent, include their @shortId in your response.
-- When ALL agents have sent final reports, consolidate results for the user.
-- Keep responses SHORT. The agents are working autonomously.
+**Your workflow:**
+1. Wait for agent reports (prefixed \`[Agent report from ...]\`)
+2. Evaluate: complete and correct?
+3. Yes → mark done: \`[AGENT_DONE:#shortId]\`
+4. No → send feedback via @#shortId
+5. All done → final summary for the user
+
+**[AGENT_DONE:#shortId]** — MANDATORY to end the session. You can mark multiple agents in one response.
+
+Keep responses SHORT. Agents work autonomously — do not duplicate their work.
 `;
   }
 
@@ -1104,7 +1139,7 @@ Keep thinking blocks short (1-2 sentences).`;
   const freeTierModelId = resolvedModel.isFreeTier ? resolvedModel.modelId : null;
   console.log('[Chat] Starting async keepalive stream for MCP connection, isFreeTier:', resolvedModel.isFreeTier);
   return new Response(
-    createKeepaliveStream(mcpConnectionPromise, modelMessages, system, resolvedModel, freeTierUserId, freeTierModelId, isLocalPlugin, supportsReasoning),
+    createKeepaliveStream(mcpConnectionPromise, modelMessages, system, resolvedModel, freeTierUserId, freeTierModelId, isLocalPlugin, supportsReasoning, agentRole),
     {
       headers: {
         'Content-Type': 'text/event-stream',

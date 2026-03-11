@@ -108,9 +108,22 @@ export async function executeViaSupabase(
         }
       }
 
-      if (targetClientId) {
+      // Resolve targetClientId: the LLM may pass a shortId (e.g. "Figma-Desktop-zivihi")
+      // instead of the raw clientId (e.g. "kukftiz0"). Match against presence labels.
+      let resolvedTargetClientId = targetClientId
+      if (targetClientId && !pluginClientIds.includes(targetClientId)) {
+        const normalizedTarget = targetClientId.replace(/^#/, "")
+        for (const [id, label] of pluginLabels) {
+          if (label.replace(/^#/, "") === normalizedTarget) {
+            resolvedTargetClientId = id
+            break
+          }
+        }
+      }
+
+      if (resolvedTargetClientId) {
         expectedCount = 1
-        knownPluginIds = new Set([targetClientId])
+        knownPluginIds = new Set([resolvedTargetClientId])
       } else if (pluginClientIds.length > 0) {
         expectedCount = pluginClientIds.length
         knownPluginIds = new Set(pluginClientIds)
@@ -131,11 +144,11 @@ export async function executeViaSupabase(
         }
       }
 
-      // Broadcast the execute request
+      // Broadcast the execute request (use resolved clientId, not the original shortId)
       await channel.send({
         type: "broadcast",
         event: "execute_request",
-        payload: { requestId, code, timeout: timeoutMs, targetClientId },
+        payload: { requestId, code, timeout: timeoutMs, targetClientId: resolvedTargetClientId },
       })
       broadcastSent = true
 
