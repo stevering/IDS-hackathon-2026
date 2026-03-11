@@ -31,7 +31,7 @@ export function registerAllTools(server: McpServer, userId?: string): void {
   registerSurfacePatternTool(server)
   registerDocumentGapTool(server)
 
-  // Execution tools (Phase 2 stubs — functional once plugin bridge exists)
+  // Execution tools (Figma plugin bridge via Supabase Realtime)
   registerFigmaExecuteTool(server, userId)
-  registerSkillsTools(server)
+  registerSkillsTools(server, userId)
 }

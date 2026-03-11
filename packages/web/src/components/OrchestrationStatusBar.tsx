@@ -14,31 +14,43 @@ type Props = {
   orchestratorShortId?: string;
   collaborators?: CollaboratorInfo[];
   taskDescription?: string;
+  timerRemainingMs?: number | null;
   onCancel?: () => void;
 };
+
+/** Format milliseconds as MM:SS */
+function formatTimer(ms: number): string {
+  const totalSeconds = Math.max(0, Math.ceil(ms / 1000));
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return `${minutes}:${seconds.toString().padStart(2, "0")}`;
+}
 
 /**
  * Status bar displayed at the top of the chat when an orchestration is active.
  * Shows the current role, connected collaborators (orchestrator view),
- * or the assigned task (collaborator view).
+ * or the assigned task (collaborator view), plus a countdown timer.
  */
 export function OrchestrationStatusBar({
   role,
   orchestratorShortId,
   collaborators,
   taskDescription,
+  timerRemainingMs,
   onCancel,
 }: Props) {
   if (role === "idle") return null;
 
   const isOrchestrator = role === "orchestrator";
+  const hasTimer = timerRemainingMs != null && timerRemainingMs >= 0;
+  const isLowTime = hasTimer && timerRemainingMs < 60_000; // < 1 min
 
   return (
     <div
-      className={`flex items-center gap-2 px-3 py-1.5 text-xs border-b ${
+      className={`flex items-center gap-2 px-3 py-1.5 text-xs border-t border-b border-white/30 ${
         isOrchestrator
-          ? "bg-amber-500/5 border-amber-500/15 text-amber-300/80"
-          : "bg-violet-500/5 border-violet-500/15 text-violet-300/80"
+          ? "bg-amber-500/5 text-amber-300/80"
+          : "bg-violet-500/5 text-violet-300/80"
       }`}
     >
       {/* Role badge */}
@@ -88,6 +100,20 @@ export function OrchestrationStatusBar({
           </span>
         )}
       </div>
+
+      {/* Timer chrono */}
+      {hasTimer && (
+        <span
+          className={`shrink-0 tabular-nums font-mono text-[11px] px-1.5 py-0.5 rounded ${
+            isLowTime
+              ? "bg-red-500/15 text-red-400 animate-pulse"
+              : "bg-white/5 text-white/40"
+          }`}
+          title="Time remaining in collaborative session"
+        >
+          {formatTimer(timerRemainingMs)}
+        </span>
+      )}
 
       {/* Cancel button (orchestrator only) */}
       {onCancel && (

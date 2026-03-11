@@ -92,6 +92,29 @@ export type AgentMessagePayload = OrchestrationEventBase & {
   insertInActive?: boolean;
 };
 
+/** Timer tick broadcast (orchestrator → all, every 30s) */
+export type OrchestrationTickPayload = OrchestrationEventBase & {
+  remainingMs: number;
+  totalMs: number;
+  startedAt: string; // ISO timestamp
+};
+
+/** Sub-conversation start (initiator → target agent) */
+export type SubConversationStartPayload = OrchestrationEventBase & {
+  subConversationId: string;
+  initiatorClientId: string;
+  initiatorShortId: string;
+  targetClientId: string;
+  topic: string;
+  durationMs: number; // default 120_000 (2 min)
+};
+
+/** Sub-conversation end (system or timeout) */
+export type SubConversationEndPayload = OrchestrationEventBase & {
+  subConversationId: string;
+  reason: "completed" | "timeout" | "cancelled";
+};
+
 // ---------------------------------------------------------------------------
 // Broadcast event union
 // ---------------------------------------------------------------------------
@@ -102,7 +125,10 @@ export type OrchestrationEvent =
   | { event: "orchestration_decline"; payload: OrchestrationDeclinePayload }
   | { event: "agent_request"; payload: AgentRequestPayload }
   | { event: "agent_response"; payload: AgentResponsePayload }
-  | { event: "agent_message"; payload: AgentMessagePayload };
+  | { event: "agent_message"; payload: AgentMessagePayload }
+  | { event: "orchestration_tick"; payload: OrchestrationTickPayload }
+  | { event: "sub_conversation_start"; payload: SubConversationStartPayload }
+  | { event: "sub_conversation_end"; payload: SubConversationEndPayload };
 
 // ---------------------------------------------------------------------------
 // User settings

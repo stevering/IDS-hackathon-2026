@@ -1,8 +1,9 @@
 import { z } from "zod"
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js"
 import { getSkill, listSkills, interpolate, validateParams } from "../skills/registry.js"
+import { executeViaSupabase } from "../lib/figma-bridge.js"
 
-export function registerSkillsTools(server: McpServer): void {
+export function registerSkillsTools(server: McpServer, userId?: string): void {
 
   // -------------------------------------------------------------------------
   // guardian_list_skills
@@ -143,25 +144,19 @@ Built-in skills for DS compliance:
 
       const interpolatedCode = interpolate(skill, resolvedParams)
 
-      // NOTE: Phase 2 stub — same as guardian_figma_execute.
-      // When the bridge is implemented, this sends interpolatedCode to the plugin.
+      // Execute the interpolated code via the Supabase Realtime bridge
+      const requestId = `skill-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+      const result = await executeViaSupabase(interpolatedCode, requestId, 10_000, userId)
+
       return {
         content: [
           {
             type: "text",
             text: JSON.stringify(
               {
-                success: false,
-                error:
-                  "guardian_run_skill requires the Guardian Figma plugin bridge (Phase 2). " +
-                  "The plugin bridge is not yet implemented.",
+                ...result,
                 skill: name,
                 params_resolved: resolvedParams,
-                interpolated_code: interpolatedCode,
-                note:
-                  "The interpolated_code above is ready to execute. " +
-                  "You can paste it into guardian_figma_execute once the bridge is available, " +
-                  "or run it manually via the Southleft Figma Console MCP.",
               },
               null,
               2

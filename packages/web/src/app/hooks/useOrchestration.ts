@@ -11,6 +11,9 @@ import type {
   AgentRequestPayload,
   AgentResponsePayload,
   AgentMessagePayload,
+  OrchestrationTickPayload,
+  SubConversationStartPayload,
+  SubConversationEndPayload,
   UserCollaborationSettings,
 } from "@/types/orchestration";
 // ---------------------------------------------------------------------------
@@ -26,6 +29,23 @@ export type CollaboratorInfo = {
   task?: string;
 };
 
+/** Sub-conversation state tracking */
+export type SubConversation = {
+  id: string;
+  initiatorClientId: string;
+  initiatorShortId: string;
+  targetClientId: string;
+  topic: string;
+  startedAt: number;
+  durationMs: number;
+  status: "active" | "completed" | "timeout";
+};
+
+/** Timer constants */
+const ORCHESTRATION_DURATION_MS = 10 * 60 * 1000; // 10 minutes
+const TICK_INTERVAL_MS = 30_000; // broadcast tick every 30s
+const SUB_CONVERSATION_DEFAULT_MS = 2 * 60 * 1000; // 2 minutes
+
 /**
  * Callback map that useFigmaExecuteChannel invokes when it receives
  * orchestration-specific broadcast events. useOrchestration registers
@@ -38,6 +58,9 @@ export type OrchestrationCallbacks = {
   onAgentRequest?: (payload: AgentRequestPayload) => void;
   onAgentResponse?: (payload: AgentResponsePayload) => void;
   onAgentMessage?: (payload: AgentMessagePayload) => void;
+  onTick?: (payload: OrchestrationTickPayload) => void;
+  onSubConversationStart?: (payload: SubConversationStartPayload) => void;
+  onSubConversationEnd?: (payload: SubConversationEndPayload) => void;
 };
 
 export type UseOrchestrationReturn = {
@@ -47,6 +70,9 @@ export type UseOrchestrationReturn = {
   collaborators: CollaboratorInfo[];
   pendingInvites: OrchestrationInvitePayload[];
   settings: UserCollaborationSettings;
+  timerRemainingMs: number | null; // ms remaining in orchestration, null if no timer
+  startedAt: number | null; // epoch ms when orchestration started
+  activeSubConversation: SubConversation | null;
 
   // Orchestrator actions
   becomeOrchestrator: (conversationId: string) => Promise<string | null>;
@@ -77,6 +103,14 @@ export type UseOrchestrationReturn = {
     result?: Record<string, unknown>,
     screenshot?: string,
   ) => void;
+
+  // Sub-conversation actions
+  startSubConversation: (
+    targetClientId: string,
+    topic: string,
+    durationMs?: number,
+  ) => void;
+  endSubConversation: (reason?: "completed" | "cancelled") => void;
 
   // Shared actions
   sendAgentMessage: (
@@ -131,6 +165,16 @@ export function useOrchestration(
   const [pendingInvites, setPendingInvites] = useState<OrchestrationInvitePayload[]>([]);
   const [settings, setSettings] = useState<UserCollaborationSettings>(DEFAULT_SETTINGS);
 
+  // Timer state
+  const [startedAt, setStartedAt] = useState<number | null>(null);
+  const [timerRemainingMs, setTimerRemainingMs] = useState<number | null>(null);
+  const tickIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const timerIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // Sub-conversation state
+  const [activeSubConversation, setActiveSubConversation] = useState<SubConversation | null>(null);
+  const subConvTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   // Stable refs to avoid stale closures
   const clientIdRef = useRef(clientId);
   clientIdRef.current = clientId;
@@ -144,6 +188,8 @@ export function useOrchestration(
   settingsRef.current = settings;
   const collaboratorsRef = useRef(collaborators);
   collaboratorsRef.current = collaborators;
+  const startedAtRef = useRef(startedAt);
+  startedAtRef.current = startedAt;
 
   // External event callback refs (page.tsx sets these)
   const onAgentRequest = useRef<((payload: AgentRequestPayload) => void) | null>(null);
@@ -154,6 +200,9 @@ export function useOrchestration(
 
   // Forward ref so onAccept can call sendAgentRequest (defined later)
   const sendAgentRequestRef = useRef<UseOrchestrationReturn["sendAgentRequest"] | null>(null);
+  // Dedup: track orchestration IDs we've already accepted (prevents triple sub-conversations
+  // when Supabase RT delivers the same invite multiple times)
+  const acceptedOrchestrations = useRef(new Set<string>());
 
   // -------------------------------------------------------------------------
   // Orchestration callbacks ref (consumed by useFigmaExecuteChannel)
@@ -164,16 +213,23 @@ export function useOrchestration(
   // Accept invite (declared early so onInvite can reference it for autoAccept)
   // -------------------------------------------------------------------------
   const acceptInvite = useCallback(async (orchestrationId: string): Promise<string | null> => {
+    // Dedup: skip if we already accepted this orchestration (keyed by clientId+orchestrationId)
+    const dedupKey = `${clientIdRef.current}:${orchestrationId}`;
+    if (acceptedOrchestrations.current.has(dedupKey)) return null;
+    acceptedOrchestrations.current.add(dedupKey);
+
     try {
       // Find the matching invite to get conversation context
       const invite = pendingInvites.find((inv) => inv.orchestrationId === orchestrationId);
 
-      // Create a sub-conversation for the collaborator
+      // Create a sub-conversation for the collaborator, including clientId
+      // so the server can deduplicate if needed
       const convRes = await fetch("/api/conversations", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           title: "Collaborative task",
+          clientId: clientIdRef.current,
           parentId: null,
           orchestrationId,
         }),
@@ -238,6 +294,9 @@ export function useOrchestration(
       onInvite: (payload: OrchestrationInvitePayload) => {
         // Ignore invites from ourselves
         if (payload.senderId === clientIdRef.current) return;
+        // Ignore if already accepted/processing this orchestration
+        const dedupKey = `${clientIdRef.current}:${payload.orchestrationId}`;
+        if (acceptedOrchestrations.current.has(dedupKey)) return;
 
         if (settingsRef.current.autoAccept) {
           // Auto-accept: do not add to pending, accept immediately
@@ -285,6 +344,43 @@ export function useOrchestration(
 
       onAgentMessage: (payload: AgentMessagePayload) => {
         onAgentMessage.current?.(payload);
+      },
+
+      onTick: (payload: OrchestrationTickPayload) => {
+        // Collaborators update their local timer from orchestrator ticks
+        if (roleRef.current === "collaborator") {
+          setTimerRemainingMs(payload.remainingMs);
+          if (!startedAtRef.current) {
+            setStartedAt(new Date(payload.startedAt).getTime());
+          }
+        }
+      },
+
+      onSubConversationStart: (payload: SubConversationStartPayload) => {
+        // Target agent receives sub-conversation request
+        if (payload.targetClientId === clientIdRef.current) {
+          setActiveSubConversation({
+            id: payload.subConversationId,
+            initiatorClientId: payload.initiatorClientId,
+            initiatorShortId: payload.initiatorShortId,
+            targetClientId: payload.targetClientId,
+            topic: payload.topic,
+            startedAt: Date.now(),
+            durationMs: payload.durationMs,
+            status: "active",
+          });
+        }
+      },
+
+      onSubConversationEnd: (payload: SubConversationEndPayload) => {
+        setActiveSubConversation((prev) => {
+          if (!prev || prev.id !== payload.subConversationId) return prev;
+          return null;
+        });
+        if (subConvTimeoutRef.current) {
+          clearTimeout(subConvTimeoutRef.current);
+          subConvTimeoutRef.current = null;
+        }
       },
     };
   }, [acceptInvite]);
@@ -363,10 +459,16 @@ export function useOrchestration(
       roleRef.current = "orchestrator";
       orchestrationRef.current = orch;
 
+      // Start the 10-minute timer
+      const now = Date.now();
+      startedAtRef.current = now;
+
       // Then schedule state updates for React re-render
       setRole("orchestrator");
       setOrchestration(orch);
       setCollaborators([]);
+      setStartedAt(now);
+      setTimerRemainingMs(ORCHESTRATION_DURATION_MS);
 
       return orchestrationId;
     } catch (err) {
@@ -478,10 +580,18 @@ export function useOrchestration(
         console.warn("[Orchestration] completeOrchestration failed:", err);
       }
 
+      // Clean up timers
+      if (tickIntervalRef.current) { clearInterval(tickIntervalRef.current); tickIntervalRef.current = null; }
+      if (timerIntervalRef.current) { clearInterval(timerIntervalRef.current); timerIntervalRef.current = null; }
+      if (subConvTimeoutRef.current) { clearTimeout(subConvTimeoutRef.current); subConvTimeoutRef.current = null; }
+
       // Reset local state regardless of API outcome
       setRole("idle");
       setOrchestration(null);
       setCollaborators([]);
+      setStartedAt(null);
+      setTimerRemainingMs(null);
+      setActiveSubConversation(null);
     },
     [],
   );
@@ -601,11 +711,149 @@ export function useOrchestration(
       console.warn("[Orchestration] releaseRole failed:", err);
     }
 
+    // Clean up timers
+    if (tickIntervalRef.current) { clearInterval(tickIntervalRef.current); tickIntervalRef.current = null; }
+    if (timerIntervalRef.current) { clearInterval(timerIntervalRef.current); timerIntervalRef.current = null; }
+    if (subConvTimeoutRef.current) { clearTimeout(subConvTimeoutRef.current); subConvTimeoutRef.current = null; }
+
     setRole("idle");
     setOrchestration(null);
     setCollaborators([]);
     setPendingInvites([]);
+    setStartedAt(null);
+    setTimerRemainingMs(null);
+    setActiveSubConversation(null);
   }, []);
+
+  // -------------------------------------------------------------------------
+  // Timer: tick every second for UI + broadcast tick every 30s
+  // -------------------------------------------------------------------------
+  useEffect(() => {
+    if (role !== "orchestrator" || !startedAt) return;
+
+    // Local UI timer — tick every second
+    timerIntervalRef.current = setInterval(() => {
+      const elapsed = Date.now() - startedAt;
+      const remaining = Math.max(0, ORCHESTRATION_DURATION_MS - elapsed);
+      setTimerRemainingMs(remaining);
+
+      // Auto-complete when timer expires
+      if (remaining <= 0) {
+        console.log("[Orchestration] Timer expired — auto-completing orchestration");
+        completeOrchestration("completed");
+      }
+    }, 1000);
+
+    // Broadcast tick every 30s so collaborators see the countdown
+    tickIntervalRef.current = setInterval(() => {
+      const ch = channelRef.current;
+      const orch = orchestrationRef.current;
+      if (!ch || !orch) return;
+
+      const elapsed = Date.now() - startedAt;
+      const remaining = Math.max(0, ORCHESTRATION_DURATION_MS - elapsed);
+
+      const payload: OrchestrationTickPayload = {
+        orchestrationId: orch.id,
+        senderId: clientIdRef.current,
+        senderShortId: shortIdRef.current ?? clientIdRef.current,
+        conversationId: orch.conversationId,
+        remainingMs: remaining,
+        totalMs: ORCHESTRATION_DURATION_MS,
+        startedAt: new Date(startedAt).toISOString(),
+      };
+      ch.send({ type: "broadcast", event: "orchestration_tick", payload });
+    }, TICK_INTERVAL_MS);
+
+    return () => {
+      if (timerIntervalRef.current) { clearInterval(timerIntervalRef.current); timerIntervalRef.current = null; }
+      if (tickIntervalRef.current) { clearInterval(tickIntervalRef.current); tickIntervalRef.current = null; }
+    };
+  }, [role, startedAt, channelRef, completeOrchestration]);
+
+  // -------------------------------------------------------------------------
+  // Sub-conversation actions
+  // -------------------------------------------------------------------------
+  const startSubConversation = useCallback(
+    (targetClientId: string, topic: string, durationMs: number = SUB_CONVERSATION_DEFAULT_MS) => {
+      const orch = orchestrationRef.current;
+      if (!orch) return;
+      const ch = channelRef.current;
+      if (!ch) return;
+
+      const subConvId = `sub_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+      const now = Date.now();
+
+      const sub: SubConversation = {
+        id: subConvId,
+        initiatorClientId: clientIdRef.current,
+        initiatorShortId: shortIdRef.current ?? clientIdRef.current,
+        targetClientId,
+        topic,
+        startedAt: now,
+        durationMs,
+        status: "active",
+      };
+      setActiveSubConversation(sub);
+
+      // Broadcast to target
+      const payload: SubConversationStartPayload = {
+        orchestrationId: orch.id,
+        senderId: clientIdRef.current,
+        senderShortId: shortIdRef.current ?? clientIdRef.current,
+        conversationId: orch.conversationId,
+        subConversationId: subConvId,
+        initiatorClientId: clientIdRef.current,
+        initiatorShortId: shortIdRef.current ?? clientIdRef.current,
+        targetClientId,
+        topic,
+        durationMs,
+      };
+      ch.send({ type: "broadcast", event: "sub_conversation_start", payload });
+
+      // Auto-end after duration
+      subConvTimeoutRef.current = setTimeout(() => {
+        setActiveSubConversation((prev) => prev?.id === subConvId ? { ...prev, status: "timeout" } : prev);
+        const endPayload: SubConversationEndPayload = {
+          orchestrationId: orch.id,
+          senderId: clientIdRef.current,
+          senderShortId: shortIdRef.current ?? clientIdRef.current,
+          conversationId: orch.conversationId,
+          subConversationId: subConvId,
+          reason: "timeout",
+        };
+        ch.send({ type: "broadcast", event: "sub_conversation_end", payload: endPayload });
+        setTimeout(() => setActiveSubConversation(null), 2000);
+      }, durationMs);
+    },
+    [channelRef],
+  );
+
+  const endSubConversation = useCallback(
+    (reason: "completed" | "cancelled" = "completed") => {
+      const sub = activeSubConversation;
+      if (!sub) return;
+      const orch = orchestrationRef.current;
+      if (!orch) return;
+      const ch = channelRef.current;
+      if (!ch) return;
+
+      if (subConvTimeoutRef.current) { clearTimeout(subConvTimeoutRef.current); subConvTimeoutRef.current = null; }
+
+      setActiveSubConversation({ ...sub, status: reason === "completed" ? "completed" : "timeout" });
+      const payload: SubConversationEndPayload = {
+        orchestrationId: orch.id,
+        senderId: clientIdRef.current,
+        senderShortId: shortIdRef.current ?? clientIdRef.current,
+        conversationId: orch.conversationId,
+        subConversationId: sub.id,
+        reason,
+      };
+      ch.send({ type: "broadcast", event: "sub_conversation_end", payload });
+      setTimeout(() => setActiveSubConversation(null), 1000);
+    },
+    [activeSubConversation, channelRef],
+  );
 
   // -------------------------------------------------------------------------
   // Return
@@ -618,6 +866,9 @@ export function useOrchestration(
     collaborators,
     pendingInvites,
     settings,
+    timerRemainingMs,
+    startedAt,
+    activeSubConversation,
 
     // Orchestrator actions
     becomeOrchestrator,
@@ -629,6 +880,10 @@ export function useOrchestration(
     acceptInvite,
     declineInvite,
     sendAgentResponse,
+
+    // Sub-conversation actions
+    startSubConversation,
+    endSubConversation,
 
     // Shared actions
     sendAgentMessage,

@@ -3,7 +3,7 @@ import { createOpenAI } from "@ai-sdk/openai";
 import { createAnthropic } from "@ai-sdk/anthropic";
 import { createGoogleGenerativeAI } from "@ai-sdk/google";
 import { createGateway } from "@ai-sdk/gateway";
-import { streamText, stepCountIs, convertToModelMessages, type LanguageModel } from "ai";
+import { streamText, stepCountIs, convertToModelMessages, tool as defineTool, jsonSchema, type LanguageModel, wrapLanguageModel, extractReasoningMiddleware } from "ai";
 import { createClient as createSupabaseUserClient } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { FREE_TIER_MODEL } from "@/lib/providers";
@@ -143,7 +143,9 @@ function createKeepaliveStream(
   system: string,
   resolvedModel: ResolvedModel,
   freeTierUserId?: string | null,
-  freeTierModelId?: string | null
+  freeTierModelId?: string | null,
+  isLocalPlugin?: boolean,
+  supportsReasoning?: boolean,
 ): ReadableStream {
   const encoder = new TextEncoder();
 
@@ -215,19 +217,63 @@ function createKeepaliveStream(
             streamFinishedResolve = resolve;
           });
 
-          // Now start streamText with MCP tools
+          // When the webapp runs inside a Figma plugin, add a client-side tool
+          // that bypasses MCP + Supabase RT and executes code directly via postMessage.
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const finalTools: Record<string, any> = { ...mcpResult.allTools };
+          if (isLocalPlugin) {
+            // Remove the MCP figma_execute tool (goes through Supabase RT — slow/timeout-prone)
+            delete finalTools["guardian_guardian_figma_execute"];
+            // Add a client-side tool (no execute → handled by useChat onToolCall)
+            finalTools["figma_plugin_execute"] = defineTool({
+              description: `Execute Figma Plugin API code directly on the local Figma plugin. The code runs in the plugin sandbox with access to the full Figma Plugin API.
+
+CRITICAL RULES:
+- Keep code SHORT (under 40 lines). Split large operations into multiple calls.
+- Do ONE thing per call: create a node, set properties, add text, etc.
+- Store node IDs from return values and reference them in subsequent calls.
+- NEVER generate very long code blocks — they get truncated and cause syntax errors.
+- The code body is wrapped in an async IIFE automatically — just write the body directly.
+- Return a value to get it back as the result.`,
+              inputSchema: jsonSchema({
+                type: "object" as const,
+                properties: {
+                  code: { type: "string" as const, description: "JavaScript code to execute in the Figma plugin sandbox. Has access to the full Figma Plugin API." },
+                  timeout: { type: "number" as const, description: "Timeout in milliseconds (default: 10000)" },
+                },
+                required: ["code"],
+              }),
+              // No execute function → client-side tool, handled by useChat onToolCall
+            });
+            console.log("[Chat] Local plugin detected — added figma_plugin_execute (client-side), removed guardian_guardian_figma_execute");
+          }
+
+          // Wrap model with extractReasoningMiddleware for non-reasoning models
+          // so <thinking> tags in text become native reasoning events
+          const finalModel = supportsReasoning
+            ? resolvedModel.model
+            : wrapLanguageModel({
+                model: resolvedModel.model as Parameters<typeof wrapLanguageModel>[0]["model"],
+                middleware: extractReasoningMiddleware({ tagName: 'thinking' }),
+              });
+
+          // Now start streamText with MCP tools + optional client-side tool
          const result = streamText({
-           model: resolvedModel.model,
+           model: finalModel,
            system,
            messages: modelMessages,
            tools: {
-             ...mcpResult.allTools,
+             ...finalTools,
              ...(resolvedModel.supportsWebSearch ? { web_search: xai.tools.webSearch() } : {}),
            } as Parameters<typeof streamText>[0]["tools"],
             stopWhen: stepCountIs(MAX_STEPS),
            onStepFinish: (step) => {
+             console.log(`[Chat] Step finished: reason=${step.finishReason}, toolCalls=${step.toolCalls.length}, usage=${JSON.stringify(step.usage)}`);
+             if (step.finishReason === "length") {
+               console.warn("[Chat] ⚠️ Step hit max output tokens (finishReason=length) — AI response was TRUNCATED. Tool calls in this step may have incomplete arguments.");
+             }
              if (step.toolCalls.length > 0) {
-               console.log("[Chat] Tool calls:", step.toolCalls.map(t => t));
+               console.log("[Chat] Tool calls:", step.toolCalls.map(t => ({ name: t.toolName, inputLength: JSON.stringify(t.input).length })));
              }
              if (step.toolResults.length > 0) {
                console.log("[Chat] Tool results:", step.toolResults.map(r => ({ toolName: r.toolName, result: JSON.stringify((r as Record<string, unknown>).result)?.substring(0, 300) })));
@@ -833,7 +879,9 @@ export async function POST(req: Request) {
     orchestrationId,
     agentRole,        // 'idle' | 'orchestrator' | 'collaborator'
     orchestrationContext,  // { task?, collaborators?, orchestratorShortId? }
-    connectedAgents,  // other agents available for collaboration (when idle)
+    connectedAgents,  // other agents available for collaboration (all roles)
+    timerRemainingMs, // ms remaining in orchestration timer (null if not in orchestration)
+    supportsReasoning, // true if model natively supports extended thinking (from Gateway catalog tags)
   } = await req.json();
 
   // Resolve the AI model (BYOK or free tier)
@@ -876,8 +924,20 @@ export async function POST(req: Request) {
     console.log("[Code] Using X-MCP-Code-URL header as fallback:", resolvedCodeProjectPath);
   }
 
+  // Deduplicate messages by ID (keep last occurrence — most complete from streaming).
+  // During collaborative orchestration, the AI SDK's multi-step tool execution can
+  // produce duplicate message IDs in the array, causing "Tool result is missing" errors.
+  const seenMsgIds = new Set<string>();
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const dedupedMessages = (messages as any[]).reduceRight((acc: any[], msg: any) => {
+    if (msg.id && seenMsgIds.has(msg.id)) return acc;
+    if (msg.id) seenMsgIds.add(msg.id);
+    acc.unshift(msg);
+    return acc;
+  }, []);
+
   // Prepare messages for the model
-  const modelMessages = await convertToModelMessages(messages);
+  const modelMessages = await convertToModelMessages(dedupedMessages);
 
   // Build the dynamic system prompt
   let system = "";
@@ -939,86 +999,87 @@ RULES:
 
   // Collaborative Agents — agent awareness (idle mode with other agents connected)
   if ((!agentRole || agentRole === 'idle') && connectedAgents && connectedAgents.length > 0) {
-    const ownershipNote = isLocalPlugin
-      ? `You are running inside a Figma plugin and have your own file (see plugin context above). The other agents below each have their own separate files.`
-      : `You are a standalone webapp. The Figma plugin context above (if present) is a REMOTE target — you can send commands to it, but you do not "own" that file. Each plugin agent below owns its own file.`;
-    system += `\n\n## Collaborative Agents — Available Agents
+    const agentList = connectedAgents.map((a: { shortId: string; label: string; type: string; fileName?: string }) =>
+      `${a.shortId} (${a.label}${a.type === 'figma-plugin' ? `, file: "${a.fileName || '?'}"` : ''})`
+    ).join(', ');
 
-${ownershipNote}
+    system += `\n\n## Connected Agents: ${agentList}
 
-Other AI agents connected to this session:
-${connectedAgents.map((a: { shortId: string; label: string; type: string; fileName?: string }) => `- ${a.shortId} (${a.label}${a.type === 'figma-plugin' ? `, Figma plugin, file: "${a.fileName || 'unknown'}"` : a.type === 'webapp' ? ', webapp' : ''})` ).join('\n')}
+${isLocalPlugin ? 'You run inside a Figma plugin (own file). Other agents have separate files.' : 'You are a webapp. Plugin agents below own their files.'}
 
-### When to suggest collaboration:
-- If the user's request involves work on ONE specific file, you can handle it directly by sending commands to that plugin (via guardian_figma_execute).
-- If the user's request involves work on MULTIPLE files simultaneously, or explicitly asks for "collab" / "collaborative" mode, suggest **Collaborative Mode** so each plugin agent works autonomously on its own file.
-- Examples of when to suggest: "create shapes in each file", "synchronize colors across files", "en mode collab"
-- Examples of when NOT to suggest: "change this button color", "export this component" — single-file tasks
-
-### How to suggest:
-When collaboration is needed:
-1. Write a BRIEF plan summary (a simple table: agent → file → task, 2-5 lines max).
-2. IMMEDIATELY after the summary, include the orchestrate marker on its own line:
-   \`[ORCHESTRATE:${connectedAgents.map((a: { shortId: string }) => a.shortId).join(',')}]\`
-3. Do NOT write detailed per-agent instructions, color palettes, or implementation notes before the marker. The detailed task will be sent automatically to each agent when they accept.
-4. Replace the shortIds with only the agents needed. The user will see a "Start Collaborative Mode" button.
-5. Do NOT start orchestration yourself — wait for the user to click the button.
-
-CRITICAL: Keep your response SHORT. The marker MUST appear in your response. If you write too much text before it, the button will never appear.
+**Collaborative Mode:** When the task spans MULTIPLE files or user says "collab"/"collaborative", output a SHORT plan (agent/file/task table) then on the NEXT line:
+\`[ORCHESTRATE:${connectedAgents.map((a: { shortId: string }) => a.shortId).join(',')}]\`
+Do NOT write detailed instructions before the marker. Keep it SHORT so the button appears.
+For single-file tasks, handle directly via ${isLocalPlugin ? 'figma_plugin_execute' : 'guardian_guardian_figma_execute'}.
 `;
   }
 
+  // Collaborative Agents — timer context (shared between roles)
+  const timerStr = timerRemainingMs != null
+    ? `\nTime remaining: ${Math.ceil(timerRemainingMs / 60000)}min ${Math.ceil((timerRemainingMs % 60000) / 1000)}s. ${timerRemainingMs < 120000 ? 'HURRY — wrap up quickly!' : ''}`
+    : '';
+
   // Collaborative Agents — orchestration context
   if (agentRole === 'orchestrator' && orchestrationId) {
-    system += `\n\n## Collaborative Agents — Orchestrator Mode
+    const collabList = orchestrationContext?.collaborators?.map((c: { shortId: string; label: string }) => `${c.shortId} (${c.label})`).join(', ') || 'None yet';
 
-You are currently the ORCHESTRATOR in a collaborative session (ID: ${orchestrationId}).
+    system += `\n\n## Orchestrator Mode
+Session: ${orchestrationId} | Collaborators: ${collabList}${timerStr}
 
-### Your responsibilities:
-- You coordinate other AI agents to accomplish the user's task
-- You can delegate sub-tasks to collaborator agents via natural language
-- You receive progress reports and results from collaborators
-- You verify the quality of completed work
-- When all sub-tasks are done, consolidate results and report to the user
+**You coordinate agents. Your job:**
+1. Receive agent reports (prefixed \`[Agent report from ...]\` or \`[Agent progress update from ...]\`)
+2. Relay messages between agents when needed
+3. Verify quality and request re-dos if needed
+4. Synthesize a final summary when all agents report completion
 
-### Available collaborators:
-${orchestrationContext?.collaborators?.map((c: { shortId: string; label: string }) => `- ${c.shortId} (${c.label})`).join('\n') || 'None connected yet'}
-
-### Communication:
-- Use @mentions (e.g. @#shortId) to address specific collaborators
-- Be specific and structured when delegating tasks: describe WHAT to do, provide CONTEXT, and define the EXPECTED RESULT
-- You can request screenshots or re-dos from collaborators
-- If a collaborator needs help, you can provide guidance or take over with Direct Control
+**Communication rules:**
+- Progress updates (in_progress) = agent is still working. Acknowledge briefly, don't ask for more.
+- Final reports (completed/failed) = agent is done. Evaluate the result.
+- To send a follow-up to an agent, include their @shortId in your response.
+- When ALL agents have sent final reports, consolidate results for the user.
+- Keep responses SHORT. The agents are working autonomously.
 `;
   }
 
   if (agentRole === 'collaborator' && orchestrationId) {
-    system += `\n\n## Collaborative Agents — Collaborator Mode
+    const orchestratorId = orchestrationContext?.orchestratorShortId || 'unknown';
 
-You are a COLLABORATOR in a collaborative session (ID: ${orchestrationId}).
-You received a task from the orchestrator (${orchestrationContext?.orchestratorShortId || 'unknown'}).
+    // Build peer agent list so collaborators know who else is in the session
+    const peerAgents = connectedAgents?.filter((a: { shortId: string }) =>
+      a.shortId !== orchestratorId
+    ) || [];
+    const peerList = peerAgents.length > 0
+      ? peerAgents.map((a: { shortId: string; label: string; fileName?: string }) =>
+          `${a.shortId} (${a.label}${a.fileName ? `, "${a.fileName}"` : ''})`
+        ).join(', ')
+      : '';
 
-### Your responsibilities:
-- Work autonomously on the assigned task using your available tools
-- Use the Figma Plugin API and other MCP tools as needed
-- Report your progress and results back to @orchestrator
-- If you encounter a blocker or need clarification, message @orchestrator
-- Summarize all changes you made when reporting completion
+    system += `\n\n## Collaborator Mode
+Orchestrator: ${orchestratorId} | Session: ${orchestrationId}${timerStr}
+${peerList ? `Peers: ${peerList}` : ''}
 
-### Task context:
-${orchestrationContext?.task || 'No specific task provided — await instructions from the orchestrator.'}
+**You work autonomously on your assigned task.** The orchestrator relays messages between you and other agents — their messages arrive as \`[Message from orchestrator]\`. Read those messages carefully and respond to what the orchestrator or peers are saying.
 
-### Tools:
-- Your PRIMARY tool for modifying designs is \`guardian_guardian_figma_execute\`. This tool runs Figma Plugin API JavaScript code on the local plugin via broadcast.
-- Use it to create, modify, or delete Figma nodes. Example: \`figma.currentPage.findAll(n => n.type === 'FRAME')\`
-- If Figma MCP tools (prefixed with \`figma_\`) are also available, use them for reading design context (file structure, node details). But for WRITING changes, prefer \`guardian_guardian_figma_execute\`.
-- Ignore any MCP connection errors for Code MCP or other non-essential MCPs — they are not needed for your task.
+**Figma execution — ITERATIVE approach (critical):**
+- Execute ONE small mutation per \`${isLocalPlugin ? 'figma_plugin_execute' : 'guardian_guardian_figma_execute'}\` call (max ~30 lines)
+- After each mutation, verify the result before proceeding
+- NEVER bundle many operations in one call — long code gets TRUNCATED causing syntax errors
+- Split: 1) create node → return ID, 2) set properties using that ID, 3) add children, etc.
 
-### Communication:
-- Use @orchestrator to message the orchestrator
-- The local user can also interact with you directly
-- If the local user gives instructions that conflict with the orchestrator, prioritize the local user (they are physically present)
+**Communication:**
+- Messages from the orchestrator relay contain instructions or peer contributions. Engage with them.
+- If the task involves discussion/collaboration (not just Figma work), focus on contributing your perspective and responding to what others have said
+
+**When done:** Clearly state what you accomplished and any issues encountered.
 `;
+  }
+
+  // For models without native reasoning, add <thinking> instruction
+  // so extractReasoningMiddleware can convert the tags into reasoning events
+  if (!supportsReasoning) {
+    system += `\n\n## THINKING PROCESS
+While you work (searching, reading files, analyzing), emit your reasoning inside <thinking>...</thinking> blocks.
+Keep thinking blocks short (1-2 sentences).`;
   }
 
   // Build the final system prompt
@@ -1043,7 +1104,7 @@ ${orchestrationContext?.task || 'No specific task provided — await instruction
   const freeTierModelId = resolvedModel.isFreeTier ? resolvedModel.modelId : null;
   console.log('[Chat] Starting async keepalive stream for MCP connection, isFreeTier:', resolvedModel.isFreeTier);
   return new Response(
-    createKeepaliveStream(mcpConnectionPromise, modelMessages, system, resolvedModel, freeTierUserId, freeTierModelId),
+    createKeepaliveStream(mcpConnectionPromise, modelMessages, system, resolvedModel, freeTierUserId, freeTierModelId, isLocalPlugin, supportsReasoning),
     {
       headers: {
         'Content-Type': 'text/event-stream',

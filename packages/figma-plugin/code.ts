@@ -412,8 +412,13 @@ ${codeBody}
   }
 })()`;
       const timeoutMs = msg.timeout ?? 5000;
-      const timeoutPromise = new Promise<never>((_, reject) => {
-        setTimeout(() => reject(new Error(`Execution timed out after ${timeoutMs}ms`)), timeoutMs);
+      let timeoutTimer: ReturnType<typeof setTimeout> | null = null;
+      let timedOut = false;
+      const timeoutPromise = new Promise<{ __guardian_exec_error: string }>((resolve) => {
+        timeoutTimer = setTimeout(() => {
+          timedOut = true;
+          resolve({ __guardian_exec_error: `Execution timed out after ${timeoutMs}ms` });
+        }, timeoutMs);
       });
 
       let codePromise: Promise<unknown>;
@@ -421,6 +426,7 @@ ${codeBody}
         // eslint-disable-next-line no-eval
         codePromise = eval(wrappedCode) as Promise<unknown>;
       } catch (syntaxError) {
+        if (timeoutTimer) clearTimeout(timeoutTimer);
         sendResult({
           success: false,
           error: `Syntax error: ${syntaxError instanceof Error ? syntaxError.message : String(syntaxError)}`,
@@ -428,7 +434,15 @@ ${codeBody}
         return;
       }
 
-      const result: unknown = await Promise.race([codePromise, timeoutPromise]);
+      // Race code vs timeout. Both promises RESOLVE (never reject) to avoid
+      // unhandled promise rejections that corrupt the AI SDK's state machine.
+      const result: unknown = await Promise.race([
+        codePromise.then(
+          (v: unknown) => { if (timeoutTimer && !timedOut) clearTimeout(timeoutTimer); return v; },
+          (e: unknown) => { if (timeoutTimer && !timedOut) clearTimeout(timeoutTimer); return { __guardian_exec_error: e instanceof Error ? e.message : String(e) }; },
+        ),
+        timeoutPromise,
+      ]);
 
       // Check if the inner try/catch captured a runtime error
       if (result !== null && typeof result === 'object' && '__guardian_exec_error' in result) {

@@ -19,6 +19,63 @@ export type ExecuteCodeResult = {
 
 type MessageHandler = (data: Record<string, unknown>) => void;
 
+/** Lightweight event log entry for debug diagnostics */
+export type PluginEvent = {
+  ts: number;
+  dir: "in" | "out";
+  channel: "postMessage" | "supabase" | "chat";
+  type: string;
+  summary?: string;
+  /** Ordered parts for chat messages (text and tool calls interleaved) */
+  parts?: unknown[];
+  /** Optional sender/receiver identifiers (clientId or role label) — resolved to shortIds during debug serialization */
+  from?: string;
+  to?: string;
+  /** Optional metadata for enriched events (e.g. execution stats) */
+  meta?: Record<string, unknown>;
+};
+
+const MAX_PLUGIN_EVENTS = 200;
+
+/** Push an event into a circular buffer (mutates in place) */
+export function pushPluginEvent(
+  log: PluginEvent[],
+  event: Omit<PluginEvent, "ts">,
+) {
+  log.push({ ...event, ts: Date.now() });
+  if (log.length > MAX_PLUGIN_EVENTS) log.splice(0, log.length - MAX_PLUGIN_EVENTS);
+}
+
+/** Build a summary string for a postMessage — full content, no truncation */
+function summarize(d: Record<string, unknown>): string | undefined {
+  // EXECUTE_CODE — full code
+  if (d.code && typeof d.code === "string") {
+    return `code=${d.code as string}`;
+  }
+  // EXECUTE_CODE_RESULT — success/error with full result
+  if (d.type === "EXECUTE_CODE_RESULT") {
+    if (d.success) {
+      const r = typeof d.result === "string" ? d.result : JSON.stringify(d.result ?? "");
+      return `ok ${r}`;
+    }
+    return `err ${(d.error as string) ?? "unknown"}`;
+  }
+  // selection-changed — node count
+  if (d.type === "selection-changed" && d.data && typeof d.data === "object") {
+    const data = d.data as { nodes?: unknown[] };
+    return `${data.nodes?.length ?? 0} nodes`;
+  }
+  // figma-context — fileName
+  if (d.type === "figma-context") {
+    return (d.fileName as string) ?? undefined;
+  }
+  // notify
+  if (d.data && typeof d.data === "object" && (d.data as Record<string, unknown>).message) {
+    return (d.data as Record<string, unknown>).message as string;
+  }
+  return undefined;
+}
+
 /**
  * Hook to communicate with the Figma plugin from the embedded webapp.
  *
@@ -34,24 +91,32 @@ type MessageHandler = (data: Record<string, unknown>) => void;
  */
 export function useFigmaPlugin() {
   const [isFigmaPlugin, setIsFigmaPlugin] = useState(false);
+  const isFigmaPluginRef = useRef(false);
   const [figmaContext, setFigmaContext] = useState<FigmaPluginContext | null>(null);
   const pendingExecutions = useRef<Map<string, (r: ExecuteCodeResult) => void>>(new Map());
   const messageHandlers = useRef<Map<string, MessageHandler[]>>(new Map());
+  const eventLog = useRef<PluginEvent[]>([]);
 
   // ─── Send a message to the plugin sandbox (code.js) ────────────────
   const sendToPlugin = useCallback((type: string, data?: Record<string, unknown>) => {
     if (typeof window === "undefined") return;
     const msg: Record<string, unknown> = { source: "figpal-webapp", type };
     if (data !== undefined) msg.data = data;
+    pushPluginEvent(eventLog.current, { dir: "out", channel: "postMessage", type, summary: summarize(msg) });
     window.parent.postMessage(msg, "*");
   }, []);
 
   // ─── Execute arbitrary JS inside the Figma sandbox ─────────────────
   const executeCode = useCallback(
     (code: string, timeout = 5000): Promise<ExecuteCodeResult> => {
+      // Skip postMessage when not inside a Figma plugin — no recipient to handle it
+      if (!isFigmaPluginRef.current) {
+        return Promise.resolve({ success: false, error: "Not inside Figma plugin" });
+      }
       return new Promise((resolve) => {
         const id = `exec-${Date.now()}-${Math.random().toString(36).slice(2)}`;
         pendingExecutions.current.set(id, resolve);
+        pushPluginEvent(eventLog.current, { dir: "out", channel: "postMessage", type: "EXECUTE_CODE", summary: `code=${code}` });
         if (typeof window !== "undefined") {
           // Note: code and timeout are sent at the top level (not inside data)
           // because code.js reads msg.code and msg.timeout directly.
@@ -92,14 +157,23 @@ export function useFigmaPlugin() {
       const d = event.data;
       if (!d || typeof d !== "object") return;
 
+      // Skip React DevTools, webpack HMR, and other internal messages
+      const msgType = d.type as string | undefined;
+      if (!msgType || msgType.startsWith("webpack") || msgType.startsWith("react-")) return;
+
+      // Log incoming postMessage
+      pushPluginEvent(eventLog.current, { dir: "in", channel: "postMessage", type: msgType, summary: summarize(d as Record<string, unknown>) });
+
       // ── Handshake: plugin confirms we're inside Figma ──────────────
       if (d.type === "figpal-init") {
+        isFigmaPluginRef.current = true;
         setIsFigmaPlugin(true);
         return;
       }
 
       // ── Figma file context (fileName, fileKey, pages…) ─────────────
       if (d.type === "figma-context") {
+        isFigmaPluginRef.current = true;
         setIsFigmaPlugin(true);
         sendToPlugin("notify", { message: "Guardian connected!" });
         setFigmaContext({
@@ -138,5 +212,5 @@ export function useFigmaPlugin() {
     return () => window.removeEventListener("message", handleMessage);
   }, [sendToPlugin]);
 
-  return { isFigmaPlugin, figmaContext, sendToPlugin, executeCode, onPluginMessage };
+  return { isFigmaPlugin, figmaContext, sendToPlugin, executeCode, onPluginMessage, eventLog };
 }

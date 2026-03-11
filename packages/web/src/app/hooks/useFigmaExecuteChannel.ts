@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState, useCallback } from "react";
 import { createClient } from "@/lib/supabase/client";
-import type { ExecuteCodeResult } from "./useFigmaPlugin";
+import { type ExecuteCodeResult, type PluginEvent, pushPluginEvent } from "./useFigmaPlugin";
 import { parsePresenceState, type ClientType, type PresenceClient } from "@/types/presence";
 import type { OrchestrationCallbacks } from "./useOrchestration";
 
@@ -27,6 +27,7 @@ export function useFigmaExecuteChannel(
   enabled: boolean,
   clientInfo?: ClientInfo,
   orchestrationCallbacksRef?: React.RefObject<OrchestrationCallbacks>,
+  eventLogRef?: React.RefObject<PluginEvent[]>,
 ): { clients: PresenceClient[]; clientId: string; channelRef: React.RefObject<ReturnType<ReturnType<typeof createClient>["channel"]> | null> } {
   const busy = useRef(false);
   const executeCodeRef = useRef(executeCode);
@@ -103,6 +104,12 @@ export function useFigmaExecuteChannel(
           targetClientId?: string;
         };
 
+        // Log ALL observed requests (before filtering) — from=mcp-server, to=targetClientId
+        if (eventLogRef?.current) pushPluginEvent(eventLogRef.current, { dir: "in", channel: "supabase", type: "execute_request", from: "mcp-server", to: targetClientId ?? "broadcast", summary: `code=${code}` });
+
+        // Only figma-plugin clients should execute code — webapps must not respond
+        if (clientInfoRef.current?.type !== "figma-plugin") return;
+
         // Only respond if this client is the target (or no target specified)
         if (targetClientId && targetClientId !== clientId.current) return;
 
@@ -112,11 +119,14 @@ export function useFigmaExecuteChannel(
         try {
           const result = await executeCodeRef.current(code, timeout);
 
+          if (eventLogRef?.current) pushPluginEvent(eventLogRef.current, { dir: "out", channel: "supabase", type: "execute_result", from: clientId.current, to: "mcp-server", summary: result.success ? `ok ${typeof result.result === "string" ? result.result : JSON.stringify(result.result ?? "")}` : `err ${result.error ?? "unknown"}` });
+
           await channel.send({
             type: "broadcast",
             event: "execute_result",
             payload: {
               requestId,
+              senderClientId: clientId.current,
               success: result.success,
               result: result.result,
               error: result.error,
@@ -128,24 +138,63 @@ export function useFigmaExecuteChannel(
           busy.current = false;
         }
       })
+      // Log execute_result broadcasts from other clients (e.g. Figma plugin reporting completion)
+      .on("broadcast", { event: "execute_result" }, (payload) => {
+        const { senderClientId, success, result, error } = payload.payload as {
+          senderClientId?: string;
+          success: boolean;
+          result?: unknown;
+          error?: string;
+        };
+        if (eventLogRef?.current) {
+          pushPluginEvent(eventLogRef.current, {
+            dir: "in",
+            channel: "supabase",
+            type: "execute_result",
+            from: senderClientId,
+            to: "mcp-server",
+            summary: success
+              ? `ok ${typeof result === "string" ? result : JSON.stringify(result ?? "")}`
+              : `err ${error ?? "unknown"}`,
+          });
+        }
+      })
       // Collaborative Agents — orchestration events forwarded to useOrchestration via callback ref
       .on("broadcast", { event: "orchestration_invite" }, (payload) => {
+        if (eventLogRef?.current) pushPluginEvent(eventLogRef.current, { dir: "in", channel: "supabase", type: "orchestration_invite" });
         orchestrationCallbacksRef?.current?.onInvite?.(payload.payload);
       })
       .on("broadcast", { event: "orchestration_accept" }, (payload) => {
+        if (eventLogRef?.current) pushPluginEvent(eventLogRef.current, { dir: "in", channel: "supabase", type: "orchestration_accept" });
         orchestrationCallbacksRef?.current?.onAccept?.(payload.payload);
       })
       .on("broadcast", { event: "orchestration_decline" }, (payload) => {
+        if (eventLogRef?.current) pushPluginEvent(eventLogRef.current, { dir: "in", channel: "supabase", type: "orchestration_decline" });
         orchestrationCallbacksRef?.current?.onDecline?.(payload.payload);
       })
       .on("broadcast", { event: "agent_request" }, (payload) => {
+        if (eventLogRef?.current) pushPluginEvent(eventLogRef.current, { dir: "in", channel: "supabase", type: "agent_request" });
         orchestrationCallbacksRef?.current?.onAgentRequest?.(payload.payload);
       })
       .on("broadcast", { event: "agent_response" }, (payload) => {
+        if (eventLogRef?.current) pushPluginEvent(eventLogRef.current, { dir: "in", channel: "supabase", type: "agent_response" });
         orchestrationCallbacksRef?.current?.onAgentResponse?.(payload.payload);
       })
       .on("broadcast", { event: "agent_message" }, (payload) => {
+        if (eventLogRef?.current) pushPluginEvent(eventLogRef.current, { dir: "in", channel: "supabase", type: "agent_message" });
         orchestrationCallbacksRef?.current?.onAgentMessage?.(payload.payload);
+      })
+      .on("broadcast", { event: "orchestration_tick" }, (payload) => {
+        if (eventLogRef?.current) pushPluginEvent(eventLogRef.current, { dir: "in", channel: "supabase", type: "orchestration_tick" });
+        orchestrationCallbacksRef?.current?.onTick?.(payload.payload);
+      })
+      .on("broadcast", { event: "sub_conversation_start" }, (payload) => {
+        if (eventLogRef?.current) pushPluginEvent(eventLogRef.current, { dir: "in", channel: "supabase", type: "sub_conversation_start" });
+        orchestrationCallbacksRef?.current?.onSubConversationStart?.(payload.payload);
+      })
+      .on("broadcast", { event: "sub_conversation_end" }, (payload) => {
+        if (eventLogRef?.current) pushPluginEvent(eventLogRef.current, { dir: "in", channel: "supabase", type: "sub_conversation_end" });
+        orchestrationCallbacksRef?.current?.onSubConversationEnd?.(payload.payload);
       })
       .on("presence", { event: "sync" }, () => {
         handlePresenceSync(

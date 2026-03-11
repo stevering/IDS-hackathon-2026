@@ -63,7 +63,12 @@ export function useConversations(clientId: string, enabled = true) {
   const loadConversations = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await fetch("/api/conversations");
+      // Filter by clientId so each browser window only sees its own conversations
+      // (plus shared ones with null client_id)
+      const url = clientIdRef.current
+        ? `/api/conversations?client_id=${encodeURIComponent(clientIdRef.current)}`
+        : "/api/conversations";
+      const res = await fetch(url);
       if (!res.ok) {
         console.warn("[Conversations] GET /api/conversations failed:", res.status, await res.text().catch(() => ""));
         return;

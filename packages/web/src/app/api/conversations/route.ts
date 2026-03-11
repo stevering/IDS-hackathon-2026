@@ -11,6 +11,7 @@ export async function GET(req: Request) {
   const limit = Math.min(parseInt(url.searchParams.get("limit") ?? "50"), 100);
   const offset = parseInt(url.searchParams.get("offset") ?? "0");
   const orchestrationId = url.searchParams.get("orchestration_id");
+  const clientId = url.searchParams.get("client_id");
 
   let query = supabase
     .from("conversations")
@@ -21,6 +22,11 @@ export async function GET(req: Request) {
 
   if (orchestrationId) {
     query = query.eq("orchestration_id", orchestrationId);
+  }
+
+  // Filter by client_id: show conversations owned by this client OR shared ones (null client_id)
+  if (clientId) {
+    query = query.or(`client_id.eq.${clientId},client_id.is.null`);
   }
 
   const { data, error } = await query;
