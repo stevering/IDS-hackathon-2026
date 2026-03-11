@@ -1016,10 +1016,17 @@ RULES:
 
 ${isLocalPlugin ? 'You run inside a Figma plugin (own file). Other agents have separate files.' : 'You are a webapp. Plugin agents below own their files.'}
 
-**Collaborative Mode (MANDATORY for multi-file tasks):** If the task involves 2+ files, or user says "collab"/"collaborative", you MUST propose orchestration. Output a SHORT plan (agent/file/task table) then on the NEXT line:
+**Collaborative Mode (MANDATORY for multi-file tasks):** If the task involves 2+ files, or user says "collab"/"collaborative", you MUST propose orchestration.
+Output a SHORT plan (agent/file/task table) then on the NEXT line:
 \`[ORCHESTRATE:${connectedAgents.map((a: { shortId: string }) => a.shortId).join(',')}]\`
-Do NOT write detailed instructions before the marker. Keep it SHORT so the button appears.
-Propose orchestration first — do NOT execute on multiple files yourself without asking.
+
+**CRITICAL — When you output [ORCHESTRATE], you are DELEGATING work to agents. You MUST NOT:**
+- Call any figma_execute or guardian_guardian_figma_execute tools in this response
+- Do the work yourself — the agents will do it autonomously after accepting
+- Write detailed instructions before the marker — keep it SHORT so the button appears fast
+
+Your ONLY job when orchestrating is: output the plan table + the [ORCHESTRATE] marker, then STOP. The system will dispatch tasks to agents automatically. You become a coordinator — wait for agent reports, do not execute.
+
 If the user declines or ignores orchestration, you may then execute directly on remote plugins via guardian_guardian_figma_execute with their targetClientId (use the agent shortId).
 For single-file tasks, handle directly via ${isLocalPlugin ? 'figma_plugin_execute' : 'guardian_guardian_figma_execute'}.
 `;
@@ -1081,7 +1088,11 @@ ${peerList ? `Peers: ${peerList}` : ''}
 - Messages from the orchestrator relay contain instructions or peer contributions. Engage with them.
 - If the task involves discussion/collaboration (not just Figma work), focus on contributing your perspective and responding to what others have said
 
-**When done:** Call the \`signal_task_complete\` tool with a summary of what you accomplished. This is the ONLY way to signal completion — do NOT just write text about being done. Call the tool ONCE after all work is verified.
+**MANDATORY — Task completion signal:**
+When all work is done and verified, you MUST call the \`signal_task_complete\` tool. This is NOT optional.
+- Do NOT just write text about being done — the system only recognizes the tool call
+- Do NOT end your response without calling this tool if the task is complete
+- Call it exactly ONCE with a brief summary of what was accomplished
 `;
   }
 

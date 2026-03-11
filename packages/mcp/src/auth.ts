@@ -9,8 +9,8 @@
  * Environment variables:
  *   SUPABASE_URL              — e.g. https://<project>.supabase.co (required in HTTP mode)
  *   SUPABASE_ANON_KEY         — Supabase anon key (required for OAuth proxy)
- *   NEXT_PUBLIC_SUPABASE_URL  — fallback for SUPABASE_URL
- *   NEXT_PUBLIC_SUPABASE_ANON_KEY — fallback for SUPABASE_ANON_KEY
+ *   NEXT_PUBLIC_STORAGE_SUPABASE_URL  — fallback for SUPABASE_URL
+ *   NEXT_PUBLIC_STORAGE_SUPABASE_ANON_KEY — fallback for SUPABASE_ANON_KEY
  */
 
 import { createRemoteJWKSet, jwtVerify, type JWTPayload } from "jose"
@@ -28,10 +28,10 @@ function getWebappUrl(): string | undefined {
 function getSupabaseUrl(): string {
   const url =
     process.env.SUPABASE_URL ??
-    process.env.NEXT_PUBLIC_SUPABASE_URL
+    process.env.NEXT_PUBLIC_STORAGE_SUPABASE_URL
   if (!url) {
     throw new Error(
-      "[Guardian MCP] SUPABASE_URL or NEXT_PUBLIC_SUPABASE_URL must be set in HTTP mode."
+      "[Guardian MCP] SUPABASE_URL or NEXT_PUBLIC_STORAGE_SUPABASE_URL must be set in HTTP mode."
     )
   }
   return url.replace(/\/+$/, "")
@@ -40,10 +40,10 @@ function getSupabaseUrl(): string {
 function getSupabaseAnonKey(): string {
   const key =
     process.env.SUPABASE_ANON_KEY ??
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
+    process.env.NEXT_PUBLIC_STORAGE_SUPABASE_ANON_KEY
   if (!key) {
     throw new Error(
-      "[Guardian MCP] SUPABASE_ANON_KEY or NEXT_PUBLIC_SUPABASE_ANON_KEY must be set in HTTP mode."
+      "[Guardian MCP] SUPABASE_ANON_KEY or NEXT_PUBLIC_STORAGE_SUPABASE_ANON_KEY must be set in HTTP mode."
     )
   }
   return key

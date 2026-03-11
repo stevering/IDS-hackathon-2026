@@ -2173,6 +2173,7 @@ export default function Home() {
     // Use the queue to avoid concurrent sendMessage crashes (e.g. if
     // the collaborator is already streaming when the task arrives).
     setTimeout(() => {
+      taskReceivedRef.current = true; // Fix GG: unlock auto-report now that current task is being sent
       orchQueueSend(
         `[Orchestrator task] ${payload.content}${payload.expectedResult ? `\n\nExpected result: ${payload.expectedResult}` : ""}`,
       );
@@ -2245,9 +2246,11 @@ export default function Home() {
   const lastReportedMsgId = useRef<string | null>(null);
   const reportCount = useRef(0);
   const collaboratorCompletedRef = useRef(false);
+  const taskReceivedRef = useRef(false);
   useEffect(() => {
     if (agentRole !== "collaborator" || status !== "ready") return;
     if (!orchestration) return;
+    if (!taskReceivedRef.current) return; // Fix GG: don't report until current task was sent
 
     // Find the last assistant message
     const lastAssistant = [...messages].reverse().find(m => m.role === "assistant");
@@ -2293,6 +2296,7 @@ export default function Home() {
       orchSendActive.current = false;
       reportCount.current = 0;
       collaboratorCompletedRef.current = false;
+      taskReceivedRef.current = false;
       lastReportedMsgId.current = null;
       lastRelayedMsgId.current = null;
       lastIncomingSenderRef.current = null;

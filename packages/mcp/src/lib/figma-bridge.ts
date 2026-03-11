@@ -205,7 +205,7 @@ export async function executeViaSupabase(
           clearTimeout(presenceTimer)
           resolve({
             success: false,
-            error: `Supabase Realtime channel error: ${status}. Check NEXT_PUBLIC_SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY.`,
+            error: `Supabase Realtime channel error: ${status}. Check NEXT_PUBLIC_STORAGE_SUPABASE_URL and STORAGE_SUPABASE_SERVICE_ROLE_KEY.`,
           })
         }
       })
