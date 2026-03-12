@@ -153,6 +153,114 @@ Webapp (orchestrator/collaborator) ── Supabase Realtime ──► Figma Plug
 
 ---
 
+## 4b. Tool Availability by Source and Mode
+
+### Official Figma MCP — Tool availability per server
+
+| Tool | Desktop (`localhost:3845`) | Remote (`mcp.figma.com/mcp`) |
+|------|--------------------------|------------------------------|
+| `get_design_context` | ✅ | ✅ |
+| `get_metadata` | ✅ | ✅ |
+| `get_screenshot` | ✅ | ✅ |
+| `get_variable_defs` | ✅ | ✅ |
+| `get_code_connect_map` | ✅ | ✅ |
+| `get_code_connect_suggestions` | ✅ | ✅ |
+| `send_code_connect_mappings` | ✅ | ✅ |
+| `add_code_connect_map` | ✅ | ✅ |
+| `get_figjam` | ✅ | ✅ |
+| `generate_diagram` | ✅ | ✅ |
+| `create_design_system_rules` | ✅ | ✅ |
+| `generate_figma_design` | ❌ **Remote-only** | ✅ |
+| `whoami` | ❌ **Remote-only** | ✅ |
+
+### Figma Console MCP (Southleft) — Mode comparison
+
+| Aspect | Local (NPX + plugin) | Remote (online, OAuth) |
+|--------|---------------------|----------------------|
+| Tools count | 57+ | 22 |
+| Read (files, variables, styles) | ✅ | ✅ |
+| Write canvas (create/modify nodes) | ✅ (Plugin API) | ❌ |
+| Variable management (create/update/delete) | ✅ | ❌ |
+| `figma_execute` (arbitrary code) | ✅ | ❌ |
+| Plugin required | Yes | No |
+| Auth | WebSocket local | OAuth Figma |
+
+### Cross-source capability matrix — What Guardian can access
+
+| Capability | Figma Console online (`figmaconsole_*`) | Figma Desktop MCP (`figma_*`) | Guardian Plugin (`guardian_*`) | Figma REST API |
+|-----------|----------------------------------------|-------------------------------|-------------------------------|----------------|
+| Read file metadata | ✅ | ✅ | ✅ (via execute) | ✅ |
+| Read node properties | ✅ | ✅ | ✅ (via execute) | ✅ |
+| Export screenshots | ❌ | ✅ | ✅ (via `exportAsync`) | ✅ |
+| Read variables/tokens | ✅ | ✅ | ✅ (via execute) | ✅ (beta) |
+| Code generation (React+Tailwind) | ❌ | ✅ (`get_design_context`) | ❌ | ❌ |
+| Write canvas nodes | ❌ | ❌ (append-only) | ✅ | ❌ |
+| Modify existing nodes | ❌ | ❌ | ✅ | ❌ |
+| Write variables | ❌ | ❌ | ✅ (via execute) | ✅ |
+| Code to Canvas (`generate_figma_design`) | ❌ | ❌ (remote-only) | ⚠️ Workaround (manual Plugin API) | ❌ |
+| Selection-aware | ❌ | ❌ | ✅ | ❌ |
+| File-aware (knows open file) | ❌ | ❌ | ✅ | ❌ |
+| Works remotely (no local Figma) | ✅ | ❌ | ✅ (needs plugin open) | ✅ |
+| Auth required | OAuth Figma | None (local) | Supabase | OAuth Figma |
+
+### Access restrictions (as of March 2026)
+
+| Source | Access restriction |
+|--------|--------------------|
+| Figma MCP Remote (`mcp.figma.com/mcp`) | **Whitelisted clients only** — DCR returns 403, `mcp:connect` scope not in developer portal. Request form on Asana (beta, no guarantee). |
+| Figma MCP Desktop (`localhost:3845`) | Open — requires Figma Desktop + Dev or Full seat (paid plan). |
+| Figma Console Remote | Open — OAuth with any Figma account. 22 read-only tools. |
+| Figma Console Local | Open — requires plugin + NPX. 57+ tools with full read/write. |
+| Guardian Plugin | Open — requires plugin + Supabase connection. Full read/write via Plugin API. |
+| Figma REST API | Open — OAuth with standard scopes (`file_content:read`, etc.). Read + limited write (variables, comments). |
+
+### Guardian agent tool priority chain
+
+For operations where multiple sources can serve, the agent should follow this priority order:
+
+**Reading** (files, nodes, metadata, variables, screenshots):
+1. Figma Console MCP (`figmaconsole_*`) — if connected
+2. Figma Desktop MCP (`figma_*`) — if available locally
+3. Guardian Plugin (`guardian_run_action` / `guardian_figma_execute`) — fallback
+
+**Arbitrary code execution** (`figma_execute`):
+1. Guardian (`guardian_figma_execute`) — priority
+2. Figma Console plugin (`figmaconsole_figma_execute`) — if Guardian unavailable
+
+**Writing canvas** (create/modify nodes, components, styles):
+1. Figma Desktop MCP (`figma_*`) — if available locally
+2. Guardian Plugin (`guardian_figma_execute`) — otherwise
+
+**Code to Canvas** (`generate_figma_design`):
+1. Figma Desktop MCP → ❌ not available (remote-only tool)
+2. Figma MCP Remote → ❌ blocked (whitelist)
+3. Workaround: agent reads source code → generates Plugin API code → executes via `guardian_figma_execute`
+
+---
+
+## 4c. `figma.fileKey` — Private Plugin API
+
+`figma.fileKey` returns the file key of the current file the plugin is running on. This is required to build file URLs and make REST API calls.
+
+**Availability:**
+
+| Mode | `figma.fileKey` available |
+|------|--------------------------|
+| Dev mode (manifest import) + `enablePrivatePluginApi: true` | ✅ |
+| Published private (organization plugin) | ✅ |
+| Published public (Community marketplace) | ❌ |
+
+- Only **private plugins** and Figma-owned resources (Jira, Asana widgets) have access
+- Requires `"enablePrivatePluginApi": true` in `manifest.json` — this flag also enables the API during local development
+- Public plugins cannot access `figma.fileKey` by any means — the user must paste the file URL manually (this is what the official Figma Desktop MCP does)
+- Figma Console MCP (Southleft) and Guardian both use `figma.fileKey` because they run as private/dev-mode plugins
+
+**Implication for publishing:** If Guardian is ever published to the Community marketplace, `figma.fileKey` will stop working. Alternative: prompt the user to paste the file URL. For organization-private publishing, no impact.
+
+Sources: [Plugin API — figma.fileKey](https://developers.figma.com/docs/plugins/api/figma/), [Manifest — enablePrivatePluginApi](https://developers.figma.com/docs/plugins/manifest/)
+
+---
+
 ## 5. Figma Plugin Marketplace — Publishing Rules
 
 Source: [Figma Plugin Review Guidelines](https://help.figma.com/hc/en-us/articles/360039958914-Plugin-and-widget-review-guidelines)

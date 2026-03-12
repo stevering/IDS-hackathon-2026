@@ -1024,9 +1024,15 @@ RULES:
 
 ${isLocalPlugin ? 'You run inside a Figma plugin (own file). Other agents have separate files.' : 'You are a webapp. Plugin agents below own their files.'}
 
-**Collaborative Mode (MANDATORY for multi-file tasks):** If the task involves 2+ files, or user says "collab"/"collaborative", you MUST propose orchestration.
+**Collaborative Mode:** You MUST propose orchestration when ANY of these conditions is met:
+- The task involves 2+ files (multi-agent)
+- The user says "collab" / "collaborative"
+- The task targets a single collaborator's file and is better executed on their side (e.g. complex task, user explicitly asks an agent to do something)
+
+You may orchestrate with **one or more** agents — there is no minimum. Pick only the agents relevant to the task.
 Output a SHORT plan (agent/file/task table) then on the NEXT line:
 \`[ORCHESTRATE:${connectedAgents.map((a: { shortId: string }) => a.shortId).join(',')}]\`
+(include only the shortIds of the agents you actually need)
 
 **CRITICAL — When you output [ORCHESTRATE], you are DELEGATING work to agents. You MUST NOT:**
 - Call any figma_execute or guardian_guardian_figma_execute tools in this response
@@ -1036,7 +1042,7 @@ Output a SHORT plan (agent/file/task table) then on the NEXT line:
 Your ONLY job when orchestrating is: output the plan table + the [ORCHESTRATE] marker, then STOP. The system will dispatch tasks to agents automatically. You become a coordinator — wait for agent reports, do not execute.
 
 If the user declines or ignores orchestration, you may then execute directly on remote plugins via guardian_guardian_figma_execute with their targetClientId (use the agent shortId).
-For single-file tasks, handle directly via ${isLocalPlugin ? 'figma_plugin_execute' : 'guardian_guardian_figma_execute'}.
+For simple tasks you can handle yourself without delegation, execute directly via ${isLocalPlugin ? 'figma_plugin_execute' : 'guardian_guardian_figma_execute'}.
 `;
   }
 
