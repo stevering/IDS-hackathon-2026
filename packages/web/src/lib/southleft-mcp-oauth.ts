@@ -18,8 +18,10 @@ export async function createSouthleftMcpOAuthProvider(
   cookieStore: ReadonlyRequestCookies,
   setCookies?: (name: string, value: string, options: Record<string, unknown>) => void,
   forceState?: string,
+  /** Use the actual request origin so cookies stay on the same domain. */
+  requestOrigin?: string,
 ): Promise<OAuthClientProvider> {
-  const baseUrl = await getBaseUrl();
+  const baseUrl = requestOrigin || await getBaseUrl();
   const isSecure = baseUrl.startsWith("https");
   const redirectUrl = `${baseUrl}/api/auth/southleft-mcp/callback`;
 
@@ -103,6 +105,8 @@ export async function createSouthleftMcpOAuthProvider(
     },
 
     async redirectToAuthorization(authorizationUrl: URL): Promise<void> {
+      // Force re-consent so Southleft re-requests a fresh Figma token
+      authorizationUrl.searchParams.set('prompt', 'consent');
       throw new RedirectError(authorizationUrl.toString());
     },
 

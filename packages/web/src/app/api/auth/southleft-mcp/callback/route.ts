@@ -9,7 +9,11 @@ import {
 } from "@/lib/southleft-mcp-oauth";
 import { writeOAuthResult } from "@/lib/oauth-store";
 
-import {getBaseUrl} from "@/lib/get-base-url";
+function requestOrigin(request: NextRequest): string {
+  const proto = request.headers.get("x-forwarded-proto") || (request.nextUrl.protocol.replace(":", ""));
+  const host = request.headers.get("host") || request.nextUrl.host;
+  return `${proto}://${host}`;
+}
 
 export async function GET(request: NextRequest) {
   console.log("[Southleft Callback] ===== CALLBACK STARTED =====");
@@ -44,11 +48,14 @@ export async function GET(request: NextRequest) {
 
   const pendingCookies: Array<{ name: string; value: string; options: Record<string, unknown> }> = [];
 
+  const origin = requestOrigin(request);
   const provider = await createSouthleftMcpOAuthProvider(
     cookieStore,
     (name, value, options) => {
       pendingCookies.push({ name, value, options });
     },
+    undefined,
+    origin,
   );
 
   try {
@@ -59,8 +66,6 @@ export async function GET(request: NextRequest) {
       scope: "file_content:read,library_content:read,file_variables:read",
     });
     console.log("[Southleft Callback] Auth successful, preparing response...");
-
-    const baseUrl = await getBaseUrl();
 
     // Extract access token from pending cookies
     let accessToken: string | undefined;
@@ -75,23 +80,18 @@ export async function GET(request: NextRequest) {
       }
     }
 
-    // Return HTML page that sets localStorage and redirects
-    const html = `
-<!DOCTYPE html>
-<html>
-<head>
-    <title>Auth Success</title>
-</head>
-<body>
-    <script>
-        if (${JSON.stringify(accessToken)}) {
-            localStorage.setItem('southleft_access_token', ${JSON.stringify(accessToken)});
-        }
-        window.location.href = '${baseUrl}/southleft-auth-success.html';
-    </script>
-</body>
-</html>
-    `;
+    // Self-contained success HTML — no redirect to auth-guarded pages
+    const html = `<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8"><title>Figma Console — Connected</title>
+<style>*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}body{min-height:100vh;display:flex;align-items:center;justify-content:center;background:#0d0d0d;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#fff}.card{text-align:center;padding:48px 40px;background:#161616;border:1px solid rgba(255,255,255,.08);border-radius:16px;max-width:360px;width:100%}.icon{width:56px;height:56px;border-radius:50%;background:rgba(52,211,153,.12);border:1px solid rgba(52,211,153,.3);display:flex;align-items:center;justify-content:center;margin:0 auto 20px;font-size:24px}h1{font-size:20px;font-weight:600;margin-bottom:8px}.subtitle{font-size:14px;color:rgba(255,255,255,.5);margin-bottom:24px;line-height:1.5}.close-hint{display:none;font-size:13px;color:rgba(255,255,255,.3);background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.08);border-radius:8px;padding:10px 16px}</style></head>
+<body><div class="card"><div class="icon">✓</div><h1>Connected!</h1><p class="subtitle">Figma Console is now connected.<br>Returning to the plugin…</p><p class="close-hint" id="close-hint">Authentication complete — you can close this tab.</p></div>
+<script>
+var token = ${JSON.stringify(accessToken ?? null)};
+if(token){localStorage.setItem('southleft_access_token',token);}
+if(window.opener){try{window.opener.postMessage({type:'southleft-oauth-complete',accessToken:token},'*');}catch(e){}}
+window.close();
+setTimeout(function(){document.getElementById('close-hint').style.display='block';},200);
+</script></body></html>`;
 
     const response = new NextResponse(html, {
       headers: { 'Content-Type': 'text/html' },
@@ -140,11 +140,24 @@ export async function GET(request: NextRequest) {
     return response;
   } catch (error) {
     console.error("[Southleft MCP OAuth Callback] Error:", error);
-    const baseUrl = await getBaseUrl();
-    const doneUrl = new URL("/", baseUrl);
-    doneUrl.searchParams.set("auth", "failed");
-    doneUrl.searchParams.set("source", "southleft-mcp");
-    doneUrl.searchParams.set("popup", "true");
-    return NextResponse.redirect(doneUrl);
+
+    writeOAuthResult(session, {
+      type: 'southleft-mcp-auth',
+      success: false,
+    });
+
+    // Self-contained error HTML — no redirect to auth-guarded pages
+    const errorHtml = `<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8"><title>Figma Console — Error</title>
+<style>*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}body{min-height:100vh;display:flex;align-items:center;justify-content:center;background:#0d0d0d;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#fff}.card{text-align:center;padding:48px 40px;background:#161616;border:1px solid rgba(255,255,255,.08);border-radius:16px;max-width:360px;width:100%}.icon{width:56px;height:56px;border-radius:50%;background:rgba(239,68,68,.12);border:1px solid rgba(239,68,68,.3);display:flex;align-items:center;justify-content:center;margin:0 auto 20px;font-size:24px}h1{font-size:20px;font-weight:600;margin-bottom:8px}.subtitle{font-size:14px;color:rgba(255,255,255,.5);line-height:1.5}</style></head>
+<body><div class="card"><div class="icon">✗</div><h1>Connection failed</h1><p class="subtitle">Figma Console authentication failed.<br>Please close this window and try again.</p></div>
+<script>
+if(window.opener){try{window.opener.postMessage({type:'southleft-oauth-complete',error:true},'*');}catch(e){}}
+setTimeout(function(){window.close();},3000);
+</script></body></html>`;
+
+    return new NextResponse(errorHtml, {
+      headers: { "Content-Type": "text/html" },
+    });
   }
 }

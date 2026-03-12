@@ -325,3 +325,329 @@ Technically publishable, but:
 2. **Privacy policy** — mandatory for plugins processing user data
 3. **Long-running justification** — orchestration is interactive, not silent background
 4. Neither Figma Console MCP nor Guardian are currently on the marketplace — possibly deliberate
+
+---
+
+## 6. Figma Clipboard Format — The Internal Conversion Mechanism
+
+**Discovered 2026-03-12 via research.**
+
+### How Figma consumes HTML as design layers
+
+When you Cmd+V in Figma, it inspects the clipboard `text/html` data. If it contains a **proprietary Figma clipboard format** (specific metadata structure), Figma converts it into editable layers instead of plain text.
+
+This is the same mechanism used by:
+- **Figma's capture.js** (Code to Canvas)
+- **code.to.design API** (divRIOTS)
+- **html.to.design plugin** (divRIOTS)
+- **figma-capture Chrome extension**
+
+### The conversion pipeline
+
+```
+HTML + CSS (any source)
+      │
+      ▼
+Conversion to "Figma clipboard format"     ← proprietary, undocumented
+(text/html with special Figma metadata)
+      │
+      ▼
+Clipboard: e.clipboardData.setData('text/html', figmaClipboardData)
+      │
+      ▼
+Cmd+V in Figma → editable layers (frames, text, auto-layout, colors)
+```
+
+### Who produces this format
+
+| Producer | How | Access | Cost |
+|----------|-----|--------|------|
+| **Figma capture.js** | Public script at `mcp.figma.com/.../capture.js`. Serializes DOM → POST to Figma endpoint OR clipboard | Whitelisted MCP clients only (for endpoint mode). Clipboard mode is unrestricted. | Free |
+| **code.to.design API** (divRIOTS) | `POST https://api.to.design/html` with `clip: true` → returns clipboard data | Open — API key required | Paid API |
+| **html.to.design plugin** (divRIOTS) | Browser extension + Figma plugin, uses same API internally | Open — Figma Community plugin | Free (limited) / Paid |
+| **figma-capture extension** | Chrome extension that loads Figma's capture.js, intercepts clipboard, applies font fixes | Open source (GitHub) | Free |
+
+### code.to.design API — clipboard mode (no whitelist)
+
+```javascript
+// 1. Convert HTML → Figma clipboard format
+const response = await fetch('https://api.to.design/html', {
+  method: 'POST',
+  headers: {
+    'Content-Type': 'application/json',
+    'Authorization': 'Bearer YOUR_API_KEY'
+  },
+  body: JSON.stringify({
+    html: '<style>${CSS}</style>${HTML}',
+    clip: true   // ← returns Figma clipboard format
+  })
+});
+const clipboardData = await response.text();
+
+// 2. Inject into clipboard
+document.addEventListener('copy', (e) => {
+  e.clipboardData.setData('text/html', clipboardData);
+  e.preventDefault();
+});
+document.execCommand('copy');
+
+// 3. Cmd+V in Figma → editable layers
+```
+
+**Constraint:** API calls must occur within ~5 seconds of user interaction (browser clipboard security). Google Fonts only (no system fonts).
+
+### code.to.design API — plugin mode (programmatic, no paste needed)
+
+With `clip: false`, the API returns a structured format consumable by a **Figma plugin SDK**:
+- Plugin calls the API with HTML
+- API returns Figma node structure
+- Plugin SDK creates the nodes via Plugin API
+- No clipboard, no paste — fully programmatic
+
+This is the same architecture as the deprecated `html-figma` library, but maintained and production-grade.
+
+### Figma capture.js — clipboard mode (free, no whitelist)
+
+The `capture.js` script is public and can be loaded by anyone. In clipboard mode (without `captureId`), it:
+1. Serializes the DOM (traverses nodes, reads computed styles, extracts layout)
+2. Writes the Figma clipboard format to the clipboard
+3. Does NOT POST to the protected endpoint
+
+```
+Playwright → navigate to site → inject capture.js → trigger clipboard capture
+→ clipboard contains Figma layers → paste in Figma
+```
+
+**Warning:** The clipboard format is undocumented and may change without notice.
+
+---
+
+## 7. `generate_figma_design` Bypass Strategies for Guardian
+
+### Summary of approaches
+
+| Approach | Whitelist bypass | Plugin needed | Fully programmatic | Cost | Stability |
+|----------|-----------------|---------------|-------------------|------|-----------|
+| Figma MCP `generate_figma_design` | **No** (whitelisted clients only) | No | Yes | Free | Stable |
+| **capture.js clipboard mode** | **Yes** | No | Semi (requires paste) | Free | Fragile (undocumented format) |
+| **code.to.design API clipboard** | **Yes** | No | Semi (requires paste) | Paid | Stable (maintained API) |
+| **code.to.design API plugin mode** | **Yes** | Yes (SDK in plugin) | **Yes** | Paid | Stable |
+| **Playwright + AI → Plugin API** | **Yes** | Yes (Guardian) | **Yes** | Free | Variable (AI accuracy 80-90%) |
+| **Custom DOM serializer + Plugin** | **Yes** | Yes (Guardian) | **Yes** | Free | Depends on implementation |
+
+### Recommended strategies for Guardian
+
+**For quick wins (no code change):**
+- Use `generate_figma_design` from Claude Code (whitelisted) alongside Guardian for modification
+- Hybrid workflow: Claude Code pushes initial design, Guardian agents modify/complete it
+
+**For full integration (code change required):**
+1. **Best: code.to.design plugin mode** — if budget allows, integrate their SDK into Guardian plugin. API converts HTML → node structure, SDK creates nodes via Plugin API. Maintained, production-grade.
+2. **Free: Playwright DOM extraction + Guardian Plugin API** — Playwright captures site, extracts computed styles + layout as JSON, sends to Guardian plugin via Supabase, plugin creates nodes. We already have the infrastructure, just need the DOM→Plugin API converter.
+3. **Risky: capture.js clipboard interception** — use Figma's public script, intercept clipboard payload, parse and replay via Plugin API. Free but depends on undocumented format.
+
+Sources:
+- [code.to.design API docs](https://docs-code.to.design/overview)
+- [code.to.design clipboard mode](https://docs-code.to.design/clipboard-mode)
+- [figma-capture Chrome extension](https://github.com/vorbei/figma-capture)
+- [html.to.design plugin](https://www.figma.com/community/plugin/1159123024924461424/html-to-design-by-divriots-import-websites-to-figma-designs-web-html-css)
+- [code.to.design API announcement](https://divriots.com/blog/presenting-code-to-design-api/)
+
+---
+
+## 8. Clipboard Mode — Test & Validation (2026-03-12)
+
+### Test: capture.js clipboard mode without Figma MCP
+
+**Setup:**
+- Guardian webapp running on `localhost:3000` (Next.js dev)
+- `capture.js` injected via `layout.tsx` (`<script src="/vendor/figma-capture.js" async />`, dev only)
+- Local copy downloaded from `mcp.figma.com/mcp/html-to-design/capture.js`
+- **No Figma MCP connected** — all MCP servers disabled during test
+
+**Test procedure:**
+1. Open `http://localhost:3000#figmacapture&figmadelay=2000`
+2. capture.js detects `#figmacapture` hash → waits 2s → serializes DOM → copies to clipboard
+3. Toast confirmation appears in browser
+4. Open Figma → Cmd+V → paste
+
+**Result: SUCCESS** — Guardian webapp fully rendered as editable Figma layers (frames, text, auto-layout, colors).
+
+**Key finding:** Clipboard mode is **100% client-side**. No MCP, no server, no whitelist, no auth needed. The script runs entirely in the browser and writes directly to the system clipboard.
+
+### Hash parameters
+
+| Parameter | Example | Description |
+|-----------|---------|-------------|
+| `#figmacapture` | (required) | Triggers auto-capture on page load |
+| `&figmadelay=<ms>` | `&figmadelay=2000` | Wait before capture (let page render) |
+| `&figmaselector=<css>` | `&figmaselector=.main-content` | Capture specific element only |
+| `&figmaselector=*` | | Shows interactive selection UI |
+
+### Programmatic capture (without hash)
+
+```javascript
+// Available after capture.js loads
+const result = await window.figma.captureForDesign({ selector: 'body' });
+// Result is written to clipboard automatically
+```
+
+---
+
+## 9. capture.js — Technical Deep Dive
+
+### How DOM → Figma clipboard works
+
+**Step 1 — DOM serialization (capture.js, ~128KB minified)**
+
+The script traverses the entire DOM tree and for each element:
+- Reads computed CSS styles (colors, layout, fonts, spacing, borders, shadows, etc.)
+- Converts CSS flex/grid → Figma auto-layout properties
+- Converts CSS colors → RGB 0-1 range
+- Converts CSS shadows → Figma DROP_SHADOW effects
+- Extracts text content with font metadata
+- References images by URL (Figma downloads them on paste)
+- Extracts React Fiber props (`__reactFiber`) for component metadata when available
+- Builds a JSON tree of serialized nodes
+
+**Step 2 — Clipboard write**
+
+The serialized JSON is written to the clipboard via `navigator.clipboard.write()` as `text/html` with proprietary markers:
+
+```html
+<meta charset="utf-8">
+<span data-metadata="<!--(figmeta)...JSON metadata...-->">
+<!--(figh2d)BASE64_ENCODED_JSON_PAYLOAD(/figh2d)-->
+```
+
+- `(figmeta)` — file/context metadata
+- `(figh2d)` — "Figma HTML to Design" — the serialized node tree (base64-encoded JSON)
+
+**Step 3 — Figma paste**
+
+When Cmd+V is pressed in Figma:
+1. Figma reads `text/html` from clipboard
+2. Detects `(figmeta)` / `(figh2d)` markers
+3. Decodes base64 → JSON → deserializes into native Figma nodes
+4. Downloads referenced images
+5. Creates editable frames, text, auto-layout, etc.
+
+### Two operating modes
+
+| Mode | Trigger | Server needed | Whitelist |
+|------|---------|---------------|-----------|
+| **Endpoint** | `captureForDesign({ captureId, endpoint })` | Yes — POSTs to `mcp.figma.com/capture/{id}/submit` | **Yes** (captureId from MCP) |
+| **Clipboard** | `#figmacapture` hash OR `captureForDesign({ selector })` | **No** — writes to local clipboard | **No** |
+
+### Internal API surface (from source analysis)
+
+```javascript
+window.figma.captureForDesign({
+  captureId?: string,    // For endpoint mode (from generate_figma_design)
+  endpoint?: string,     // POST target (default: mcp.figma.com)
+  selector?: string,     // CSS selector to capture (default: 'body')
+});
+
+window.figma.__clipboardFlow(selector);  // Returns { showClipboardBar }
+// Shows a toolbar for manual capture/selection
+```
+
+---
+
+## 10. "HTML to Design" — Three Distinct Actors
+
+The name "HTML to Design" is used by **three unrelated actors**, which causes confusion:
+
+### Relationship map
+
+```
+divRIOTS (2022)                          Figma (2025-2026)
+┌─────────────────────┐                  ┌──────────────────────────┐
+│ html.to.design      │                  │ "HTML to Design"         │
+│ (plugin + extension │  INSPIRED        │ (internal feature name)  │
+│  + API)             │ ──────────────►  │                          │
+│                     │  same concept    │ capture.js               │
+│ Own capture engine  │                  │ Code to Canvas           │
+│ Paid API            │                  │ generate_figma_design    │
+└─────────────────────┘                  └──────────────────────────┘
+                                                    │
+                                                    │ USES (bundles)
+                                                    ▼
+                                         ┌──────────────────────────┐
+                                         │ vorbei/figma-capture     │
+                                         │ (Chrome extension)       │
+                                         │                          │
+                                         │ Bundles capture.js       │
+                                         │ + post-processing:       │
+                                         │   - CJK font fixes       │
+                                         │   - Font mapping          │
+                                         │   - DOM flattening        │
+                                         │   - Empty node cleanup    │
+                                         │                          │
+                                         │ MIT, open source, free   │
+                                         └──────────────────────────┘
+```
+
+| | capture.js (Figma) | vorbei/figma-capture | html.to.design (divRIOTS) |
+|---|---|---|---|
+| **Author** | Figma Inc. | Independent dev | divRIOTS (startup) |
+| **Type** | Script (JS) | Chrome extension | Plugin + extension + API |
+| **Capture engine** | **This IS the engine** | Uses Figma's capture.js | **Own engine** (independent) |
+| **Clipboard format** | `figh2d` (Figma's format) | Same (intercepts & transforms) | Own format (API returns clipboard data) |
+| **Price** | Free (public URL) | Free (MIT, open source) | Freemium → paid |
+| **License** | None (proprietary) | MIT | Commercial |
+| **Relationship** | Original | Wrapper + post-processing | Competitor / pioneer |
+
+**Key insight:** divRIOTS **invented** the concept "HTML to Design" (2022). Figma later built their own official version under the same name (capture.js / Code to Canvas, 2025-2026). The two have **no code dependency** — completely separate implementations.
+
+---
+
+## 11. Legal Analysis — capture.js & Figma ToS
+
+### Figma ToS restrictions (confirmed)
+
+From [Figma SSA](https://www.figma.com/ssa/) and [Figma ToS](https://www.figma.com/legal/tos/):
+
+> *"[You shall not] reverse engineer, decompile, disassemble, or otherwise attempt to discover the source code, object code, or underlying structure, ideas, know-how, or algorithms relevant to the Services"*
+
+### Risk assessment for using capture.js
+
+| Action | ToS risk | Rationale |
+|--------|----------|-----------|
+| Load capture.js from public URL at runtime | **Low** | Public endpoint, no auth, Figma serves it intentionally |
+| Bundle/redistribute capture.js in your product | **High** | Proprietary code, no license, no redistribution rights |
+| Depend on clipboard format `figh2d` | **High** | Undocumented internal format, no stability guarantee |
+| Reverse-engineer the format to build own serializer | **High** | Explicitly prohibited by ToS ("reverse engineer...underlying structure") |
+| Use capture.js in clipboard mode for personal/demo use | **Low** | No server interaction, no API abuse, personal use |
+| Use capture.js in a published commercial product | **High** | Redistribution of proprietary code without license |
+
+### What others do
+
+| Actor | Approach | Legal stance |
+|-------|----------|-------------|
+| **vorbei/figma-capture** | Bundles capture.js, adds disclaimer: *"unofficial community tool for personal and educational use, not affiliated with Figma"* | Acknowledges risk, not commercial |
+| **divRIOTS (html.to.design)** | **Own engine**, no use of capture.js | Clean — entirely their own code |
+| **Figma MCP (official)** | It's their own script | N/A |
+
+### Verdict for Guardian
+
+| Use case | Recommended | Reasoning |
+|----------|-------------|-----------|
+| **Hackathon / internal demo** | ✅ Yes, use capture.js clipboard mode | No distribution, personal use, low risk |
+| **Published product (marketplace or SaaS)** | ❌ No, don't redistribute capture.js | No license, ToS prohibits reverse engineering, format can break anytime |
+| **Published product (alternative)** | ✅ Use code.to.design API (divRIOTS) | Licensed, maintained, stable API, their own engine |
+| **Published product (free alternative)** | ✅ Build own DOM→Plugin API converter | Use Guardian's existing Plugin API execution, no dependency on Figma's proprietary format |
+
+### Safe path for Guardian production
+
+1. **Don't bundle capture.js** — remove from `public/vendor/` before publishing
+2. **Don't reverse-engineer the `figh2d` clipboard format**
+3. **Continue using Plugin API execution** (`figma_execute`) — official, documented API
+4. **If DOM→Figma is needed:** either pay for code.to.design API, or build a DOM→Plugin API converter that reads computed styles and creates Figma nodes via the official Plugin API (not via the proprietary clipboard format)
+
+Sources:
+- [Figma SSA — reverse engineering clause](https://www.figma.com/ssa/)
+- [Figma ToS](https://www.figma.com/legal/tos/)
+- [Figma Developer Terms](https://www.figma.com/legal/developer-terms/)
+- [vorbei/figma-capture disclaimer](https://github.com/vorbei/figma-capture)
+- [Figma Plugin Review Guidelines](https://help.figma.com/hc/en-us/articles/360039958914-Plugin-and-widget-review-guidelines)
