@@ -325,18 +325,43 @@ You can test an already deployed package on https://ids-hackathon-2026-ds-ai-gua
 
 # troubleshoots
 
-## MCP figma connections online with `mcp.figma.com/mcp`
+## MCP Figma connections online with `mcp.figma.com/mcp`
 
 ### OAuth Flow Diagnostics and Fixes
 
 #### Root Cause of the 401 Error
 The Figma MCP server (`mcp.figma.com/mcp`) **only accepts tokens obtained via the native MCP OAuth flow with the `mcp:connect` scope**. Standard tokens (obtained via `/oauth` with scopes like `file_content:read`) and Personal Access Tokens (PAT) are systematically rejected with HTTP 401.
 
-The `mcp:connect` scope is only accessible to dynamically registered clients (Dynamic Client Registration / DCR). The static client (`FIGMA_CLIENT_ID` from the developer portal) cannot use this scope. The DCR endpoint (`api.figma.com/v1/oauth/mcp/register`) currently returns **403 Forbidden**, likely due to a restriction on Figma's side.
+The `mcp:connect` scope is **not available in the Figma developer portal** — it does not appear in the app scope settings. This scope is exclusively reserved for **whitelisted MCP clients** (VS Code, Cursor, Claude Code, Windsurf, Codex). Third-party apps like Guardian cannot obtain it.
+
+#### Figma's Whitelist Approach (as of March 2026)
+
+Figma uses a **client whitelist** for MCP access instead of open Dynamic Client Registration (DCR):
+
+- **Whitelisted clients** (VS Code, Cursor, Claude Code, etc.) have pre-approved DCR — their registration at `api.figma.com/v1/oauth/mcp/register` succeeds
+- **Third-party apps** get **403 Forbidden** on the DCR endpoint
+- There is an access request form (Asana) to ask Figma for whitelisting, but approval is not guaranteed (beta program)
+- The `mcp:connect` scope is invisible in the Figma developer portal scope settings
+
+#### Figma OAuth App Visibility
+
+Figma OAuth apps have three states:
+
+| State | Who can use it | Review required |
+|-------|---------------|-----------------|
+| **Development (draft)** | Only the creator + plan admins | No |
+| **Published Private** | All members of the associated team/org | No |
+| **Published Public** | Everyone | Yes (Figma review) |
+
+**Important:** A Private app is invisible to accounts outside the team/org — Figma returns "OAuth app with client id ... doesn't exist" (not "access denied").
+
+#### Redirect URI Matching
+
+The `redirect_uri` sent in the OAuth request must match **exactly** what is registered in the Figma app. Common pitfall: `localhost` vs `127.0.0.1` are different hosts. The `NEXT_PUBLIC_BASE_URL` env var controls the canonical host used for redirect URIs (via `get-base-url.ts`).
 
 #### Implemented Changes
 
-1. **Dynamic Client Registration Route** (`src/app/api/auth/figma-mcp/register/route.ts`) — New route that attempts dynamic registration with Figma. If DCR succeeds, the dynamic `client_id` is stored in a cookie and used for the native MCP flow.
+1. **Dynamic Client Registration Route** (`src/app/api/auth/figma-mcp/register/route.ts`) — Attempts dynamic registration with Figma. If DCR succeeds, the dynamic `client_id` is stored in a cookie and used for the native MCP flow. Currently returns 403 for non-whitelisted apps.
 
 2. **Dual Authentication Mode** (`src/app/api/auth/figma-mcp/route.ts` and `callback/route.ts`):
    - **Native MCP Mode**: If a DCR client is available, uses `mcp.figma.com` as the issuer with the `mcp:connect` scope. The obtained token will work with the MCP server.
@@ -348,5 +373,7 @@ The `mcp:connect` scope is only accessible to dynamically registered clients (Dy
 
 5. **Token Normalization** (`src/lib/figma-mcp-oauth.ts`) — The `tokens()` method ensures the `access_token` field is present in snake_case for the SDK.
 
+6. **Canonical Host Redirect** (`src/lib/get-base-url.ts`) — Server-side `getBaseUrl()` now prefers `NEXT_PUBLIC_BASE_URL` env var to ensure the redirect URI matches the registered OAuth domain (e.g. `127.0.0.1` vs `localhost`).
+
 #### Known Limitation
-The Figma DCR endpoint currently returns 403 Forbidden. Until Figma unblocks this endpoint, the native MCP flow cannot work for third-party applications. Official clients (VS Code, Cursor, Claude Code) use the same DCR mechanism — this is a restriction on Figma's side.
+The Figma remote MCP server (`mcp.figma.com/mcp`) is **not accessible to third-party apps** as of March 2026. The DCR endpoint returns 403 Forbidden and the `mcp:connect` scope is not available in the developer portal. This is a deliberate restriction by Figma — only pre-approved clients can use the remote MCP. Alternatives: use the **Desktop MCP** (`localhost:3845`) or the **Figma REST API** with standard OAuth tokens.
