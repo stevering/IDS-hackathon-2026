@@ -841,6 +841,10 @@ async function connectMCPs(
       if (supabaseAccessToken) {
         guardianHeaders["Authorization"] = `Bearer ${supabaseAccessToken}`;
       }
+      // Bypass Vercel Deployment Protection for self-referencing requests
+      if (process.env.VERCEL_AUTOMATION_BYPASS_SECRET) {
+        guardianHeaders["x-vercel-protection-bypass"] = process.env.VERCEL_AUTOMATION_BYPASS_SECRET;
+      }
       const { tools } = await getOrConnect(guardianMcpUrl, "Guardian", guardianHeaders);
       const prefixedTools = Object.fromEntries(
         Object.entries(tools).map(([name, tool]) => [`guardian_${name}`, tool])
