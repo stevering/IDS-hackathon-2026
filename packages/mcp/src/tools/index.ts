@@ -23,6 +23,7 @@ import { registerDocumentGapTool } from "./document-gap.js"
 import { registerFigmaExecuteTool } from "./figma-execute.js"
 import { registerActionTools } from "./actions.js"
 import { registerListPageChildrenTool } from "./list-page-children.js"
+import { registerGetConnectedClientsTool } from "./get-connected-clients.js"
 
 export function registerAllTools(server: McpServer, userId?: string): void {
   // Investigation tools
@@ -38,4 +39,7 @@ export function registerAllTools(server: McpServer, userId?: string): void {
 
   // Page inspection tools (Figma plugin bridge)
   registerListPageChildrenTool(server, userId)
+
+  // Discovery tools (presence-only, no code execution)
+  registerGetConnectedClientsTool(server, userId)
 }

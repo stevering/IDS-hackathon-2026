@@ -21,6 +21,9 @@ export const GUARDIAN_TOOLS_KNOWLEDGE = `
 - \`guardian_surface_pattern\` — Flag when a pattern appears in 3+ places and may warrant DS inclusion.
 - \`guardian_document_gap\` — Build a case for a DS extension request when a gap is identified.
 
+### Discovery Tools
+- \`guardian_get_connected_clients\` — List all connected Figma plugin instances with their file context (fileKey, fileUrl, fileName, pages, currentPage, currentUser). Lightweight presence query — no code is executed. Use this to discover which Figma files are open before running other tools.
+
 ### Page Inspection Tools
 - \`guardian_list_page_children\` — List all top-level nodes on the current page (name, type, position, size). Use this instead of get_selection_context to check what exists on a page without requiring a selection.
 

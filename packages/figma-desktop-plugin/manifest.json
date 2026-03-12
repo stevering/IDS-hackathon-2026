@@ -1,12 +1,13 @@
 {
-  "name": "Guardian Plugin",
-  "id": "8204941393675708447",
+  "name": "Guardian Desktop Plugin",
+  "id": "8204941393675708448",
   "api": "1.0.0",
   "main": "dist/code.js",
   "ui": "ui.html",
   "capabilities": [
   ],
   "enableProposedApi": false,
+  "enablePrivatePluginApi": true,
   "documentAccess": "dynamic-page",
   "editorType": [
     "figma",

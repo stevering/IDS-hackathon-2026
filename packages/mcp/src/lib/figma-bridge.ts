@@ -2,6 +2,74 @@ import { createMcpSupabaseClient } from "./supabase.js"
 
 const CHANNEL_BASE = "guardian:execute"
 
+/** Lightweight presence info for a connected Figma plugin client */
+export type ConnectedClient = {
+  clientId: string
+  shortId: string
+  label: string
+  fileKey?: string
+  figmaContext?: {
+    fileName?: string
+    fileUrl?: string | null
+    pages?: { id: string; name: string }[]
+    currentPage?: { id: string; name: string } | null
+    currentUser?: { id: string; name: string } | null
+  }
+  connectedAt?: number
+}
+
+/**
+ * Query connected Figma plugin clients via Supabase Realtime presence.
+ * Does NOT execute any code — only reads the presence state.
+ */
+export async function getConnectedClients(userId?: string): Promise<ConnectedClient[]> {
+  const channelName = userId ? `${CHANNEL_BASE}:${userId}` : CHANNEL_BASE
+  const supabase = createMcpSupabaseClient()
+  const channel = supabase.channel(channelName, {
+    config: { presence: { key: "mcp-query" } },
+  })
+
+  return new Promise<ConnectedClient[]>((resolve) => {
+    let settled = false
+
+    const timer = setTimeout(() => {
+      if (!settled) {
+        settled = true
+        channel.unsubscribe()
+        resolve([])
+      }
+    }, 3000)
+
+    channel
+      .on("presence", { event: "sync" }, () => {
+        if (settled) return
+        settled = true
+        clearTimeout(timer)
+
+        const state = channel.presenceState()
+        const clients: ConnectedClient[] = []
+
+        for (const presences of Object.values(state)) {
+          for (const p of presences as Record<string, unknown>[]) {
+            if (p.type !== "figma-plugin") continue
+            clients.push({
+              clientId: (p.clientId as string) ?? "unknown",
+              shortId: (p.serverShortId as string) ?? (p.clientId as string) ?? "unknown",
+              label: (p.label as string) ?? "Unknown",
+              fileKey: p.fileKey as string | undefined,
+              figmaContext: p.figmaContext as ConnectedClient["figmaContext"],
+              connectedAt: p.connectedAt as number | undefined,
+            })
+          }
+        }
+
+        channel.unsubscribe()
+        resolve(clients)
+      })
+      .subscribe()
+  })
+}
+
 /** Result from a single client execution */
 export type ClientExecResult = {
   clientId: string

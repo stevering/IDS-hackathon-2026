@@ -1,0 +1,10 @@
+{
+  "name": "@guardian/figma-desktop-plugin",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Guardian Desktop Plugin — dev/local variant with enablePrivatePluginApi (figma.fileKey access)",
+  "scripts": {
+    "build": "node build.mjs",
+    "dev": "node build.mjs --watch"
+  }
+}
