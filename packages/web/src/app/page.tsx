@@ -1800,6 +1800,11 @@ export default function Home() {
         // Mark this collaborator as completed — used by Fix EE to drop late messages
         collaboratorCompletedRef.current = true;
 
+        // Drain the send queue — any relayed messages queued before this point
+        // would trigger a sendMessage crash (useChat state conflict) or produce
+        // redundant AI responses after the task is done.
+        orchSendQueue.current = [];
+
         // Send completed status via Supabase RT (instantaneous, bypasses queue)
         sendAgentResponse("task", "completed", summary);
 
