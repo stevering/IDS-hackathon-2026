@@ -831,7 +831,9 @@ async function connectMCPs(
     }
   }
   // Connect Guardian MCP if enabled and URL provided
-  const guardianMcpUrl = process.env.GUARDIAN_MCP_URL;
+  // Fallback: when GUARDIAN_MCP_URL is not set (e.g. Vercel), use the app's own /api/mcp route
+  const guardianMcpUrl = process.env.GUARDIAN_MCP_URL
+    ?? (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}/api/mcp` : undefined);
   if (enabledMcps.guardian !== false && guardianMcpUrl) {
     try {
       console.log("[Guardian] Connecting to:", guardianMcpUrl);
