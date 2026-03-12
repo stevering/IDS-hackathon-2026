@@ -2392,7 +2392,9 @@ export default function Home() {
 
     const collab = collaborators.find(c => c.clientId === payload.senderId);
     const label = collab?.shortId || payload.senderShortId;
-    const reportText = `[Agent report from ${label}] ${payload.summary || "Task completed"}`;
+    // Fix II: include status so orchestrator can distinguish progress from completion
+    const statusTag = payload.status === "completed" ? "COMPLETED" : "IN_PROGRESS";
+    const reportText = `[Agent report from ${label} — ${statusTag}] ${payload.summary || "Task completed"}`;
 
     lastIncomingSenderRef.current = payload.senderId;
     // Queue the message — orchProcessQueue handles sending one at a time
@@ -2530,7 +2532,7 @@ export default function Home() {
         stallNudgeCount.current += 1;
         console.log("[Orchestration] Dead air detected — nudging orchestrator AI");
         const collabNames = activeCollabs.map(c => c.shortId).join(", ");
-        orchQueueSend(`[System — automated watchdog, NOT a user message] No activity for ${Math.round(idleMs / 1000)}s. Active agents: ${collabNames}. If all agents have reported, mark them done with [AGENT_DONE:#shortId] and synthesize the final summary for the user. Do NOT re-execute tasks that agents already completed.`);
+        orchQueueSend(`[System — automated watchdog, NOT a user message] No activity for ${Math.round(idleMs / 1000)}s. Active agents: ${collabNames}. Agents are still working autonomously. Do NOT mark any agent as done unless you received a report with status COMPLETED (from signal_task_complete). Progress reports (IN_PROGRESS) mean the agent is still working — be patient.`);
       }
     }, 10_000);
 

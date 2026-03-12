@@ -29,6 +29,8 @@ Return values must be JSON-serializable (no Figma node objects — extract their
 - Use figma.listAvailableFontsAsync() (async) not figma.listAvailableFonts() (does not exist).
 - ONLY Frame, Group, Component, and ComponentSet nodes support .appendChild(). RectangleNode does NOT have appendChild — use a Frame as a button container instead of a Rectangle.
 - .paddingAll does NOT exist. Use .paddingTop / .paddingRight / .paddingBottom / .paddingLeft individually.
+- For effects (DROP_SHADOW, INNER_SHADOW), the effects array requires blendMode and visible fields: node.effects = [{ type: 'DROP_SHADOW', color: { r: 0, g: 0, b: 0, a: 0.25 }, offset: { x: 0, y: 2 }, radius: 4, spread: 0, visible: true, blendMode: 'NORMAL' }]. Note: color in effects uses RGBA (with a), unlike fills which use RGB only.
+- For SOLID fills/strokes, do NOT put 'a' (alpha) in the color object. Use opacity on the paint instead: { type: 'SOLID', color: { r: 0.5, g: 0.5, b: 0.5 }, opacity: 0.3 }.
 
 ## Examples
 
