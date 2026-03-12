@@ -4,7 +4,7 @@ import { PLAYBOOKS } from "../guardian/playbooks.js"
 
 export function registerAnalyzeDriftTool(server: McpServer): void {
   server.tool(
-    "guardian_analyze_drift",
+    "analyze_drift",
     `Use this when a component looks different from its DS master, when local token
 overrides are detected, or when a Figma node appears detached.
 
@@ -14,8 +14,8 @@ as confirmed drift signals and the investigation focuses on measuring their scop
 Returns a structured investigation plan: steps to compare the node against its DS
 master, what token overrides to look for, and how to interpret findings.
 
-Do NOT use this for discovering if a component exists — use guardian_check_component_usage.
-Do NOT use this for assessing uniqueness — use guardian_assess_snowflake.`,
+Do NOT use this for discovering if a component exists — use check_component_usage.
+Do NOT use this for assessing uniqueness — use assess_snowflake.`,
     {
       componentName: z.string().min(1).describe(
         "Name of the component suspected of drifting (e.g. 'Button', 'Card')"
@@ -62,7 +62,7 @@ Do NOT use this for assessing uniqueness — use guardian_assess_snowflake.`,
             type: "text",
             text: JSON.stringify(
               {
-                tool: "guardian_analyze_drift",
+                tool: "analyze_drift",
                 component: componentName,
                 figmaNodeId: figmaNodeId ?? null,
                 confirmedDrift: confirmed

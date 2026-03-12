@@ -33,6 +33,12 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en" style={{ background: "#0a0a0a", colorScheme: "dark" }}>
+      <head>
+        {/* Figma Code-to-Canvas capture script — dev only, remove before production */}
+        {process.env.NODE_ENV === "development" && (
+          <script src="https://mcp.figma.com/mcp/html-to-design/capture.js" async />
+        )}
+      </head>
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
         style={{ background: "#0a0a0a" }}

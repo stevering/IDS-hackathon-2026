@@ -1,7 +1,7 @@
 import { tool as defineTool, jsonSchema } from "ai";
 
 /**
- * Guarded replacement for guardian_guardian_figma_execute in orchestrator mode.
+ * Guarded replacement for guardian_figma_execute in orchestrator mode.
  * Blocks execution and returns guidance — prevents double-execution where both
  * orchestrator AND collaborator create the same shape.
  */

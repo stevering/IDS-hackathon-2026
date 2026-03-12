@@ -3,7 +3,7 @@ import { getConnectedClients } from "../lib/figma-bridge.js"
 
 export function registerGetConnectedClientsTool(server: McpServer, userId?: string): void {
   server.tool(
-    "guardian_get_connected_clients",
+    "get_connected_clients",
     `List all connected Figma plugin instances and their file context.
 
 Returns for each connected plugin:

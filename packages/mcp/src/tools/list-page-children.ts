@@ -4,7 +4,7 @@ import { executeViaSupabase } from "../lib/figma-bridge.js"
 
 export function registerListPageChildrenTool(server: McpServer, userId?: string): void {
   server.tool(
-    "guardian_list_page_children",
+    "list_page_children",
     `List all top-level children on the current Figma page with name, type, position, and size.
 
 Use this to check what nodes exist on a page — unlike get_selection_context,

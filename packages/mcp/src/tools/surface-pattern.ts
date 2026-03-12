@@ -4,7 +4,7 @@ import { PLAYBOOKS } from "../guardian/playbooks.js"
 
 export function registerSurfacePatternTool(server: McpServer): void {
   server.tool(
-    "guardian_surface_pattern",
+    "surface_pattern",
     `Use this when the same custom solution appears in multiple places (3+) and you
 need to assess whether it has reached the maturity threshold for DS inclusion.
 
@@ -40,7 +40,7 @@ Threshold signals:
             type: "text",
             text: JSON.stringify(
               {
-                tool: "guardian_surface_pattern",
+                tool: "surface_pattern",
                 component: componentName,
                 estimatedInstances: estimatedInstances ?? "unknown",
                 escalationLikely: estimatedInstances !== undefined && estimatedInstances >= 3,

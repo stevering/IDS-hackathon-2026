@@ -4,7 +4,7 @@ import { executeViaSupabase } from "../lib/figma-bridge.js"
 
 export function registerFigmaExecuteTool(server: McpServer, userId?: string): void {
   server.tool(
-    "guardian_figma_execute",
+    "figma_execute",
     `Execute arbitrary Figma Plugin API code via the Guardian Figma plugin bridge.
 
 Use this for one-off operations not covered by guardian_run_action.

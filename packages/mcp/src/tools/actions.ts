@@ -6,17 +6,17 @@ import { executeViaSupabase } from "../lib/figma-bridge.js"
 export function registerActionTools(server: McpServer, userId?: string): void {
 
   // -------------------------------------------------------------------------
-  // guardian_list_actions
+  // list_actions
   // -------------------------------------------------------------------------
   server.tool(
-    "guardian_list_actions",
+    "list_actions",
     `List all available Guardian actions.
 
 Actions are parameterized code templates that run via the Guardian plugin bridge.
 They cover common DS compliance operations: inspecting nodes, detecting token
 overrides, finding component masters, annotating drift, etc.
 
-Call this before guardian_run_action to discover action names and their required params.
+Call this before run_action to discover action names and their required params.
 Filter by category to narrow results:
   - ds-inspection : read DS state (variables, components, fills)
   - ds-annotation : write annotations/markers on the canvas
@@ -66,18 +66,18 @@ Filter by category to narrow results:
   )
 
   // -------------------------------------------------------------------------
-  // guardian_run_action
+  // run_action
   // -------------------------------------------------------------------------
   server.tool(
-    "guardian_run_action",
+    "run_action",
     `Run a named Guardian action in Figma via the Guardian plugin bridge.
 
 Actions are pre-validated Figma Plugin API code templates. Prefer this over
-guardian_figma_execute for common DS operations — actions have tested, safe code.
+figma_execute for common DS operations — actions have tested, safe code.
 
 Workflow:
-  1. Call guardian_list_actions to see available actions and their params
-  2. Call guardian_run_action with the action name and required params
+  1. Call list_actions to see available actions and their params
+  2. Call run_action with the action name and required params
   3. The action's code template is interpolated with your params
   4. The result is returned from the Figma plugin
 
@@ -92,10 +92,10 @@ Built-in actions for DS compliance:
   - annotate_drift          : add drift warning on canvas (requires nodeId)`,
     {
       name: z.string().min(1).describe(
-        "Action name (from guardian_list_actions, e.g. 'get_selection_context')"
+        "Action name (from list_actions, e.g. 'get_selection_context')"
       ),
       params: z.record(z.unknown()).optional().describe(
-        "Parameters for the action (see guardian_list_actions for required params per action)"
+        "Parameters for the action (see list_actions for required params per action)"
       ),
     },
     async ({ name, params }) => {
@@ -108,7 +108,7 @@ Built-in actions for DS compliance:
               text: JSON.stringify(
                 {
                   success: false,
-                  error: `Action '${name}' not found. Call guardian_list_actions to see available actions.`,
+                  error: `Action '${name}' not found. Call list_actions to see available actions.`,
                 },
                 null,
                 2

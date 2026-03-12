@@ -4,15 +4,15 @@ import { PLAYBOOKS } from "../guardian/playbooks.js"
 
 export function registerCheckComponentUsageTool(server: McpServer): void {
   server.tool(
-    "guardian_check_component_usage",
+    "check_component_usage",
     `Use this BEFORE creating any custom component or variant.
 
 Checks if a component already exists in the design system (Figma library + codebase).
 Returns a structured investigation plan: which MCP tools to call, what to search for,
 and how to interpret results.
 
-Do NOT use this for drift detection (use guardian_analyze_drift instead).
-Do NOT use this if the component clearly does not exist — use guardian_assess_snowflake.`,
+Do NOT use this for drift detection (use analyze_drift instead).
+Do NOT use this if the component clearly does not exist — use assess_snowflake.`,
     {
       componentName: z.string().min(1).describe(
         "Name of the component to look for (e.g. 'Button', 'Card', 'InputField')"
@@ -37,7 +37,7 @@ Do NOT use this if the component clearly does not exist — use guardian_assess_
             type: "text",
             text: JSON.stringify(
               {
-                tool: "guardian_check_component_usage",
+                tool: "check_component_usage",
                 component: componentName,
                 domain: domain ?? "general",
                 investigation_plan: {

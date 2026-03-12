@@ -32,7 +32,7 @@ Claude Code communicates with Figma via an HTTP MCP server (`mcp.figma.com/mcp` 
 - `whoami` — authenticated user info (remote-only)
 
 **Write tools (5):**
-- `generate_figma_design` — Code to Canvas: captures browser DOM → Figma layers (remote-only)
+- `generate_figma_design` — Code to Canvas: captures browser DOM → Figma layers (**remote-only, whitelisted clients only**)
 - `generate_diagram` — Mermaid syntax → FigJam diagram
 - `add_code_connect_map` — creates Figma ↔ code mappings (metadata only)
 - `send_code_connect_mappings` — confirms suggested mappings
@@ -65,7 +65,41 @@ Claude Code communicates with Figma via an HTTP MCP server (`mcp.figma.com/mcp` 
 - No ability to modify existing designs programmatically
 - AI is "blind" without explicit Figma URLs
 - Use case: dev workflow (read design → code, capture site → design)
-- **Remote mode is restricted** (as of March 2026): only whitelisted MCP clients can use `mcp.figma.com/mcp`. Third-party apps must use the Desktop mode or the Figma REST API.
+
+### `generate_figma_design` — Client Whitelist (CRITICAL LIMITATION)
+
+**Discovered 2026-03-12 via testing.**
+
+The `generate_figma_design` tool is documented as **"specific clients only, remote only"**. Figma's remote MCP server (`mcp.figma.com/mcp`) identifies the connecting MCP client and only exposes the tool to whitelisted clients.
+
+**Whitelisted clients (as of March 2026):**
+
+| Client | Access | Source |
+|--------|--------|--------|
+| Claude Code (Anthropic) | Yes | Launch announcement, Feb 17 2026 |
+| VS Code (GitHub Copilot) | Yes | GitHub Changelog, Mar 6 2026 |
+| Codex (OpenAI) | Likely | Mentioned in Figma docs |
+| Cursor, Windsurf, other editors | **No** | Not mentioned |
+| Custom MCP clients (e.g. Guardian webapp) | **No** | Not a recognized client |
+
+**Tested:** Calling `generate_figma_design` from Claude Code works (whitelisted). Calling it from an unrecognized MCP client would fail — the tool simply won't appear in the tool list.
+
+**Implications for Guardian:**
+- The Guardian webapp cannot use `generate_figma_design` via `mcp.figma.com/mcp` — it would not be recognized as a whitelisted client
+- The desktop MCP server (`127.0.0.1:3845`) does NOT expose `generate_figma_design` at all (read-only: 6 tools)
+- Code to Canvas remains exclusive to whitelisted terminal-based AI agents
+- Guardian must continue using its own Plugin API execution approach (`guardian_figma_execute`) for design creation
+
+**Workaround (tested, works):**
+- From Claude Code (whitelisted), `generate_figma_design` can capture any site:
+  - **Local sites:** inject `capture.js` in HTML layout + open browser with `#figmacapture=captureId`
+  - **External sites:** use Playwright MCP to navigate, strip CSP headers, inject script, and call `captureForDesign()`
+- This is useful as a complementary workflow alongside Guardian, but cannot be integrated into the Guardian webapp itself
+
+**Sources:**
+- [Tools and Prompts — "specific clients only"](https://developers.figma.com/docs/figma-mcp-server/tools-and-prompts/)
+- [Forum: generate_figma_design not available](https://forum.figma.com/report-a-problem-6/generate-figma-design-not-available-in-claude-code-connector-51173)
+- [VS Code support added March 2026](https://github.blog/changelog/2026-03-06-figma-mcp-server-can-now-generate-design-layers-from-vs-code/)
 
 ---
 

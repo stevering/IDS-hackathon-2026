@@ -227,10 +227,10 @@ function createKeepaliveStream(
           const finalTools: Record<string, any> = { ...mcpResult.allTools };
           if (isLocalPlugin) {
             // Remove the MCP figma_execute tool (goes through Supabase RT — slow/timeout-prone)
-            delete finalTools["guardian_guardian_figma_execute"];
+            delete finalTools["guardian_figma_execute"];
             // Add a client-side tool (no execute → handled by useChat onToolCall)
             finalTools["figma_plugin_execute"] = figmaPluginExecuteTool;
-            console.log("[Chat] Local plugin detected — added figma_plugin_execute (client-side), removed guardian_guardian_figma_execute");
+            console.log("[Chat] Local plugin detected — added figma_plugin_execute (client-side), removed guardian_figma_execute");
           }
 
           // Collaborator mode: add signal_task_complete tool (client-side)
@@ -246,9 +246,9 @@ function createKeepaliveStream(
           // bug where both the orchestrator AND the collaborator create the same shape.
           // Tool descriptions alone are not reliable — LLMs ignore them.
           if (agentRole === 'orchestrator') {
-            if (finalTools["guardian_guardian_figma_execute"]) {
-              finalTools["guardian_guardian_figma_execute"] = orchestratorFigmaGuardTool;
-              console.log("[Chat] Orchestrator mode — replaced guardian_guardian_figma_execute with guarded version (blocks execution)");
+            if (finalTools["guardian_figma_execute"]) {
+              finalTools["guardian_figma_execute"] = orchestratorFigmaGuardTool;
+              console.log("[Chat] Orchestrator mode — replaced guardian_figma_execute with guarded version (blocks execution)");
             }
           }
 
@@ -853,8 +853,8 @@ async function connectMCPs(
       );
       const wrappedGuardian = wrapToolsWithRetry(prefixedTools, guardianMcpUrl, "Guardian");
       // Intercept guardian_figma_execute to inject targetClientId automatically
-      // Tool is "guardian_figma_execute" in MCP, prefixed with "guardian_" → "guardian_guardian_figma_execute"
-      const execToolKey = "guardian_guardian_figma_execute";
+      // Tool is "guardian_figma_execute" in MCP, prefixed with "guardian_" → "guardian_figma_execute"
+      const execToolKey = "guardian_figma_execute";
       if (targetClientId && wrappedGuardian[execToolKey]) {
         const origTool = wrappedGuardian[execToolKey] as { execute: (...args: unknown[]) => Promise<unknown>; [k: string]: unknown };
         const origExecute = origTool.execute;
@@ -1035,14 +1035,14 @@ Output a SHORT plan (agent/file/task table) then on the NEXT line:
 (include only the shortIds of the agents you actually need)
 
 **CRITICAL — When you output [ORCHESTRATE], you are DELEGATING work to agents. You MUST NOT:**
-- Call any figma_execute or guardian_guardian_figma_execute tools in this response
+- Call any figma_execute or guardian_figma_execute tools in this response
 - Do the work yourself — the agents will do it autonomously after accepting
 - Write detailed instructions before the marker — keep it SHORT so the button appears fast
 
 Your ONLY job when orchestrating is: output the plan table + the [ORCHESTRATE] marker, then STOP. The system will dispatch tasks to agents automatically. You become a coordinator — wait for agent reports, do not execute.
 
-If the user declines or ignores orchestration, you may then execute directly on remote plugins via guardian_guardian_figma_execute with their targetClientId (use the agent shortId).
-For simple tasks you can handle yourself without delegation, execute directly via ${isLocalPlugin ? 'figma_plugin_execute' : 'guardian_guardian_figma_execute'}.
+If the user declines or ignores orchestration, you may then execute directly on remote plugins via guardian_figma_execute with their targetClientId (use the agent shortId).
+For simple tasks you can handle yourself without delegation, execute directly via ${isLocalPlugin ? 'figma_plugin_execute' : 'guardian_figma_execute'}.
 `;
   }
 
@@ -1093,7 +1093,7 @@ ${peerList ? `Peers: ${peerList}` : ''}
 **You work autonomously on your assigned task.** The orchestrator relays messages between you and other agents — their messages arrive as \`[Message from orchestrator]\`. Read those messages carefully and respond to what the orchestrator or peers are saying.
 
 **Figma execution — ITERATIVE approach (critical):**
-- Execute ONE small mutation per \`${isLocalPlugin ? 'figma_plugin_execute' : 'guardian_guardian_figma_execute'}\` call (max ~30 lines)
+- Execute ONE small mutation per \`${isLocalPlugin ? 'figma_plugin_execute' : 'guardian_figma_execute'}\` call (max ~30 lines)
 - After each mutation, verify the result before proceeding
 - NEVER bundle many operations in one call — long code gets TRUNCATED causing syntax errors
 - Split: 1) create node → return ID, 2) set properties using that ID, 3) add children, etc.

@@ -3,7 +3,7 @@
  *
  * Factored knowledge about Guardian MCP tools:
  * - What each tool does and when to use it
- * - guardian_figma_execute execution rules and error recovery
+ * - figma_execute execution rules and error recovery
  * - Figma Plugin API reminders
  *
  * Imported by both:
@@ -15,24 +15,24 @@ export const GUARDIAN_TOOLS_KNOWLEDGE = `
 ## Guardian Tools
 
 ### Investigation Tools
-- \`guardian_check_component_usage\` — Check if a component already exists in the DS before creating a custom one. Use this BEFORE building any new component.
-- \`guardian_analyze_drift\` — Investigate when a component looks different from its DS master, or when token overrides are detected.
-- \`guardian_assess_snowflake\` — Evaluate if a custom component is genuinely unique and not covered by the DS.
-- \`guardian_surface_pattern\` — Flag when a pattern appears in 3+ places and may warrant DS inclusion.
-- \`guardian_document_gap\` — Build a case for a DS extension request when a gap is identified.
+- \`check_component_usage\` — Check if a component already exists in the DS before creating a custom one. Use this BEFORE building any new component.
+- \`analyze_drift\` — Investigate when a component looks different from its DS master, or when token overrides are detected.
+- \`assess_snowflake\` — Evaluate if a custom component is genuinely unique and not covered by the DS.
+- \`surface_pattern\` — Flag when a pattern appears in 3+ places and may warrant DS inclusion.
+- \`document_gap\` — Build a case for a DS extension request when a gap is identified.
 
 ### Discovery Tools
-- \`guardian_get_connected_clients\` — List all connected Figma plugin instances with their file context (fileKey, fileUrl, fileName, pages, currentPage, currentUser). Lightweight presence query — no code is executed. Use this to discover which Figma files are open before running other tools.
+- \`get_connected_clients\` — List all connected Figma plugin instances with their file context (fileKey, fileUrl, fileName, pages, currentPage, currentUser). Lightweight presence query — no code is executed. Use this to discover which Figma files are open before running other tools.
 
 ### Page Inspection Tools
-- \`guardian_list_page_children\` — List all top-level nodes on the current page (name, type, position, size). Use this instead of get_selection_context to check what exists on a page without requiring a selection.
+- \`list_page_children\` — List all top-level nodes on the current page (name, type, position, size). Use this instead of get_selection_context to check what exists on a page without requiring a selection.
 
 ### Figma Execution Tools
-- \`guardian_figma_execute\` — Execute arbitrary Figma Plugin API code in the open Figma plugin. Use for one-off operations.
-- \`guardian_list_actions\` — List available pre-validated Figma code templates (actions).
-- \`guardian_run_action\` — Run a named action with parameters. Prefer this over \`guardian_figma_execute\` for common operations.
+- \`figma_execute\` — Execute arbitrary Figma Plugin API code in the open Figma plugin. Use for one-off operations.
+- \`list_actions\` — List available pre-validated Figma code templates (actions).
+- \`run_action\` — Run a named action with parameters. Prefer this over \`figma_execute\` for common operations.
 
-### Built-in Actions (via guardian_run_action)
+### Built-in Actions (via run_action)
 - \`get_selection_context\` — Snapshot of selected node(s): name, type, size, fills, strokes, variables.
 - \`get_node_variables\` — Variables (tokens) bound to a node.
 - \`detect_token_overrides\` — Find hardcoded non-token values on a node.
@@ -42,7 +42,7 @@ export const GUARDIAN_TOOLS_KNOWLEDGE = `
 `
 
 export const GUARDIAN_FIGMA_EXECUTE_RULES = `
-### guardian_figma_execute — Execution Strategy (MANDATORY)
+### figma_execute — Execution Strategy (MANDATORY)
 **Always break work into small, focused steps.** Never send one large block of code that does everything at once.
 Each call should do ONE logical thing (create a frame, add a text node, apply a style, etc.).
 After each call:
@@ -51,13 +51,13 @@ After each call:
 
 This step-by-step approach makes errors easy to locate and fix, and keeps each execution fast and predictable.
 
-### guardian_figma_execute — Error Recovery (MANDATORY)
-When \`guardian_figma_execute\` returns \`success: false\`:
+### figma_execute — Error Recovery (MANDATORY)
+When \`figma_execute\` returns \`success: false\`:
 1. **Think** — read the \`error\` field carefully. It contains the exception message and stack trace. Identify which line/call caused the failure.
 2. **Diagnose** — common causes: wrong API (e.g. \`RectangleNode\` has no \`appendChild\`, use a \`Frame\` instead), missing \`await\`, invalid property value, non-existent node ID.
 3. **Fix** — correct the code. Do NOT ask the user; fix it yourself.
-4. **Retry** — call \`guardian_figma_execute\` again with the corrected code.
-5. **Verify** — after a successful call, always verify the result using a **different tool** (not \`guardian_figma_execute\` again). Use \`guardian_run_action\` with \`get_selection_context\` or \`get_node_variables\` to inspect the created/modified node, or use a Figma MCP read tool (\`figma_get_design_context\`, \`figma_get_metadata\`) if a node ID was returned. Confirm that the node exists, has the expected properties, and looks correct before reporting success to the user.
+4. **Retry** — call \`figma_execute\` again with the corrected code.
+5. **Verify** — after a successful call, always verify the result using a **different tool** (not \`figma_execute\` again). Use \`run_action\` with \`get_selection_context\` or \`get_node_variables\` to inspect the created/modified node, or use a Figma MCP read tool (\`figma_get_design_context\`, \`figma_get_metadata\`) if a node ID was returned. Confirm that the node exists, has the expected properties, and looks correct before reporting success to the user.
 6. **Continue** — once verification passes, carry on with the rest of the task.
 Never give up after a single failure. If two consecutive attempts fail, explain the error to the user and propose a solution.
 

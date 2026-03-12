@@ -4,7 +4,7 @@ import { PLAYBOOKS } from "../guardian/playbooks.js"
 
 export function registerDocumentGapTool(server: McpServer): void {
   server.tool(
-    "guardian_document_gap",
+    "document_gap",
     `Use this when a DS component exists but is missing a specific variant, property,
 or token that multiple teams need — and you want to build the case for a formal
 DS extension request.
@@ -40,7 +40,7 @@ Escalation threshold: gap affects 2+ teams, OR fix is a simple variant addition.
             type: "text",
             text: JSON.stringify(
               {
-                tool: "guardian_document_gap",
+                tool: "document_gap",
                 component: componentName,
                 missingVariant: missingVariant ?? null,
                 domain: domain ?? "general",
