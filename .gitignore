@@ -53,3 +53,6 @@ storybook-static
 # turbo
 .turbo/
 pnpm-debug.log*
+
+# electron-vite temp compiled configs
+electron.vite.config.*.mjs
