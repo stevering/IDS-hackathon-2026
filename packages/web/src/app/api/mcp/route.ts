@@ -55,6 +55,13 @@ function toNodeIncomingMessage(request: Request): IncomingMessage {
     msg.headers[key.toLowerCase()] = value;
   });
 
+  // Ensure Accept header satisfies StreamableHTTPServerTransport requirements
+  // (needs both application/json AND text/event-stream)
+  const accept = msg.headers["accept"] as string | undefined;
+  if (!accept || !accept.includes("text/event-stream")) {
+    msg.headers["accept"] = "application/json, text/event-stream";
+  }
+
   return msg;
 }
 
@@ -151,10 +158,11 @@ export async function OPTIONS() {
 }
 
 export async function GET() {
-  // SSE streams are not supported in stateless mode
-  return Response.json(
-    { error: "SSE not supported in stateless mode. Use POST for JSON-RPC messages." },
-    { status: 405, headers: CORS_HEADERS }
+  // SSE streams are not supported in stateless mode.
+  // Return 405 with proper MCP error format so clients handle it gracefully.
+  return new Response(
+    JSON.stringify({ jsonrpc: "2.0", error: { code: -32000, message: "SSE not supported in stateless mode" } }),
+    { status: 405, headers: { ...CORS_HEADERS, "Content-Type": "application/json" } }
   );
 }
 
