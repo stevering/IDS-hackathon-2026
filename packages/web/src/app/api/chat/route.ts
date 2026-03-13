@@ -96,7 +96,7 @@ function createKeepaliveStream(
       // Function to send keepalive pings
       const sendKeepalive = () => {
         if (!isMcpReady && controller.desiredSize !== null) {
-          controller.enqueue(encoder.encode(encodeSSEMessage("ping", { timestamp: Date.now() })));
+          controller.enqueue(encoder.encode(": keepalive\n\n"));
         }
       };
 

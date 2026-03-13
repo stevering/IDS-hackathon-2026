@@ -13,7 +13,7 @@ const SUPABASE_ANON_KEY =
   "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9va2doeGt2emRucWljamRzbGVqIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzIzNjA5MzgsImV4cCI6MjA4NzkzNjkzOH0.MpWQMamBCC6_OzM3uFvy15_IhroA0T1cJSq-I2XKkKU";
 
 const TEST_EMAIL = "test1@bkm.me";
-const TEST_PASSWORD = "temporal-e2e-test-2026";
+const TEST_PASSWORD = "test1test1";
 
 // Supabase SSR cookie chunk format
 const COOKIE_NAME = "sb-ookghxkvzdnqicjdslej-auth-token";

@@ -148,6 +148,13 @@ export async function orchestratorWorkflow(
     }
   }
 
+  // Emit orchestration_started event so the SSE stream knows about agents
+  state.eventLog.push({
+    type: "orchestration_started",
+    orchestrationId: state.orchestrationId,
+    agents: getAgentViewStates(state),
+  });
+
   // ── Phase 2: Send directory to all agents ────────────────────────────────
   const directoryEffects = generateDirectoryEffects(state, orchestratorWorkflowId);
   for (const effect of directoryEffects) {

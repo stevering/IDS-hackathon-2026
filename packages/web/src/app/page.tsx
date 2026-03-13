@@ -2515,6 +2515,16 @@ export default function Home() {
               onCancel={() => temporal.stopOrchestration()}
             />
           )}
+          {temporal.error && (
+            <div className="px-4 py-2 text-xs text-red-400 bg-red-500/10 border-b border-red-500/20">
+              Orchestration error: {temporal.error}
+            </div>
+          )}
+          {temporal.streamError && (
+            <div className="px-4 py-2 text-xs text-orange-400 bg-orange-500/10 border-b border-orange-500/20">
+              Stream: {temporal.streamError}
+            </div>
+          )}
           <MCPStatusBar status={mcpConnectionStatus} />
         </header>
 
@@ -2858,12 +2868,15 @@ export default function Home() {
                                       label: c.label,
                                       type: c.type as "figma-plugin" | "web",
                                       fileName: c.figmaContext?.fileName,
+                                      pluginClientId: c.clientId,
                                     }));
-                                  if (targetAgents.length === 0) return;
-                                  await temporal.startOrchestration({
+                                  console.log("[ORCHESTRATE] targetAgents:", targetAgents, "from agents:", structSeg.agents, "clients:", clients.map(c => c.shortId));
+                                  if (targetAgents.length === 0) { console.warn("[ORCHESTRATE] No matching agents found — aborting"); return; }
+                                  const wfId = await temporal.startOrchestration({
                                     task: lastUserText,
                                     targetAgents,
                                   });
+                                  console.log("[ORCHESTRATE] startOrchestration returned:", wfId, "error:", temporal.error);
                                 }}
                                 disabled={isLoading || temporal.isActive || temporal.starting}
                                 className="my-3 flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm font-medium border transition-all cursor-pointer bg-amber-500/10 border-amber-500/25 text-amber-300 hover:bg-amber-500/20 hover:border-amber-500/40 disabled:opacity-40 disabled:cursor-not-allowed"

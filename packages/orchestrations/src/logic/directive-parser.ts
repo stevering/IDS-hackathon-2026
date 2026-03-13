@@ -19,7 +19,13 @@ export type ParsedDirective = {
 // Parse [DIRECTIVE:#agentId] ... [/DIRECTIVE] blocks
 // ---------------------------------------------------------------------------
 
-const DIRECTIVE_REGEX = /\[DIRECTIVE:#([^\]]+)\]\s*([\s\S]*?)\s*\[\/DIRECTIVE\]/g;
+const DIRECTIVE_REGEX = /\[DIRECTIVE:#?([^\]]+)\]\s*([\s\S]*?)\s*\[\/DIRECTIVE\]/g;
+
+/** Normalize agent shortId — ensure it starts with # */
+function normalizeShortId(raw: string): string {
+  const trimmed = raw.trim();
+  return trimmed.startsWith("#") ? trimmed : `#${trimmed}`;
+}
 
 export function parseDirectives(llmResponse: string): ParsedDirective[] {
   const directives: ParsedDirective[] = [];
@@ -29,7 +35,7 @@ export function parseDirectives(llmResponse: string): ParsedDirective[] {
   DIRECTIVE_REGEX.lastIndex = 0;
 
   while ((match = DIRECTIVE_REGEX.exec(llmResponse)) !== null) {
-    const agentShortId = match[1].trim();
+    const agentShortId = normalizeShortId(match[1]);
     const content = match[2].trim();
 
     directives.push({
@@ -41,11 +47,11 @@ export function parseDirectives(llmResponse: string): ParsedDirective[] {
   // Fallback: if no structured directives found, try simple format
   // [TO:#agentId] content
   if (directives.length === 0) {
-    const SIMPLE_REGEX = /\[TO:#([^\]]+)\]\s*([\s\S]*?)(?=\[TO:#|\[AGENT_DONE:|$)/g;
+    const SIMPLE_REGEX = /\[TO:#?([^\]]+)\]\s*([\s\S]*?)(?=\[TO:#?|\[AGENT_DONE:|$)/g;
     SIMPLE_REGEX.lastIndex = 0;
 
     while ((match = SIMPLE_REGEX.exec(llmResponse)) !== null) {
-      const agentShortId = match[1].trim();
+      const agentShortId = normalizeShortId(match[1]);
       const content = match[2].trim();
       if (content) {
         directives.push({ agentShortId, content });

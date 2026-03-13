@@ -34,28 +34,33 @@ export type OrchestrationStreamState = {
   error: string | null;
 };
 
+const INITIAL_STATE: OrchestrationStreamState = {
+  connected: false,
+  agents: [],
+  events: [],
+  timerRemainingMs: null,
+  totalDurationMs: 600_000,
+  completedStatus: null,
+  error: null,
+};
+
 // ---------------------------------------------------------------------------
 // Hook
 // ---------------------------------------------------------------------------
 
 export function useOrchestrationStream(workflowId: string | null) {
-  const [state, setState] = useState<OrchestrationStreamState>({
-    connected: false,
-    agents: [],
-    events: [],
-    timerRemainingMs: null,
-    totalDurationMs: 600_000,
-    completedStatus: null,
-    error: null,
-  });
+  const [state, setState] = useState<OrchestrationStreamState>(INITIAL_STATE);
 
   const eventSourceRef = useRef<EventSource | null>(null);
 
   useEffect(() => {
     if (!workflowId) {
-      setState((prev) => ({ ...prev, connected: false }));
+      setState(INITIAL_STATE);
       return;
     }
+
+    // Reset state for new workflow
+    setState({ ...INITIAL_STATE });
 
     const es = new EventSource(`/api/orchestration/${workflowId}/stream`);
     eventSourceRef.current = es;
@@ -114,6 +119,8 @@ export function useOrchestrationStream(workflowId: string | null) {
                 next.completedStatus = d.status;
                 next.connected = false;
               }
+              // Close EventSource — prevent auto-reconnect loop
+              es.close();
               break;
 
             case "error":
@@ -153,7 +160,7 @@ export function useOrchestrationStream(workflowId: string | null) {
   const disconnect = useCallback(() => {
     eventSourceRef.current?.close();
     eventSourceRef.current = null;
-    setState((prev) => ({ ...prev, connected: false }));
+    setState(INITIAL_STATE);
   }, []);
 
   return { ...state, disconnect };
