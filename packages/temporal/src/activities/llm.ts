@@ -45,7 +45,7 @@ export async function callLLM(params: LLMCallParams): Promise<LLMCallResult> {
           type: "tool-result" as const,
           toolCallId: m.toolCallId!,
           toolName: toolCallNameMap.get(m.toolCallId!) ?? "unknown",
-          result: m.content,
+          result: (() => { try { return JSON.parse(m.content); } catch { return m.content; } })(),
         }],
       };
     }
@@ -68,6 +68,13 @@ export async function callLLM(params: LLMCallParams): Promise<LLMCallResult> {
       content: m.content,
     };
   });
+
+  console.log("[callLLM] converted:", JSON.stringify(messages.map((m: { role: string; content: unknown }, i: number) => ({ i, role: m.role, ct: Array.isArray(m.content) ? (m.content as {type: string}[]).map(c => c.type) : typeof m.content }))));
+
+  // DEBUG: dump full messages when tool messages are present
+  if (messages.some((m: { role: string }) => m.role === "tool")) {
+    console.log("[callLLM] FULL MESSAGES:", JSON.stringify(messages, null, 2).slice(0, 3000));
+  }
 
   const result = await generateText({
     model: resolved.model,
