@@ -26,12 +26,37 @@ export async function callLLM(params: LLMCallParams): Promise<LLMCallResult> {
       )
     : undefined;
 
-  const result = await generateText({
-    model: resolved.model,
-    messages: params.messages.map((m) => ({
+  // Convert our LLMMessage[] to AI SDK ModelMessage[] format
+  const messages = params.messages.map((m) => {
+    if (m.role === "tool") {
+      return {
+        role: "tool" as const,
+        content: [{ type: "tool-result" as const, toolCallId: m.toolCallId!, result: m.content }],
+      };
+    }
+    if (m.role === "assistant" && m.toolCalls?.length) {
+      return {
+        role: "assistant" as const,
+        content: [
+          ...(m.content ? [{ type: "text" as const, text: m.content }] : []),
+          ...m.toolCalls.map((tc) => ({
+            type: "tool-call" as const,
+            toolCallId: tc.id,
+            toolName: tc.name,
+            args: tc.arguments,
+          })),
+        ],
+      };
+    }
+    return {
       role: m.role as "system" | "user" | "assistant",
       content: m.content,
-    })),
+    };
+  });
+
+  const result = await generateText({
+    model: resolved.model,
+    messages,
     maxOutputTokens: params.maxTokens ?? 4096,
     tools: toolSet,
   });
