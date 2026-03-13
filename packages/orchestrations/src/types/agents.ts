@@ -50,6 +50,8 @@ export type StartOrchestrationParams = {
   task: string;
   /** Target agents to invite */
   targetAgents: AgentId[];
+  /** AI model identifier (e.g. "moonshotai/kimi-k2.5") — from the user's UI selection */
+  model?: string;
   /** Maximum duration in ms (default 600_000 = 10 min) */
   maxDurationMs?: number;
   /** Optional context data */

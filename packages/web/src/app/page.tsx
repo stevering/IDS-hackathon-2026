@@ -2875,6 +2875,7 @@ export default function Home() {
                                   const wfId = await temporal.startOrchestration({
                                     task: lastUserText,
                                     targetAgents,
+                                    model: selectedModel,
                                   });
                                   console.log("[ORCHESTRATE] startOrchestration returned:", wfId, "error:", temporal.error);
                                 }}

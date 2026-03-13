@@ -13,4 +13,5 @@ export type AgentWorkflowInput = {
   task: string;
   context?: Record<string, unknown>;
   userId: string;
+  model?: string;
 };

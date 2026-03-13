@@ -134,6 +134,7 @@ export async function orchestratorWorkflow(
           task: effect.task,
           context: effect.context,
           userId: params.userId,
+          model: params.model,
         }],
         taskQueue: workflowInfo().taskQueue,
       });
@@ -170,6 +171,7 @@ export async function orchestratorWorkflow(
     const llmResult = await callLLM({
       messages: planningCall.messages,
       userId: params.userId,
+      model: params.model,
     });
 
     const directiveEffects = processPlanningResponse(state, llmResult.content);

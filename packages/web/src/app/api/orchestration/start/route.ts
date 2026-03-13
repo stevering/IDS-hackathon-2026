@@ -27,9 +27,10 @@ export async function POST(request: Request) {
   }
 
   const body = await request.json();
-  const { task, targetAgents, maxDurationMs, context } = body as {
+  const { task, targetAgents, model, maxDurationMs, context } = body as {
     task: string;
     targetAgents: AgentId[];
+    model?: string;
     maxDurationMs?: number;
     context?: Record<string, unknown>;
   };
@@ -52,6 +53,7 @@ export async function POST(request: Request) {
       userId: user.id,
       task,
       targetAgents,
+      model,
       maxDurationMs,
       context,
     };

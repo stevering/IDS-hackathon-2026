@@ -146,6 +146,7 @@ export async function agentWorkflow(input: AgentWorkflowInput): Promise<void> {
           messages: effect.messages,
           tools: effect.tools,
           userId: input.userId,
+          model: input.model,
         });
 
         const responseEffects = processLLMResponse(
@@ -154,33 +155,38 @@ export async function agentWorkflow(input: AgentWorkflowInput): Promise<void> {
           llmResult.toolCalls
         );
 
+        // Execute tool effects first, then LLM continuation
+        let didExecTool = false;
+        let pendingLLM: { messages: typeof effect.messages; tools: typeof effect.tools } | null = null;
+
         for (const rEffect of responseEffects) {
-          if (rEffect.type === "call_llm") {
-            // Recursive LLM call (tool call loop)
-            await executeLLMLoop(state, rEffect.messages, rEffect.tools, input.userId);
-          } else if (rEffect.type === "execute_figma_code") {
+          if (rEffect.type === "execute_figma_code") {
             const execResult = await executeFigmaCode({
               pluginClientId: rEffect.pluginClientId || input.agent.pluginClientId || "",
               userId: input.userId,
               code: rEffect.code,
             });
 
-            // Inject tool result
             const lastToolCall = state.messageHistory
               .flatMap((m) => m.toolCalls ?? [])
               .filter((tc) => tc.name === "figma_plugin_execute")
               .pop();
 
             if (lastToolCall) {
-              injectToolResult(
-                state,
-                lastToolCall.id,
-                JSON.stringify(execResult)
-              );
+              injectToolResult(state, lastToolCall.id, JSON.stringify(execResult));
             }
+            didExecTool = true;
+          } else if (rEffect.type === "call_llm") {
+            pendingLLM = { messages: rEffect.messages, tools: rEffect.tools };
           } else {
             await executeEffect(state, rEffect, input.userId);
           }
+        }
+
+        // Continue LLM loop with correct messages (including tool results)
+        if (pendingLLM) {
+          const msgs = didExecTool ? [...state.messageHistory] : pendingLLM.messages;
+          await executeLLMLoop(state, msgs, pendingLLM.tools, input.userId, input.model);
         }
       } else if (effect.type === "wait_for_input") {
         // Continue to next loop iteration
@@ -200,22 +206,20 @@ async function executeLLMLoop(
   state: AgentWorkflowState,
   messages: LLMMessage[],
   tools: Parameters<typeof callLLM>[0]["tools"],
-  userId: string
+  userId: string,
+  model?: string
 ): Promise<void> {
   let maxIterations = 20;
 
   while (maxIterations-- > 0 && !state.completed) {
-    const llmResult = await callLLM({ messages, tools, userId });
+    const llmResult = await callLLM({ messages, tools, userId, model });
     const effects = processLLMResponse(state, llmResult.content, llmResult.toolCalls);
 
     let needsContinue = false;
+    let didExecuteTool = false;
 
     for (const effect of effects) {
-      if (effect.type === "call_llm") {
-        messages = effect.messages;
-        tools = effect.tools;
-        needsContinue = true;
-      } else if (effect.type === "execute_figma_code") {
+      if (effect.type === "execute_figma_code") {
         const execResult = await executeFigmaCode({
           pluginClientId: effect.pluginClientId || state.agent.pluginClientId || "",
           userId,
@@ -231,12 +235,28 @@ async function executeLLMLoop(
           injectToolResult(state, lastToolCall.id, JSON.stringify(execResult));
         }
 
-        // After tool result, we need to call LLM again
-        messages = [...state.messageHistory];
+        didExecuteTool = true;
+        needsContinue = true;
+      } else if (effect.type === "call_llm") {
+        // Only use effect.messages if we didn't execute tools
+        // (tool results are injected AFTER effects are generated,
+        //  so effect.messages is stale when tools were executed)
+        if (!didExecuteTool) {
+          messages = effect.messages;
+        } else {
+          messages = [...state.messageHistory];
+        }
+        tools = effect.tools;
         needsContinue = true;
       } else {
         await executeEffect(state, effect, userId);
       }
+    }
+
+    // If tools were executed but no call_llm effect, still continue
+    if (didExecuteTool && !needsContinue) {
+      messages = [...state.messageHistory];
+      needsContinue = true;
     }
 
     if (!needsContinue) break;

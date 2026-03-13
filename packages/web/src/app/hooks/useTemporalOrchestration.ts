@@ -45,6 +45,7 @@ export function useTemporalOrchestration() {
     async (params: {
       task: string;
       targetAgents: AgentId[];
+      model?: string;
       maxDurationMs?: number;
       context?: Record<string, unknown>;
     }) => {
