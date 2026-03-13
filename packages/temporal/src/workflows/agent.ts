@@ -159,6 +159,13 @@ export async function agentWorkflow(input: AgentWorkflowInput): Promise<void> {
         let didExecTool = false;
         let pendingLLM: { messages: typeof effect.messages; tools: typeof effect.tools } | null = null;
 
+        // Collect all figma tool call IDs in order, then match them to execute effects
+        const figmaToolCallIds = state.messageHistory
+          .flatMap((m) => m.toolCalls ?? [])
+          .filter((tc) => tc.name === "figma_plugin_execute")
+          .map((tc) => tc.id);
+        let figmaToolCallIdx = 0;
+
         for (const rEffect of responseEffects) {
           if (rEffect.type === "execute_figma_code") {
             const execResult = await executeFigmaCode({
@@ -167,13 +174,9 @@ export async function agentWorkflow(input: AgentWorkflowInput): Promise<void> {
               code: rEffect.code,
             });
 
-            const lastToolCall = state.messageHistory
-              .flatMap((m) => m.toolCalls ?? [])
-              .filter((tc) => tc.name === "figma_plugin_execute")
-              .pop();
-
-            if (lastToolCall) {
-              injectToolResult(state, lastToolCall.id, JSON.stringify(execResult));
+            const toolCallId = figmaToolCallIds[figmaToolCallIdx++];
+            if (toolCallId) {
+              injectToolResult(state, toolCallId, JSON.stringify(execResult));
             }
             didExecTool = true;
           } else if (rEffect.type === "call_llm") {
@@ -218,6 +221,13 @@ async function executeLLMLoop(
     let needsContinue = false;
     let didExecuteTool = false;
 
+    // Collect figma tool call IDs for sequential matching
+    const loopFigmaIds = state.messageHistory
+      .flatMap((m) => m.toolCalls ?? [])
+      .filter((tc) => tc.name === "figma_plugin_execute")
+      .map((tc) => tc.id);
+    let loopFigmaIdx = 0;
+
     for (const effect of effects) {
       if (effect.type === "execute_figma_code") {
         const execResult = await executeFigmaCode({
@@ -226,13 +236,9 @@ async function executeLLMLoop(
           code: effect.code,
         });
 
-        const lastToolCall = state.messageHistory
-          .flatMap((m) => m.toolCalls ?? [])
-          .filter((tc) => tc.name === "figma_plugin_execute")
-          .pop();
-
-        if (lastToolCall) {
-          injectToolResult(state, lastToolCall.id, JSON.stringify(execResult));
+        const toolCallId = loopFigmaIds[loopFigmaIdx++];
+        if (toolCallId) {
+          injectToolResult(state, toolCallId, JSON.stringify(execResult));
         }
 
         didExecuteTool = true;
