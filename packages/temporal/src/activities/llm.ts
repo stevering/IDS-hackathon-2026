@@ -45,7 +45,10 @@ export async function callLLM(params: LLMCallParams): Promise<LLMCallResult> {
           type: "tool-result" as const,
           toolCallId: m.toolCallId!,
           toolName: toolCallNameMap.get(m.toolCallId!) ?? "unknown",
-          result: (() => { try { return JSON.parse(m.content); } catch { return m.content; } })(),
+          output: (() => {
+            try { return { type: "json" as const, value: JSON.parse(m.content) }; }
+            catch { return { type: "text" as const, value: m.content }; }
+          })(),
         }],
       };
     }
