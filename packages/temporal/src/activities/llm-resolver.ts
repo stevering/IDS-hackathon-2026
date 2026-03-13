@@ -1,8 +1,8 @@
 /**
  * Model resolver for Temporal activities.
  *
- * Extracted from packages/web/src/app/api/chat/route.ts
- * to be reusable by both the Next.js API route and Temporal activities.
+ * Uses a service-role Supabase client to look up user API keys
+ * directly (bypassing RLS and auth.uid()-based RPCs).
  */
 
 import { createClient } from "@supabase/supabase-js";
@@ -44,12 +44,30 @@ export async function resolveModelForActivity(
 
   const supabase = createClient(supabaseUrl, serviceKey);
 
-  // Check gateway key first
-  const { data: gatewaySecret } = await supabase.rpc("get_api_key", {
-    p_user_id: userId,
-    p_provider: "gateway",
-  });
+  // Look up user API key directly via tables + vault (service-role bypasses RLS).
+  // The get_api_key RPC uses auth.uid() which is NULL for service-role clients.
+  async function getUserApiKey(provider: string): Promise<string | null> {
+    const { data: keyRow } = await supabase
+      .from("user_api_keys")
+      .select("vault_id")
+      .eq("user_id", userId!)
+      .eq("provider", provider)
+      .maybeSingle();
 
+    if (!keyRow?.vault_id) return null;
+
+    const { data: secret } = await supabase
+      .schema("vault")
+      .from("decrypted_secrets")
+      .select("decrypted_secret")
+      .eq("id", keyRow.vault_id)
+      .maybeSingle();
+
+    return secret?.decrypted_secret ?? null;
+  }
+
+  // Check gateway key first
+  const gatewaySecret = await getUserApiKey("gateway");
   if (gatewaySecret) {
     const { createGateway } = await import("@ai-sdk/gateway");
     const gw = createGateway({ apiKey: gatewaySecret });
@@ -57,11 +75,7 @@ export async function resolveModelForActivity(
   }
 
   // Check direct provider key
-  const { data: providerSecret } = await supabase.rpc("get_api_key", {
-    p_user_id: userId,
-    p_provider: requestedProvider,
-  });
-
+  const providerSecret = await getUserApiKey(requestedProvider);
   if (providerSecret) {
     const model = await buildDirectProviderModel(requestedProvider, requestedModelId, providerSecret);
     if (model) return { model, isFreeTier: false, modelId: modelStr };

@@ -26,44 +26,25 @@ export async function callLLM(params: LLMCallParams): Promise<LLMCallResult> {
       )
     : undefined;
 
-  // Build a lookup of toolCallId → toolName from assistant messages
-  const toolCallNameMap = new Map<string, string>();
-  for (const m of params.messages) {
-    if (m.toolCalls) {
-      for (const tc of m.toolCalls) {
-        toolCallNameMap.set(tc.id, tc.name);
-      }
-    }
-  }
-
-  // Convert our LLMMessage[] to AI SDK ModelMessage[] format
+  // Convert our LLMMessage[] to AI SDK format.
+  // Tool-call/tool-result messages are flattened to text so that
+  // ALL providers (Kimi, xAI, OpenAI, etc.) handle them correctly.
+  // The internal AI SDK model-message format for tool results uses
+  // a specific schema that not all providers translate properly.
   const messages = params.messages.map((m) => {
-    if (m.role === "tool") {
-      return {
-        role: "tool" as const,
-        content: [{
-          type: "tool-result" as const,
-          toolCallId: m.toolCallId!,
-          toolName: toolCallNameMap.get(m.toolCallId!) ?? "unknown",
-          output: (() => {
-            try { return { type: "json" as const, value: JSON.parse(m.content) }; }
-            catch { return { type: "text" as const, value: m.content }; }
-          })(),
-        }],
-      };
-    }
     if (m.role === "assistant" && m.toolCalls?.length) {
+      const toolSummary = m.toolCalls
+        .map((tc) => `[Called tool: ${tc.name}(${JSON.stringify(tc.arguments).slice(0, 200)})]`)
+        .join("\n");
       return {
         role: "assistant" as const,
-        content: [
-          ...(m.content ? [{ type: "text" as const, text: m.content }] : []),
-          ...m.toolCalls.map((tc) => ({
-            type: "tool-call" as const,
-            toolCallId: tc.id,
-            toolName: tc.name,
-            args: tc.arguments,
-          })),
-        ],
+        content: (m.content || "") + "\n" + toolSummary,
+      };
+    }
+    if (m.role === "tool") {
+      return {
+        role: "user" as const,
+        content: `[Tool result] ${m.content}`,
       };
     }
     return {
@@ -71,13 +52,6 @@ export async function callLLM(params: LLMCallParams): Promise<LLMCallResult> {
       content: m.content,
     };
   });
-
-  console.log("[callLLM] converted:", JSON.stringify(messages.map((m: { role: string; content: unknown }, i: number) => ({ i, role: m.role, ct: Array.isArray(m.content) ? (m.content as {type: string}[]).map(c => c.type) : typeof m.content }))));
-
-  // DEBUG: dump full messages when tool messages are present
-  if (messages.some((m: { role: string }) => m.role === "tool")) {
-    console.log("[callLLM] FULL MESSAGES:", JSON.stringify(messages, null, 2).slice(0, 3000));
-  }
 
   const result = await generateText({
     model: resolved.model,
