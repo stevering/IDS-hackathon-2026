@@ -17,19 +17,13 @@ import remarkGfm from "remark-gfm";
 import remarkBreaks from "remark-breaks";
 import { useConversations } from "./hooks/useConversations";
 import { useMessagePersistence } from "./hooks/useMessagePersistence";
-import { useOrchestration, matchesShortId, type OrchestrationCallbacks, type CollaboratorInfo } from "./hooks/useOrchestration";
+import { matchesShortId, type CollaboratorInfo } from "./hooks/useOrchestration";
 import { useTemporalOrchestration } from "./hooks/useTemporalOrchestration";
 import type { AgentRole, Orchestration } from "@/types/orchestration";
-
-/**
- * Feature flag: when true, orchestration runs on Temporal (backend workflows + SSE).
- * When false, the legacy Supabase RT browser-side orchestration is used.
- */
-const TEMPORAL_ENABLED = process.env.NEXT_PUBLIC_TEMPORAL_ENABLED === "true";
 import { ConversationSwitcher } from "@/components/ConversationSwitcher";
 import { OrchestrationStatusBar } from "@/components/OrchestrationStatusBar";
 import { MCPStatusBar } from "@/components/MCPStatusBar";
-import { OrchestrationInviteModal } from "@/components/OrchestrationInviteModal";
+
 import { AgentMessageBubble } from "@/components/AgentMessageBubble";
 import { MentionAutocomplete, type MentionSuggestion, parseMentions } from "@/components/MentionAutocomplete";
 import { AutoAcceptToggle } from "@/components/AutoAcceptToggle";
@@ -943,11 +937,6 @@ export default function Home() {
   // Get clientId from channel hook first, then register with server
   const [registryShortId, setRegistryShortId] = useState<string | null>(null);
 
-  // Forward ref for orchestration callbacks — created early so it can be
-  // passed to useFigmaExecuteChannel, then synced with the ref from
-  // useOrchestration via a useEffect below.
-  const orchestrationCallbacksFwdRef = useRef<OrchestrationCallbacks>({});
-
   const { clients, clientId: myClientId, channelRef } = useFigmaExecuteChannel(executeCode, true, {
     type: clientTypeForChannel,
     label: clientLabel,
@@ -960,7 +949,7 @@ export default function Home() {
       currentUser: figmaContext.currentUser,
     } : undefined,
     serverShortId: registryShortId,
-  }, orchestrationCallbacksFwdRef, eventLog);
+  }, eventLog);
 
   // Register client with the server-side registry (needs clientId from channel hook)
   // Wait for iframe detection to settle so we send the correct type/label
@@ -997,46 +986,15 @@ export default function Home() {
   } = useConversations(myClientId, !!myClientId);
 
   // ── Collaborative Agents orchestration ──────────────────────────────
-  const {
-    role: agentRole,
-    orchestration,
-    collaborators,
-    pendingInvites,
-    settings: collabSettings,
-    timerRemainingMs,
-    startedAt: orchStartedAt,
-    activeSubConversation,
-    becomeOrchestrator,
-    inviteCollaborator,
-    sendAgentRequest,
-    completeOrchestration,
-    acceptInvite,
-    declineInvite,
-    sendAgentResponse,
-    startSubConversation,
-    endSubConversation,
-    sendAgentMessage,
-    markCollaboratorDone,
-    updateSettings: updateCollabSettings,
-    releaseRole,
-    orchestrationCallbacksRef,
-    onAgentRequest,
-    onAgentResponse,
-    onAgentMessage,
-    onCollaboratorReady,
-  } = useOrchestration(myClientId, myDisplayShortId, channelRef, !!myClientId);
-
-  // ── Temporal-backed orchestration (feature-flagged) ────────────────────
+  // Orchestration runs on Temporal (backend workflows + SSE)
   const temporal = useTemporalOrchestration();
 
-  // Sync orchestration callbacks from useOrchestration into the forward
-  // ref consumed by useFigmaExecuteChannel (avoids circular hook deps).
-  // Only active when NOT using Temporal (legacy path).
-  useEffect(() => {
-    if (!TEMPORAL_ENABLED) {
-      Object.assign(orchestrationCallbacksFwdRef.current, orchestrationCallbacksRef.current);
-    }
-  });
+  // Legacy orchestration values — kept as static defaults for any remaining
+  // UI references during the transition. Will be removed in a future cleanup.
+  const agentRole: AgentRole = "idle";
+  const orchestration: Orchestration | null = null;
+  const collaborators: CollaboratorInfo[] = [];
+  const timerRemainingMs: number | null = null;
 
   const [selectedDesignTarget, setSelectedDesignTarget] = useState<string | null>(null);
   const [selectedCodeTarget, setSelectedCodeTarget] = useState<string | null>(null);
@@ -1373,22 +1331,6 @@ export default function Home() {
   sendToPluginRef.current = sendToPlugin;
   const executeCodeRef = useRef(executeCode);
   executeCodeRef.current = executeCode;
-  const agentRoleRef = useRef(agentRole);
-  agentRoleRef.current = agentRole;
-  const orchestrationRef = useRef(orchestration);
-  orchestrationRef.current = orchestration;
-  const collaboratorsRef = useRef(collaborators);
-  collaboratorsRef.current = collaborators;
-  const timerRemainingMsRef = useRef(timerRemainingMs);
-  timerRemainingMsRef.current = timerRemainingMs;
-  // Stores the original user request when orchestration starts, so we can dispatch
-  // it directly to collaborators instead of relying on AI-generated @mentions.
-  const orchestrationTaskRef = useRef<string | null>(null);
-  // Snapshot of useChat messages taken just before becomeOrchestrator — used to
-  // recover if messages are unexpectedly cleared during the async orchestration flow.
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const preOrchMessagesRef = useRef<any[] | null>(null);
-
   // Notify the Figma plugin that the user is authenticated
   useEffect(() => {
     try {
@@ -1699,35 +1641,19 @@ export default function Home() {
               };
             }
           }
-          // In collaborator mode, ALWAYS target self — the collaborator works on its own file,
-          // regardless of what's selected in the design target dropdown.
-          // In orchestrator mode, do NOT force a targetClientId — let the LLM choose
-          // the target via tool params so it can route to different plugins.
-          // When Temporal is enabled, orchestration roles don't apply to useChat (LLM calls
-          // happen server-side in Activities), so we use the default idle targeting.
-          const legacyRole = TEMPORAL_ENABLED ? 'idle' : agentRoleRef.current;
-          const targetClientId = legacyRole === 'collaborator'
-            ? myClientIdRef.current
-            : legacyRole === 'orchestrator'
-              ? undefined
-              : (targetPluginClientId ?? (isFigmaPluginRef.current ? myClientIdRef.current : undefined));
-          // Build list of other connected agents for AI awareness (all roles, not just idle)
+          // Orchestration runs on Temporal — useChat always runs in idle mode.
+          const targetClientId = targetPluginClientId ?? (isFigmaPluginRef.current ? myClientIdRef.current : undefined);
+          // Build list of other connected agents for AI awareness
           const otherAgents = clientsRef.current
             .filter(c => c.clientId !== myClientIdRef.current && c.type !== "overlay")
             .map(c => ({ shortId: c.shortId, label: c.label, type: c.type, fileName: c.figmaContext?.fileName }));
-          // When in collaborator mode (legacy path), only enable essential MCPs
-          const effectiveMcps = legacyRole === 'collaborator'
-            ? { figma: enabledMcpsRef.current.figma, figmaConsole: false, github: false, code: false }
-            : enabledMcpsRef.current;
+          const effectiveMcps = enabledMcpsRef.current;
           // Is the plugin context from our own plugin (local) or from a remote target?
           const isLocalPlugin = !!figmaPluginContextRef.current;
           // Check if model supports native reasoning via Gateway catalog tags
           const selectedGw = gatewayModelsRef.current.find((m: { id: string }) => m.id === selectedModelRef.current);
           const modelSupportsReasoning = selectedGw ? (selectedGw as { tags?: string[] }).tags?.includes("reasoning") ?? false : false;
-          // When Temporal is enabled, don't send legacy orchestration context to the chat route
-          // (LLM calls for orchestration happen in Temporal Activities, not in useChat).
-          const orchContext = TEMPORAL_ENABLED ? undefined : (agentRoleRef.current !== 'idle' ? { collaborators: collaboratorsRef.current?.map(c => ({ shortId: c.shortId, label: c.label })), orchestratorShortId: orchestrationRef.current ? myClientIdRef.current : undefined, } : undefined);
-          return { figmaMcpUrl: figmaMcpUrlRef.current || (figmaOAuthRef.current ? "https://mcp.figma.com/mcp" : ""), figmaAccessToken: figmaAccessTokenRef.current, codeProjectPath: codeProjectPathRef.current, figmaOAuth: figmaOAuthRef.current, model: selectedModelRef.current, selectedNode: selectedNodeRef.current, tunnelSecret: tunnelSecretRef.current, enabledMcps: effectiveMcps, figmaPluginContext: pluginContext, isLocalPlugin, targetClientId, orchestrationId: TEMPORAL_ENABLED ? undefined : orchestrationRef.current?.id, agentRole: TEMPORAL_ENABLED ? 'idle' : agentRoleRef.current, connectedAgents: otherAgents, timerRemainingMs: TEMPORAL_ENABLED ? null : timerRemainingMsRef.current, supportsReasoning: modelSupportsReasoning, orchestrationContext: orchContext };
+          return { figmaMcpUrl: figmaMcpUrlRef.current || (figmaOAuthRef.current ? "https://mcp.figma.com/mcp" : ""), figmaAccessToken: figmaAccessTokenRef.current, codeProjectPath: codeProjectPathRef.current, figmaOAuth: figmaOAuthRef.current, model: selectedModelRef.current, selectedNode: selectedNodeRef.current, tunnelSecret: tunnelSecretRef.current, enabledMcps: effectiveMcps, figmaPluginContext: pluginContext, isLocalPlugin, targetClientId, agentRole: 'idle' as const, connectedAgents: otherAgents, supportsReasoning: modelSupportsReasoning };
         },
       }),
     [],
@@ -1741,12 +1667,9 @@ export default function Home() {
   // "Tool result is missing for tool call figma_plugin_execute:N" errors.
   const figmaExecQueueRef = useRef<Promise<void>>(Promise.resolve());
   // Cooldown flag: true while a figma_plugin_execute is executing or within 300ms
-  // after addToolResult. Prevents orchProcessQueue from injecting messages during
-  // the brief "ready" gap between addToolResult and the SDK starting the next
-  // maxSteps stream, which would cause "Tool result is missing" errors.
+  // after addToolResult. Prevents message injection during the brief "ready" gap
+  // between addToolResult and the SDK starting the next maxSteps stream.
   const figmaExecInFlightRef = useRef(false);
-  // Forward ref so onToolCall's setTimeout can call orchProcessQueue (defined later)
-  const orchProcessQueueRef = useRef<(() => void) | null>(null);
 
   const { messages, sendMessage, status, error, setMessages, addToolResult: rawAddToolResult } = useChat({
     transport,
@@ -1804,35 +1727,10 @@ export default function Home() {
           // during the gap, causing "Tool result is missing" errors.
           setTimeout(() => {
             figmaExecInFlightRef.current = false;
-            // Re-trigger queue now that cooldown is over
-            orchProcessQueueRef.current?.();
           }, 300);
         }
       }
 
-      // signal_task_complete is a legacy client-side tool for the Supabase RT path.
-      // When Temporal is enabled, task completion is handled by the backend agent workflow.
-      if (!TEMPORAL_ENABLED && toolCall.toolName === "signal_task_complete") {
-        const input = toolCall.input as { summary: string };
-        const summary = input.summary || "Task completed";
-
-        // Mark this collaborator as completed — used by Fix EE to drop late messages
-        collaboratorCompletedRef.current = true;
-
-        // Drain the send queue — any relayed messages queued before this point
-        // would trigger a sendMessage crash (useChat state conflict) or produce
-        // redundant AI responses after the task is done.
-        orchSendQueue.current = [];
-
-        // Send completed status via Supabase RT (instantaneous, bypasses queue)
-        sendAgentResponse("task", "completed", summary);
-
-        safeAddToolResult(toolCall.toolCallId, JSON.stringify({
-          success: true,
-          message: "Task completion signaled to orchestrator. You can stop working now.",
-        }));
-        return;
-      }
     },
     // Auto-send tool results back to the server when all tool calls are resolved
     sendAutomaticallyWhen: lastAssistantMessageIsCompleteWithToolCalls,
@@ -1873,11 +1771,8 @@ export default function Home() {
   // When switching away from the orchestration conversation, auto-release the role
   // so the user starts fresh in the new conversation (idle mode, [ORCHESTRATE:] available).
   const handleSwitchConversation = useCallback((id: string) => {
-    if (!TEMPORAL_ENABLED && agentRole !== "idle" && orchestration && id !== orchestration.conversationId) {
-      completeOrchestration("cancelled");
-    }
     switchConversation(id);
-  }, [switchConversation, agentRole, orchestration, completeOrchestration]);
+  }, [switchConversation]);
 
   const [errorVisible, setErrorVisible] = useState(false);
   useEffect(() => {
@@ -2164,416 +2059,7 @@ export default function Home() {
   // Wire the stable ref (declared early) to sendMessage now that it's available
   sendMessageEarlyRef.current = sendMessage;
 
-  // ── Collaborative Agents: handle incoming agent_request (collaborator side) ──
-  // When the orchestrator sends us a task, switch to the collaborative conversation
-  // and auto-trigger the LLM with the task content.
-  // [Legacy path — disabled when TEMPORAL_ENABLED]
-  onAgentRequest.current = TEMPORAL_ENABLED ? null : (payload) => {
-    // Use refs to avoid stale closure — agentRole/conversations may be outdated at callback time
-    if (agentRoleRef.current !== "collaborator") return;
-    if (payload.targetClientId && payload.targetClientId !== myClientIdRef.current) return;
-
-    // The collaborative conversation was already created during acceptInvite.
-    // Find it by orchestrationId and switch to it.
-    const findAndSwitch = (convs: { id: string; orchestration_id: string | null }[]) => {
-      const conv = convs.find(c => c.orchestration_id === payload.orchestrationId);
-      if (conv) {
-        switchConversation(conv.id);
-        return true;
-      }
-      return false;
-    };
-
-    if (!findAndSwitch(conversations)) {
-      // Refresh conversations list in case it was just created
-      loadConversations().then((convs) => {
-        if (convs && !findAndSwitch(convs)) {
-          // Last resort: retry after state propagation
-          setTimeout(() => findAndSwitch(conversations), 500);
-        }
-      });
-    }
-
-    // Auto-send the task as a user message to trigger the LLM
-    // Use the queue to avoid concurrent sendMessage crashes (e.g. if
-    // the collaborator is already streaming when the task arrives).
-    setTimeout(() => {
-      taskReceivedRef.current = true; // Fix GG: unlock auto-report now that current task is being sent
-      orchQueueSend(
-        `[Orchestrator task] ${payload.content}${payload.expectedResult ? `\n\nExpected result: ${payload.expectedResult}` : ""}`,
-      );
-    }, 1500);
-  };
-
-  // ── Collaborative Agents: dispatch task directly when collaborator accepts ──
-  const notifiedCollaborators = useRef(new Set<string>());
-  const dispatchedCollaborators = useRef(new Set<string>());
-  // Queue for notifications to send to orchestrator chat (avoids concurrent sendMessage crashes)
-  const pendingNotifications = useRef<string[]>([]);
-  const notificationTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  // [Legacy path — disabled when TEMPORAL_ENABLED]
-  onCollaboratorReady.current = TEMPORAL_ENABLED ? null : (senderId, senderShortId) => {
-    // Dedup: only notify once per collaborator per orchestration
-    if (notifiedCollaborators.current.has(senderId)) return;
-    notifiedCollaborators.current.add(senderId);
-
-    // Find the collaborator's info
-    const client = clientsRef.current.find(c => c.clientId === senderId);
-    const fileName = client?.figmaContext?.fileName || "unknown file";
-    const task = orchestrationTaskRef.current || "Collaborative task";
-
-    // Directly dispatch the original task to this collaborator (no AI middleman)
-    if (!dispatchedCollaborators.current.has(senderId)) {
-      // Detect if the task is file-specific or a general/discussion task
-      const fileFocusedKeywords = /cré|make|build|design|create|modify|change|add|delete|suppr|move|resize|color|style|component|composant|carré|rectangle|circle|shape|figma/i;
-      const isFileFocused = fileFocusedKeywords.test(task);
-      const perAgentTask = isFileFocused
-        ? `${task}\n\nYour target: "${fileName}". Execute the part of this task that applies to your file.`
-        : `${task}\n\nYou are agent "${senderShortId}" working on "${fileName}". Contribute your perspective and collaborate with the other agents.`;
-      const expectedResult = isFileFocused
-        ? `Complete the task on ${fileName}`
-        : `Contribute your perspective and report back`;
-      sendAgentRequest(senderId, perAgentTask, {}, expectedResult);
-      dispatchedCollaborators.current.add(senderId);
-    }
-
-    // Queue notification — batch multiple acceptances into one message.
-    // We inject via setMessages (not sendMessage) to avoid:
-    // 1. Triggering a useless AI response to "agents joined"
-    // 2. Potential message loss from sendMessage if useChat state was cleared
-    pendingNotifications.current.push(`${senderShortId} (${fileName})`);
-    if (notificationTimerRef.current) clearTimeout(notificationTimerRef.current);
-    notificationTimerRef.current = setTimeout(() => {
-      const agents = pendingNotifications.current.splice(0);
-      if (agents.length > 0) {
-        const joined = agents.map(a => `#${a.replace(/^#/, "")}`).join(", ");
-        const notifText = `[${joined} joined the session and received their tasks. Wait for their reports before taking action.]`;
-        // If messages were lost (cleared by something during orchestration flow),
-        // restore from the snapshot taken before becomeOrchestrator.
-        const currentMsgs = messagesRef.current;
-        const base = (currentMsgs.length === 0 && preOrchMessagesRef.current?.length)
-          ? preOrchMessagesRef.current
-          : currentMsgs;
-        // Inject notification as a system-style user message (no API call)
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        setMessages([...base, {
-          id: `orch-notif-${Date.now()}`,
-          role: "user",
-          parts: [{ type: "text" as const, text: notifText }],
-        }] as any);
-      }
-    }, 2000);
-  };
-
-  // ── Collaborative Agents: collaborator auto-reports progress back to orchestrator ──
-  // Always sends "in_progress" — the orchestrator decides when a task is done
-  // by outputting [AGENT_DONE:#shortId] markers.
-  // [Legacy path — disabled when TEMPORAL_ENABLED]
-  const lastReportedMsgId = useRef<string | null>(null);
-  const reportCount = useRef(0);
-  const collaboratorCompletedRef = useRef(false);
-  const taskReceivedRef = useRef(false);
-  useEffect(() => {
-    if (TEMPORAL_ENABLED) return;
-    if (agentRole !== "collaborator" || status !== "ready") return;
-    if (!orchestration) return;
-    if (!taskReceivedRef.current) return; // Fix GG: don't report until current task was sent
-
-    // Find the last assistant message
-    const lastAssistant = [...messages].reverse().find(m => m.role === "assistant");
-    if (!lastAssistant || lastReportedMsgId.current === lastAssistant.id) return;
-
-    // Only report if the first user message was an orchestrator task
-    const firstUser = messages.find(m => m.role === "user");
-    const isTaskResponse = firstUser?.parts?.some(
-      (p): p is { type: "text"; text: string } => p.type === "text" && p.text?.startsWith("[Orchestrator task]"),
-    );
-    if (!isTaskResponse) return;
-
-    lastReportedMsgId.current = lastAssistant.id;
-
-    // Extract the AI's response text, stripping MCP noise
-    const responseText = lastAssistant.parts
-      .filter((p): p is { type: "text"; text: string } => p.type === "text")
-      .map(p => p.text)
-      .join("\n")
-      .replace(/\[MCP_STATUS:\w+\]/g, "")
-      .replace(/\[MCP_ERROR_BLOCK\][\s\S]*?\[\/MCP_ERROR_BLOCK\]/g, "")
-      .trim();
-
-    if (!responseText || responseText.length < 5) return;
-
-    reportCount.current += 1;
-
-    sendAgentResponse("task", "in_progress", responseText);
-  }, [agentRole, status, orchestration, messages, sendAgentResponse]);
-
-  // ── Collaborative Agents: tracking refs (declared early so the idle reset below can reference them) ──
-  const lastRelayedMsgId = useRef<string | null>(null);
-  const stallNudgeCount = useRef(0);
-
-  // ── Collaborative Agents: reset per-orchestration tracking when role goes idle ──
-  // [Legacy path — disabled when TEMPORAL_ENABLED]
-  useEffect(() => {
-    if (TEMPORAL_ENABLED) return;
-    if (agentRole === "idle") {
-      notifiedCollaborators.current.clear();
-      dispatchedCollaborators.current.clear();
-      orchestrationTaskRef.current = null;
-      preOrchMessagesRef.current = null;
-      orchSendQueue.current = [];
-      orchSendActive.current = false;
-      reportCount.current = 0;
-      collaboratorCompletedRef.current = false;
-      taskReceivedRef.current = false;
-      lastReportedMsgId.current = null;
-      lastRelayedMsgId.current = null;
-      lastIncomingSenderRef.current = null;
-      stallNudgeCount.current = 0;
-    }
-  }, [agentRole]);
-
-  // ── Collaborative Agents: message queue (both orchestrator & collaborator) ──
-  // Prevents concurrent sendMessage calls that corrupt ai-sdk internal state.
-  // Only one sendMessage can be active at a time; others are queued and sent
-  // when the current stream finishes (status transitions to "ready").
-  // [Legacy path — orchQueueSend is a no-op when TEMPORAL_ENABLED]
-  const orchSendQueue = useRef<string[]>([]);
-  const orchSendActive = useRef(false);
-  const statusRef = useRef(status);
-  statusRef.current = status;
-
-  // Guard: check if the last assistant message has pending tool calls (state !== "result").
-  // Status can be briefly "ready" between multi-step tool call rounds — we must NOT inject
-  // messages during those gaps or the AI SDK will error "Tool result is missing".
-  const hasPendingToolCalls = useCallback(() => {
-    const msgs = messagesRef.current;
-    for (let i = msgs.length - 1; i >= 0; i--) {
-      const m = msgs[i];
-      if (m.role !== "assistant") continue;
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      if (m.parts?.some((p: any) => p.type === "tool-invocation" && p.state !== "result")) return true;
-      break;
-    }
-    return false;
-  }, []);
-
-  const orchProcessQueue = useCallback(() => {
-    if (orchSendActive.current || orchSendQueue.current.length === 0) return;
-    if (statusRef.current !== "ready") return;
-    if (hasPendingToolCalls()) return; // Don't inject during multi-step tool call cycles
-    if (figmaExecInFlightRef.current) return; // Cooldown after figma_plugin_execute addToolResult
-
-    orchSendActive.current = true;
-    const text = orchSendQueue.current.shift()!;
-
-    // Restore messages if they were lost
-    if (messagesRef.current.length === 0 && preOrchMessagesRef.current?.length) {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      setMessages(preOrchMessagesRef.current as any);
-      setTimeout(() => sendMessageEarlyRef.current?.({ text }), 200);
-    } else {
-      sendMessageEarlyRef.current?.({ text });
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [hasPendingToolCalls]);
-  orchProcessQueueRef.current = orchProcessQueue;
-
-  const orchQueueSend = useCallback((text: string) => {
-    orchSendQueue.current.push(text);
-    // Try to process immediately if nothing is in flight
-    if (!orchSendActive.current && statusRef.current === "ready") {
-      orchProcessQueue();
-    }
-  }, [orchProcessQueue]);
-
-  // When streaming finishes or errors, manage the queue (both roles)
-  // [Legacy path — disabled when TEMPORAL_ENABLED]
-  useEffect(() => {
-    if (TEMPORAL_ENABLED) return;
-    if (agentRole === "idle") return;
-
-    if (status === "error") {
-      // On error: clear queue to break the infinite retry loop.
-      // The AI will recover on the next user/orchestrator interaction.
-      console.warn("[Chat] Error status — clearing send queue to prevent loop");
-      orchSendQueue.current = [];
-      orchSendActive.current = false;
-      chatErrorRecoveryRef.current = false;
-      return;
-    }
-
-    if (status === "ready") {
-      orchSendActive.current = false;
-      orchProcessQueue();
-    }
-  }, [status, agentRole, orchProcessQueue]);
-
-  // Track the clientId of the last incoming agent message/response that was queued.
-  // Used by auto-relay to exclude the original sender from the broadcast.
-  const lastIncomingSenderRef = useRef<string | null>(null);
-
-  // ── Collaborative Agents: orchestrator displays agent responses in chat ──
-  // [Legacy path — disabled when TEMPORAL_ENABLED]
-  onAgentResponse.current = TEMPORAL_ENABLED ? null : (payload) => {
-    if (agentRoleRef.current !== "orchestrator") return;
-
-    const collab = collaborators.find(c => c.clientId === payload.senderId);
-    const label = collab?.shortId || payload.senderShortId;
-    // Fix II: include status so orchestrator can distinguish progress from completion
-    const statusTag = payload.status === "completed" ? "COMPLETED" : "IN_PROGRESS";
-    const reportText = `[Agent report from ${label} — ${statusTag}] ${payload.summary || "Task completed"}`;
-
-    lastIncomingSenderRef.current = payload.senderId;
-    // Queue the message — orchProcessQueue handles sending one at a time
-    orchQueueSend(reportText);
-  };
-
-  // ── Collaborative Agents: handle agent_message (free-form inter-agent messages) ──
-  // Both orchestrator and collaborator can receive these. The message is injected
-  // into the chat so the local AI can see and respond to it.
-  // [Legacy path — disabled when TEMPORAL_ENABLED]
-  onAgentMessage.current = TEMPORAL_ENABLED ? null : (payload) => {
-    // Don't process our own messages
-    if (payload.senderId === myClientIdRef.current) return;
-    // Only process if we're part of an orchestration
-    if (agentRoleRef.current === "idle") return;
-
-    // Fix EE: collaborator called signal_task_complete → it declared itself done.
-    // Drop late orchestrator messages — they were sent before our completion report
-    // arrived and would trigger redundant "I already finished" responses.
-    if (agentRoleRef.current === "collaborator" && collaboratorCompletedRef.current) {
-      console.log("[Orchestration] Dropping message — collaborator called signal_task_complete");
-      return;
-    }
-
-    const label = payload.senderShortId || payload.senderId;
-    const msgText = `[Message from ${label}] ${payload.content}`;
-
-    lastIncomingSenderRef.current = payload.senderId;
-    // Queue for both roles to avoid concurrent sendMessage crashes
-    orchQueueSend(msgText);
-  };
-
-  // ── Collaborative Agents: auto-relay orchestrator AI responses to agents ──
-  // After the orchestrator's AI finishes responding, broadcast the response to
-  // all active collaborators so they can see the orchestrator's instructions.
-  // Without this, the orchestrator writes @mentions and directions that stay
-  // stuck in the orchestrator's own chat and agents never receive them.
-  // [Legacy path — disabled when TEMPORAL_ENABLED; Temporal handles relay via signals]
-  useEffect(() => {
-    if (TEMPORAL_ENABLED) return;
-    if (agentRole !== "orchestrator" || status !== "ready") return;
-    if (!orchestration) return;
-
-    const lastAssistant = [...messages].reverse().find(m => m.role === "assistant");
-    if (!lastAssistant || lastRelayedMsgId.current === lastAssistant.id) return;
-
-    // Mark as processed FIRST — prevents re-processing regardless of relay decision
-    lastRelayedMsgId.current = lastAssistant.id;
-
-    // Extract the AI's response text, stripping noise
-    const responseText = lastAssistant.parts
-      .filter((p): p is { type: "text"; text: string } => p.type === "text")
-      .map(p => p.text)
-      .join("\n")
-      .replace(/\[MCP_STATUS:\w+\]/g, "")
-      .replace(/\[MCP_ERROR_BLOCK\][\s\S]*?\[\/MCP_ERROR_BLOCK\]/g, "")
-      .replace(/\[ORCHESTRATE:[^\]]*\]/g, "")
-      .trim();
-
-    // Parse [AGENT_DONE:#shortId] or [AGENT_DONE:#id1,#id2,...] markers — ALWAYS,
-    // regardless of what triggered the response. Without this, AGENT_DONE markers
-    // in responses to watchdog/system messages would never be parsed.
-    const doneRegex = /\[AGENT_DONE:([^\]]+)\]/g;
-    const justDoneShortIds: string[] = [];
-    let doneMatch;
-    while ((doneMatch = doneRegex.exec(responseText)) !== null) {
-      const ids = doneMatch[1].split(",").map(s => s.trim());
-      for (const raw of ids) {
-        const doneShortId = raw.startsWith("#") ? raw : `#${raw}`;
-        markCollaboratorDone(doneShortId);
-        justDoneShortIds.push(doneShortId);
-      }
-    }
-
-    // Only relay if the previous message was an agent report (i.e. this response
-    // was triggered by agent communication, not by the human user or watchdog)
-    const prevMsgs = messages.slice(0, messages.indexOf(lastAssistant));
-    const lastUserMsg = [...prevMsgs].reverse().find(m => m.role === "user");
-    const isAgentTriggered = lastUserMsg?.parts?.some(
-      (p): p is { type: "text"; text: string } =>
-        p.type === "text" && (
-          p.text?.startsWith("[Agent ") ||
-          p.text?.startsWith("[Message from ")
-        ),
-    );
-    if (!isAgentTriggered) return;
-
-    // Strip AGENT_DONE markers from relayed text
-    const relayText = responseText.replace(/\[AGENT_DONE:[^\]]*\]/g, "").trim();
-
-    // Skip very short ack-only responses
-    if (!relayText || relayText.length < 20) return;
-
-    // Don't relay to agents that are done — they have no more work to do and
-    // any message they receive triggers an LLM response → auto-report → loop.
-    // Collect: already-completed agents + agents just marked done in this response.
-    const allCollabs = collaboratorsRef.current ?? [];
-    const doneClientIds = allCollabs
-      .filter(c => c.status === "completed" || justDoneShortIds.some(sid => matchesShortId(c.shortId, sid)))
-      .map(c => c.clientId);
-
-    // Also exclude the original sender (prevents direct ping-pong)
-    const excludeIds = [
-      ...(lastIncomingSenderRef.current ? [lastIncomingSenderRef.current] : []),
-      ...doneClientIds,
-    ];
-
-    // If all collaborators are excluded, skip the relay entirely
-    if (allCollabs.length > 0 && allCollabs.every(c => excludeIds.includes(c.clientId))) return;
-
-    sendAgentMessage(relayText, undefined, undefined, excludeIds.length > 0 ? excludeIds : undefined);
-  }, [agentRole, status, orchestration, messages, sendAgentMessage, markCollaboratorDone]);
-
-  // ── Collaborative Agents: dead air watchdog ──
-  // Detects when the orchestrator is idle with active collaborators but nothing
-  // is happening. After 20s of inactivity, nudges the AI to keep coordinating.
-  // [Legacy path — disabled when TEMPORAL_ENABLED; Temporal orchestrator handles nudging]
-  const lastOrchestratorActivityRef = useRef<number>(Date.now());
-  useEffect(() => {
-    if (TEMPORAL_ENABLED) return;
-    // Track activity: any status change or message count change resets the timer
-    lastOrchestratorActivityRef.current = Date.now();
-  }, [status, messages.length]);
-
-  useEffect(() => {
-    if (TEMPORAL_ENABLED) return;
-    if (agentRole !== "orchestrator") {
-      stallNudgeCount.current = 0;
-      return;
-    }
-
-    const watchdog = setInterval(() => {
-      if (statusRef.current !== "ready") return;
-      if (orchSendActive.current || orchSendQueue.current.length > 0) return;
-
-      const activeCollabs = collaboratorsRef.current?.filter(c => c.status === "active") ?? [];
-      if (activeCollabs.length === 0) return;
-
-      const idleMs = Date.now() - lastOrchestratorActivityRef.current;
-      if (idleMs > 20_000 && stallNudgeCount.current < 2) {
-        stallNudgeCount.current += 1;
-        console.log("[Orchestration] Dead air detected — nudging orchestrator AI");
-        const collabNames = activeCollabs.map(c => c.shortId).join(", ");
-        orchQueueSend(`[System — automated watchdog, NOT a user message] No activity for ${Math.round(idleMs / 1000)}s. Active agents: ${collabNames}. Agents are still working autonomously. Do NOT mark any agent as done unless you received a report with status COMPLETED (from signal_task_complete). Progress reports (IN_PROGRESS) mean the agent is still working — be patient.`);
-      }
-    }, 10_000);
-
-    return () => clearInterval(watchdog);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [agentRole, orchQueueSend]);
+  // Legacy orchestration callbacks removed — orchestration now runs on Temporal.
 
   // Inject fake agent message from plugin mini-mode tooltip
   // (user message sending is triggered separately via trigger-user-analysis)
@@ -3016,13 +2502,17 @@ export default function Home() {
             <UserMenu />
           </div>
           </div>
-          {agentRole !== "idle" && (
+          {temporal.isActive && (
             <OrchestrationStatusBar
-              role={agentRole}
-              orchestratorShortId={orchestration ? collaborators.find(c => c.status === 'active')?.shortId : undefined}
-              collaborators={agentRole === 'orchestrator' ? collaborators : undefined}
-              timerRemainingMs={timerRemainingMs}
-              onCancel={agentRole === 'orchestrator' ? () => completeOrchestration('cancelled') : undefined}
+              role="orchestrator"
+              collaborators={temporal.agents.map(a => ({
+                clientId: a.shortId,
+                shortId: a.shortId,
+                label: a.label || a.shortId,
+                status: a.status === "completed" ? "completed" : "active",
+              }))}
+              timerRemainingMs={temporal.timerRemainingMs}
+              onCancel={() => temporal.stopOrchestration()}
             />
           )}
           <MCPStatusBar status={mcpConnectionStatus} />
@@ -3356,26 +2846,26 @@ export default function Home() {
                               <button
                                 key={sj}
                                 onClick={async () => {
-                                  if (agentRole !== 'idle') return;
-                                  const convId = activeConversationId ?? await ensureConversation();
-                                  if (!convId) return;
-                                  // Extract task BEFORE async becomeOrchestrator — messages may
-                                  // be affected by React re-renders during the await.
+                                  if (temporal.isActive) return;
                                   const lastUserText = messagesRef.current.filter(m => m.role === "user").map(m => m.parts.filter((p): p is { type: "text"; text: string } => p.type === "text").map(p => p.text).join(" ")).pop() || "Collaborative task";
-                                  orchestrationTaskRef.current = lastUserText;
-                                  // Also snapshot messages so we can restore if they get lost
-                                  preOrchMessagesRef.current = [...messagesRef.current];
-                                  const orch = await becomeOrchestrator(convId);
-                                  if (!orch) return;
-                                  // Invite all suggested agents
-                                  for (const agentShortId of structSeg.agents) {
-                                    const target = clients.find(c => c.shortId === agentShortId && c.clientId !== myClientId);
-                                    if (target) {
-                                      inviteCollaborator(target.clientId, lastUserText, {}, `Complete the task on ${target.label}`, target.shortId, target.label);
-                                    }
-                                  }
+                                  // Build target agents from suggested agent shortIds
+                                  const targetAgents = structSeg.agents
+                                    .map((agentShortId: string) => clients.find(c => c.shortId === agentShortId && c.clientId !== myClientId))
+                                    .filter((c): c is typeof clients[number] => !!c)
+                                    .map((c) => ({
+                                      shortId: c.shortId,
+                                      workflowId: "",
+                                      label: c.label,
+                                      type: c.type as "figma-plugin" | "web",
+                                      fileName: c.figmaContext?.fileName,
+                                    }));
+                                  if (targetAgents.length === 0) return;
+                                  await temporal.startOrchestration({
+                                    task: lastUserText,
+                                    targetAgents,
+                                  });
                                 }}
-                                disabled={isLoading || agentRole !== 'idle'}
+                                disabled={isLoading || temporal.isActive || temporal.starting}
                                 className="my-3 flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm font-medium border transition-all cursor-pointer bg-amber-500/10 border-amber-500/25 text-amber-300 hover:bg-amber-500/20 hover:border-amber-500/40 disabled:opacity-40 disabled:cursor-not-allowed"
                               >
                                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="shrink-0">
@@ -3906,13 +3396,6 @@ export default function Home() {
         </div>
       )}
 
-      {pendingInvites.length > 0 && (
-        <OrchestrationInviteModal
-          invite={pendingInvites[0]}
-          onAccept={acceptInvite}
-          onDecline={declineInvite}
-        />
-      )}
     </div>
   );
 }

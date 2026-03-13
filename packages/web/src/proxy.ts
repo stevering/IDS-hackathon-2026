@@ -26,6 +26,7 @@ const PUBLIC_AUTH_ROUTES = [
   "/api/clients",          // Client registry — protected by Supabase auth
   "/api/conversations",    // Conversation persistence — protected by Supabase auth
   "/api/orchestrations",   // Collaborative Agents orchestrations — protected by Supabase auth
+  "/api/orchestration",    // Temporal orchestration API — protected by Supabase auth
   "/api/user/settings",    // User collaboration settings — protected by Supabase auth
 ];
 

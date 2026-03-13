@@ -29,8 +29,6 @@ import {
   GITHUB_COOKIE_TOKENS,
 } from "@/lib/github-mcp-oauth";
 import { figmaPluginExecuteTool } from "@/tools/figma-plugin-execute";
-import { signalTaskCompleteTool } from "@/tools/signal-task-complete";
-import { orchestratorFigmaGuardTool } from "@/tools/orchestrator-figma-guard";
 
 export const maxDuration = 300; // 5 minutes to avoid Cloudflare timeout
 export const dynamic = 'force-dynamic';
@@ -156,25 +154,6 @@ function createKeepaliveStream(
             // Add a client-side tool (no execute → handled by useChat onToolCall)
             finalTools["figma_plugin_execute"] = figmaPluginExecuteTool;
             console.log("[Chat] Local plugin detected — added figma_plugin_execute (client-side), removed guardian_figma_execute");
-          }
-
-          // Collaborator mode: add signal_task_complete tool (client-side)
-          // The agent calls this tool to signal that its task is done.
-          // Intercepted by onToolCall in page.tsx → sends sendAgentResponse("completed").
-          if (agentRole === 'collaborator') {
-            finalTools["signal_task_complete"] = signalTaskCompleteTool;
-            console.log("[Chat] Collaborator mode — added signal_task_complete (client-side)");
-          }
-
-          // Orchestrator mode: replace Figma execution tool with a guarded version
-          // that blocks execution and returns guidance. This prevents the double-execution
-          // bug where both the orchestrator AND the collaborator create the same shape.
-          // Tool descriptions alone are not reliable — LLMs ignore them.
-          if (agentRole === 'orchestrator') {
-            if (finalTools["guardian_figma_execute"]) {
-              finalTools["guardian_figma_execute"] = orchestratorFigmaGuardTool;
-              console.log("[Chat] Orchestrator mode — replaced guardian_figma_execute with guarded version (blocks execution)");
-            }
           }
 
           // Wrap model with extractReasoningMiddleware for non-reasoning models
@@ -1113,64 +1092,8 @@ For simple tasks you can handle yourself without delegation, execute directly vi
     ? `\nTime remaining: ${Math.ceil(timerRemainingMs / 60000)}min ${Math.ceil((timerRemainingMs % 60000) / 1000)}s. ${timerRemainingMs < 120000 ? 'HURRY — wrap up quickly!' : ''}`
     : '';
 
-  // Collaborative Agents — orchestration context
-  if (agentRole === 'orchestrator' && orchestrationId) {
-    const collabList = orchestrationContext?.collaborators?.map((c: { shortId: string; label: string }) => `${c.shortId} (${c.label})`).join(', ') || 'None yet';
-
-    system += `\n\n## Orchestrator Mode
-Session: ${orchestrationId} | Collaborators: ${collabList}${timerStr}
-
-You coordinate agents. Each collaborator works autonomously with its own AI + Figma access.
-
-**Your workflow:**
-1. Wait for agent reports (prefixed \`[Agent report from ...]\`)
-2. Evaluate: complete and correct?
-3. Yes → mark done: \`[AGENT_DONE:#shortId]\`
-4. No → send feedback via @#shortId
-5. All done → final summary for the user
-
-**[AGENT_DONE:#shortId]** — MANDATORY to end the session. You can mark multiple agents in one response.
-
-Keep responses SHORT. Agents work autonomously — do not duplicate their work.
-`;
-  }
-
-  if (agentRole === 'collaborator' && orchestrationId) {
-    const orchestratorId = orchestrationContext?.orchestratorShortId || 'unknown';
-
-    // Build peer agent list so collaborators know who else is in the session
-    const peerAgents = connectedAgents?.filter((a: { shortId: string }) =>
-      a.shortId !== orchestratorId
-    ) || [];
-    const peerList = peerAgents.length > 0
-      ? peerAgents.map((a: { shortId: string; label: string; fileName?: string }) =>
-          `${a.shortId} (${a.label}${a.fileName ? `, "${a.fileName}"` : ''})`
-        ).join(', ')
-      : '';
-
-    system += `\n\n## Collaborator Mode
-Orchestrator: ${orchestratorId} | Session: ${orchestrationId}${timerStr}
-${peerList ? `Peers: ${peerList}` : ''}
-
-**You work autonomously on your assigned task.** The orchestrator relays messages between you and other agents — their messages arrive as \`[Message from orchestrator]\`. Read those messages carefully and respond to what the orchestrator or peers are saying.
-
-**Figma execution — ITERATIVE approach (critical):**
-- Execute ONE small mutation per \`${isLocalPlugin ? 'figma_plugin_execute' : 'guardian_figma_execute'}\` call (max ~30 lines)
-- After each mutation, verify the result before proceeding
-- NEVER bundle many operations in one call — long code gets TRUNCATED causing syntax errors
-- Split: 1) create node → return ID, 2) set properties using that ID, 3) add children, etc.
-
-**Communication:**
-- Messages from the orchestrator relay contain instructions or peer contributions. Engage with them.
-- If the task involves discussion/collaboration (not just Figma work), focus on contributing your perspective and responding to what others have said
-
-**MANDATORY — Task completion signal:**
-When all work is done and verified, you MUST call the \`signal_task_complete\` tool. This is NOT optional.
-- Do NOT just write text about being done — the system only recognizes the tool call
-- Do NOT end your response without calling this tool if the task is complete
-- Call it exactly ONCE with a brief summary of what was accomplished
-`;
-  }
+  // Orchestration context (orchestrator/collaborator modes) is now handled by
+  // Temporal backend Activities — not injected into the useChat system prompt.
 
   // For models without native reasoning, add <thinking> instruction
   // so extractReasoningMiddleware can convert the tags into reasoning events

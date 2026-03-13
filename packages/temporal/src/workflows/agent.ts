@@ -32,6 +32,7 @@ import {
 } from "@guardian/orchestrations";
 
 import type { AgentId, LLMMessage } from "@guardian/orchestrations";
+import type { AgentWorkflowInput } from "./types.js";
 
 import {
   directiveSignal,
@@ -60,16 +61,8 @@ const { executeFigmaCode } = proxyActivities<FigmaActivities>({
   retry: { maximumAttempts: 2 },
 });
 
-// ---------------------------------------------------------------------------
-// Workflow input
-// ---------------------------------------------------------------------------
-
-export type AgentWorkflowInput = {
-  agent: AgentId;
-  task: string;
-  context?: Record<string, unknown>;
-  userId: string;
-};
+// Re-export for convenience within the workflow sandbox
+export type { AgentWorkflowInput } from "./types.js";
 
 // ---------------------------------------------------------------------------
 // Workflow

@@ -4,7 +4,7 @@ import { useEffect, useRef, useState, useCallback } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { type ExecuteCodeResult, type PluginEvent, pushPluginEvent } from "./useFigmaPlugin";
 import { parsePresenceState, type ClientType, type PresenceClient } from "@/types/presence";
-import type { OrchestrationCallbacks } from "./useOrchestration";
+
 
 const CHANNEL_BASE = "guardian:execute";
 
@@ -26,7 +26,6 @@ export function useFigmaExecuteChannel(
   executeCode: (code: string, timeout?: number) => Promise<ExecuteCodeResult>,
   enabled: boolean,
   clientInfo?: ClientInfo,
-  orchestrationCallbacksRef?: React.RefObject<OrchestrationCallbacks>,
   eventLogRef?: React.RefObject<PluginEvent[]>,
 ): { clients: PresenceClient[]; clientId: string; channelRef: React.RefObject<ReturnType<ReturnType<typeof createClient>["channel"]> | null> } {
   const busy = useRef(false);
@@ -158,50 +157,6 @@ export function useFigmaExecuteChannel(
               : `err ${error ?? "unknown"}`,
           });
         }
-      })
-      // Collaborative Agents — orchestration events forwarded to useOrchestration via callback ref.
-      // When TEMPORAL_ENABLED is set, orchestration signals flow through Temporal instead
-      // of Supabase RT broadcasts. These handlers remain for backwards compatibility
-      // but are effectively no-ops when no callbacks are registered.
-      .on("broadcast", { event: "orchestration_invite" }, (payload) => {
-        if (eventLogRef?.current) pushPluginEvent(eventLogRef.current, { dir: "in", channel: "supabase", type: "orchestration_invite" });
-        orchestrationCallbacksRef?.current?.onInvite?.(payload.payload);
-      })
-      .on("broadcast", { event: "orchestration_accept" }, (payload) => {
-        if (eventLogRef?.current) pushPluginEvent(eventLogRef.current, { dir: "in", channel: "supabase", type: "orchestration_accept" });
-        orchestrationCallbacksRef?.current?.onAccept?.(payload.payload);
-      })
-      .on("broadcast", { event: "orchestration_decline" }, (payload) => {
-        if (eventLogRef?.current) pushPluginEvent(eventLogRef.current, { dir: "in", channel: "supabase", type: "orchestration_decline" });
-        orchestrationCallbacksRef?.current?.onDecline?.(payload.payload);
-      })
-      .on("broadcast", { event: "agent_request" }, (payload) => {
-        if (eventLogRef?.current) pushPluginEvent(eventLogRef.current, { dir: "in", channel: "supabase", type: "agent_request" });
-        orchestrationCallbacksRef?.current?.onAgentRequest?.(payload.payload);
-      })
-      .on("broadcast", { event: "agent_response" }, (payload) => {
-        if (eventLogRef?.current) pushPluginEvent(eventLogRef.current, { dir: "in", channel: "supabase", type: "agent_response" });
-        orchestrationCallbacksRef?.current?.onAgentResponse?.(payload.payload);
-      })
-      .on("broadcast", { event: "agent_message" }, (payload) => {
-        if (eventLogRef?.current) pushPluginEvent(eventLogRef.current, { dir: "in", channel: "supabase", type: "agent_message" });
-        orchestrationCallbacksRef?.current?.onAgentMessage?.(payload.payload);
-      })
-      .on("broadcast", { event: "orchestration_tick" }, (payload) => {
-        if (eventLogRef?.current) pushPluginEvent(eventLogRef.current, { dir: "in", channel: "supabase", type: "orchestration_tick" });
-        orchestrationCallbacksRef?.current?.onTick?.(payload.payload);
-      })
-      .on("broadcast", { event: "orchestration_end" }, (payload) => {
-        if (eventLogRef?.current) pushPluginEvent(eventLogRef.current, { dir: "in", channel: "supabase", type: "orchestration_end" });
-        orchestrationCallbacksRef?.current?.onEnd?.(payload.payload);
-      })
-      .on("broadcast", { event: "sub_conversation_start" }, (payload) => {
-        if (eventLogRef?.current) pushPluginEvent(eventLogRef.current, { dir: "in", channel: "supabase", type: "sub_conversation_start" });
-        orchestrationCallbacksRef?.current?.onSubConversationStart?.(payload.payload);
-      })
-      .on("broadcast", { event: "sub_conversation_end" }, (payload) => {
-        if (eventLogRef?.current) pushPluginEvent(eventLogRef.current, { dir: "in", channel: "supabase", type: "sub_conversation_end" });
-        orchestrationCallbacksRef?.current?.onSubConversationEnd?.(payload.payload);
       })
       .on("presence", { event: "sync" }, () => {
         handlePresenceSync(

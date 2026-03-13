@@ -1,5 +1,14 @@
+/**
+ * Client-safe entry point for Next.js API routes.
+ *
+ * This file re-exports only the client-safe parts of @guardian/temporal
+ * using extensionless imports that turbopack can resolve.
+ * Workflow functions are NOT exported here — they only work inside the
+ * Temporal webpack sandbox.
+ */
+
 // Client
-export { getTemporalClient, getTaskQueue } from "./client.js";
+export { getTemporalClient, getTaskQueue } from "./client";
 
 // Signal/query definitions (for use by API routes)
 export {
@@ -20,7 +29,7 @@ export {
   pluginDisconnectedSignal,
   agentReadySignal,
   agentDeclinedSignal,
-} from "./signals/definitions.js";
+} from "./signals/definitions";
 
 // Activity types
 export type {
@@ -28,7 +37,7 @@ export type {
   FigmaActivities,
   PresenceActivities,
   PersistenceActivities,
-} from "./activities/types.js";
+} from "./activities/types";
 
-// Workflow types only (functions live in the Temporal sandbox — never import them in Next.js)
-export type { AgentWorkflowInput } from "./workflows/types.js";
+// Workflow types only
+export type { AgentWorkflowInput } from "./workflows/types";

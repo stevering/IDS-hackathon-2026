@@ -88,9 +88,9 @@ async function testNormalCompletion() {
 
   // Get final result
   try {
-    const result = await handle.result({ timeout: 30_000 });
+    const result = await handle.result();
     console.log(`  Result: status=${result.status}, agents=${JSON.stringify(
-      Object.entries(result.agentResults).map(([id, r]: [string, { status: string }]) => `${id}:${r.status}`)
+      Object.entries(result.agentResults).map(([id, r]) => `${id}:${(r as { status: string }).status}`)
     )}, duration=${result.durationMs}ms`);
 
     // Assertions
@@ -98,9 +98,10 @@ async function testNormalCompletion() {
       throw new Error(`Expected status=completed, got ${result.status}`);
     }
     // With the buildResult fix, all agents should be "completed"
-    for (const [id, r] of Object.entries(result.agentResults) as [string, { status: string }][]) {
-      if (r.status !== "completed") {
-        console.log(`  WARNING: agent ${id} has status=${r.status} (expected completed)`);
+    for (const [id, r] of Object.entries(result.agentResults)) {
+      const agentResult = r as { status: string };
+      if (agentResult.status !== "completed") {
+        console.log(`  WARNING: agent ${id} has status=${agentResult.status} (expected completed)`);
       }
     }
 
@@ -136,7 +137,7 @@ async function testCancelStop() {
   const poll = await pollUntilDone(handle, 10, 2000);
 
   try {
-    const result = await handle.result({ timeout: 15_000 });
+    const result = await handle.result();
     console.log(`  Result: status=${result.status}`);
 
     if (result.status !== "cancelled") {
@@ -168,7 +169,7 @@ async function testTimeout() {
   const poll = await pollUntilDone(handle, 15, 2000);
 
   try {
-    const result = await handle.result({ timeout: 30_000 });
+    const result = await handle.result();
     console.log(`  Result: status=${result.status}, duration=${result.durationMs}ms`);
 
     if (result.status !== "timed_out" && result.status !== "completed") {
@@ -212,7 +213,7 @@ async function testUserInput() {
   const poll = await pollUntilDone(handle);
 
   try {
-    const result = await handle.result({ timeout: 30_000 });
+    const result = await handle.result();
     console.log(`  Result: status=${result.status}`);
 
     if (result.status === "completed") {

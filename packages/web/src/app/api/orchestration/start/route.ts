@@ -43,7 +43,7 @@ export async function POST(request: Request) {
 
   try {
     // Dynamic import to avoid loading Temporal client when feature is disabled
-    const { getTemporalClient, getTaskQueue } = await import("@guardian/temporal");
+    const { getTemporalClient, getTaskQueue } = await import("@guardian/temporal/client");
 
     const client = await getTemporalClient();
     const taskQueue = getTaskQueue();

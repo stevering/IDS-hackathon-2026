@@ -44,7 +44,7 @@ export async function POST(
   }
 
   try {
-    const { getTemporalClient, userInputSignal, stopSignal } = await import("@guardian/temporal");
+    const { getTemporalClient, userInputSignal, stopSignal } = await import("@guardian/temporal/client");
     const client = await getTemporalClient();
     const handle = client.workflow.getHandle(workflowId);
 

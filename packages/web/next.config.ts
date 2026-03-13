@@ -4,6 +4,13 @@ import path from "path";
 const isDev = process.env.NODE_ENV === 'development';
 
 const nextConfig: NextConfig = {
+    // Temporal client uses native gRPC bindings — must not be bundled by Next.js
+    serverExternalPackages: [
+        "@temporalio/client",
+        "@temporalio/common",
+        "@temporalio/core-bridge",
+        "@guardian/temporal",
+    ],
     turbopack: {
         root: path.resolve(__dirname, '../..'),
     },

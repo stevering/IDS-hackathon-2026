@@ -31,7 +31,7 @@ export async function GET(
   }
 
   try {
-    const { getTemporalClient, statusQuery } = await import("@guardian/temporal");
+    const { getTemporalClient, statusQuery } = await import("@guardian/temporal/client");
     const client = await getTemporalClient();
     const handle = client.workflow.getHandle(workflowId);
 
