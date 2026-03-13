@@ -8,6 +8,7 @@ import { createClient as createSupabaseUserClient } from "@/lib/supabase/server"
 import { createServiceClient } from "@/lib/supabase/service";
 import { FREE_TIER_MODEL } from "@/lib/providers";
 import { getModelPricing } from "@/lib/model-pricing";
+import { resolveModel, resolveFreeTier, buildDirectProviderModel, type ResolvedModel } from "@/lib/model-resolver";
 import { createMCPClient, type MCPClient } from "@ai-sdk/mcp";
 import { GUARDIAN_SYSTEM_PROMPT } from "@/lib/system-prompt";
 import { cookies } from "next/headers";
@@ -41,96 +42,20 @@ const TOOL_TIMEOUT_MS = 60_000;
 const CONNECTION_TIMEOUT_MS = 30_000;
 const MAX_AGE_MS = 2 * 60_000;
 const HEALTHCHECK_TIMEOUT_MS = 5_000;
+// Figma Console tokens (via Southleft) expire after ~11h. Evict well before that.
+const OAUTH_SESSION_MAX_AGE_MS = 10 * 3600_000; // 10 hours
+// After a 403 from Southleft (Figma token expired), block reconnection attempts
+// with the same access_token for this duration. Southleft does NOT refresh its
+// internal Figma token on re-auth, so retrying sooner just hammers the server.
+const STALE_TOKEN_COOLDOWN_MS = 30 * 60_000; // 30 minutes
 const STREAM_KEEPALIVE_MS = 5_000; // Send a ping every 5s during MCP connection
 const MAX_STEPS = 20; // Maximum number of steps for the stream (limit to prevent infinite loops)
 const FREE_TIER_DAILY_TOKEN_LIMIT = 500_000; // Rolling 24h token limit for free tier
 
 const encoder = new TextEncoder();
 
-type ResolvedModel = {
-  model: LanguageModel;
-  isFreeTier: boolean;
-  supportsWebSearch: boolean;
-  modelId: string;
-};
-
-/**
- * Resolve the AI model to use for a given request.
- *
- * Priority (BYOK system):
- *  1. User has a `gateway` key → Vercel AI Gateway with their key + requested model
- *  2. User has a direct key for the requested provider → use that SDK
- *  3. No keys → platform free tier (XAI or AI_GATEWAY_API_KEY + FREE_TIER_MODEL)
- *
- * requestedModel format: "provider/model-id" (e.g. "openai/gpt-4o")
- * Legacy format: no slash → treated as XAI grok model.
- */
-async function resolveModel(
-  userId: string | null | undefined,
-  requestedModel: string | undefined,
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  supabase: any
-): Promise<ResolvedModel> {
-  const modelStr = requestedModel ?? "";
-  const slashIdx = modelStr.indexOf("/");
-  const requestedProvider = slashIdx > -1 ? modelStr.slice(0, slashIdx) : null;
-  const requestedModelId = slashIdx > -1 ? modelStr.slice(slashIdx + 1) : modelStr;
-
-  // ── Free tier (not logged in or legacy XAI model string) ──────────────────
-  if (!userId || !requestedProvider) {
-    return resolveFreeTier(userId);
-  }
-
-  // ── Check user's Vercel AI Gateway key first ──────────────────────────────
-  const { data: gatewaySecret } = await supabase.rpc("get_api_key", { p_provider: "gateway" });
-  if (gatewaySecret) {
-    const gw = createGateway({ apiKey: gatewaySecret });
-    return { model: gw(modelStr), isFreeTier: false, supportsWebSearch: false, modelId: modelStr };
-  }
-
-  // ── Check user's direct provider key ──────────────────────────────────────
-  const { data: providerSecret } = await supabase.rpc("get_api_key", { p_provider: requestedProvider });
-  if (providerSecret) {
-    const model = buildDirectProviderModel(requestedProvider, requestedModelId, providerSecret);
-    if (model) return { model, isFreeTier: false, supportsWebSearch: false, modelId: modelStr };
-  }
-
-  // ── No matching key → fall back to free tier ──────────────────────────────
-  return resolveFreeTier(userId);
-}
-
-function buildDirectProviderModel(provider: string, modelId: string, apiKey: string): LanguageModel | null {
-  switch (provider) {
-    case "openai":
-      return createOpenAI({ apiKey })(modelId);
-    case "anthropic":
-      return createAnthropic({ apiKey })(modelId);
-    case "google":
-      return createGoogleGenerativeAI({ apiKey })(modelId);
-    case "xai":
-      return xai(modelId);
-    default:
-      return null;
-  }
-}
-
-async function resolveFreeTier(userId: string | null | undefined): Promise<ResolvedModel> {
-  // Token usage is now tracked in onFinish (after streaming completes) via increment_usage(user_id, tokens)
-
-  const platformGatewayKey = process.env.AI_GATEWAY_API_KEY;
-  if (platformGatewayKey) {
-    const gw = createGateway({ apiKey: platformGatewayKey });
-    return { model: gw(FREE_TIER_MODEL), isFreeTier: true, supportsWebSearch: false, modelId: FREE_TIER_MODEL };
-  }
-
-  // Fallback: platform XAI key
-  return {
-    model: xai.responses("grok-4-1-fast-non-reasoning"),
-    isFreeTier: true,
-    supportsWebSearch: true,
-    modelId: "xai/grok-4-1-fast-non-reasoning",
-  };
-}
+// resolveModel, resolveFreeTier, buildDirectProviderModel, ResolvedModel
+// are now imported from @/lib/model-resolver
 
 // Utility function to encode an SSE message in AI SDK format
 function encodeSSEMessage(type: string, data: Record<string, unknown>): string {
@@ -407,15 +332,89 @@ type CachedMCP = {
   tools: Record<string, unknown>;
   connectedAt: number;
   tokenFingerprint?: string;
+  authProvider?: import("@ai-sdk/mcp").OAuthClientProvider;
 };
+
+/**
+ * Attempt to refresh tokens via the OAuth token endpoint using the stored
+ * refresh_token. Returns the new access_token fingerprint if successful and
+ * different from the current one, or null if refresh failed / same token.
+ */
+async function tryRefreshUpstreamToken(
+  authProvider: import("@ai-sdk/mcp").OAuthClientProvider,
+  tokenEndpoint: string,
+  label: string,
+): Promise<string | null> {
+  try {
+    const currentTokens = await authProvider.tokens?.();
+    if (!currentTokens?.refresh_token) {
+      console.log(`[${label}] No refresh_token available — cannot force refresh.`);
+      return null;
+    }
+
+    const clientInfo = await authProvider.clientInformation?.();
+    if (!clientInfo?.client_id) {
+      console.log(`[${label}] No client_id available — cannot force refresh.`);
+      return null;
+    }
+
+    const oldFingerprint = currentTokens.access_token?.substring(0, 20);
+
+    // Call the token endpoint with grant_type=refresh_token
+    const body = new URLSearchParams({
+      grant_type: "refresh_token",
+      refresh_token: currentTokens.refresh_token,
+      client_id: clientInfo.client_id,
+    });
+    // Include client_secret if available (Southleft supports client_secret_post)
+    if (clientInfo.client_secret) {
+      body.set("client_secret", clientInfo.client_secret);
+    }
+
+    console.log(`[${label}] Attempting token refresh at ${tokenEndpoint}…`);
+    const resp = await fetch(tokenEndpoint, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: body.toString(),
+    });
+
+    if (!resp.ok) {
+      const errText = await resp.text().catch(() => "");
+      console.warn(`[${label}] Token refresh failed (${resp.status}): ${errText.substring(0, 200)}`);
+      return null;
+    }
+
+    const newTokens = await resp.json();
+    const newFingerprint = (newTokens.access_token as string)?.substring(0, 20);
+    console.log(`[${label}] Token refresh response — old: ${oldFingerprint}… new: ${newFingerprint}… changed: ${oldFingerprint !== newFingerprint}`);
+
+    // Save the new tokens via the auth provider
+    await authProvider.saveTokens?.(newTokens);
+
+    if (newFingerprint && newFingerprint !== oldFingerprint) {
+      return newFingerprint;
+    }
+    return null;
+  } catch (err) {
+    console.warn(`[${label}] Token refresh error:`, err instanceof Error ? err.message : err);
+    return null;
+  }
+}
 
 const globalCache = globalThis as unknown as {
   __mcpClients?: Map<string, CachedMCP>;
+  __staleOAuthTokens?: Map<string, number>;
 };
 if (!globalCache.__mcpClients) {
   globalCache.__mcpClients = new Map();
 }
+if (!globalCache.__staleOAuthTokens || !(globalCache.__staleOAuthTokens instanceof Map)) {
+  globalCache.__staleOAuthTokens = new Map();
+}
 const mcpClients = globalCache.__mcpClients;
+// Token fingerprint → timestamp of 403. Prevents reconnecting with the same
+// dead token for STALE_TOKEN_COOLDOWN_MS (Figma token expired on Southleft's side).
+const staleOAuthTokens = globalCache.__staleOAuthTokens;
 
 async function healthcheckMCP(client: MCPClient, label: string): Promise<boolean> {
   try {
@@ -455,7 +454,11 @@ async function evict(url: string) {
   const cached = mcpClients.get(url);
   if (cached) {
     mcpClients.delete(url);
-    try { await cached.client.close(); } catch { /* ignore */ }
+    // close() may trigger a BodyTimeoutError from the underlying SSE transport
+    // after the promise settles — this is expected for stale/dead sessions.
+    cached.client.close().catch((err: unknown) => {
+      console.info(`[MCP] Closed stale connection to ${url} (expected: ${(err as Error)?.message || err})`);
+    });
   }
 }
 
@@ -513,24 +516,69 @@ async function getOrConnectWithAuth(url: string, label: string, authProvider: im
 }
 
 /**
- * Like getOrConnectWithAuth but skips health checks and age eviction entirely.
- * Use for stateless OAuth MCPs (e.g. Southleft figma-console /mcp) where the
- * Bearer token is used directly for API calls.
- * Invalidates the cache when the OAuth token changes (e.g. user re-authenticated).
+ * Like getOrConnectWithAuth but skips health checks (no tool-list ping).
+ * Evicts cached sessions when the OAuth token changes or when the session
+ * exceeds OAUTH_SESSION_MAX_AGE_MS (Figma tokens expire after ~11h).
  */
 async function getOrConnectWithAuthSession(url: string, label: string, authProvider: import("@ai-sdk/mcp").OAuthClientProvider, headers?: Record<string, string>): Promise<CachedMCP> {
   const currentToken = (await authProvider.tokens?.())?.access_token;
   const currentFingerprint = currentToken ? currentToken.substring(0, 20) : undefined;
 
+  // Cooldown rejection: if a token returned 403 on a previous request, block
+  // reconnection attempts with the same fingerprint for STALE_TOKEN_COOLDOWN_MS.
+  // Before rejecting, attempt a refresh_token call to get a new access_token
+  // (which may trigger Southleft to refresh its internal Figma token too).
+  if (currentFingerprint && staleOAuthTokens.has(currentFingerprint)) {
+    const staleSince = staleOAuthTokens.get(currentFingerprint)!;
+    const elapsedMs = Date.now() - staleSince;
+    if (elapsedMs < STALE_TOKEN_COOLDOWN_MS) {
+      // Try to force a token refresh before entering cooldown
+      const tokenEndpoint = `${new URL(url).origin}/token`;
+      const newFingerprint = await tryRefreshUpstreamToken(authProvider, tokenEndpoint, label);
+      if (newFingerprint) {
+        // Refresh gave us a new token — clear the stale mark and proceed
+        staleOAuthTokens.delete(currentFingerprint);
+        const cached = mcpClients.get(url);
+        if (cached) await evict(url);
+        console.log(`[${label}] Token refreshed successfully (${currentFingerprint}… → ${newFingerprint}…). Reconnecting.`);
+        const entry = await connectMCPWithAuth(url, label, authProvider, headers);
+        entry.tokenFingerprint = newFingerprint;
+        entry.authProvider = authProvider;
+        return entry;
+      }
+
+      // Refresh failed or returned the same token — enforce cooldown
+      const cached = mcpClients.get(url);
+      if (cached) await evict(url);
+      const minutesLeft = Math.ceil((STALE_TOKEN_COOLDOWN_MS - elapsedMs) / 60_000);
+      console.warn(`[${label}] Token ${currentFingerprint}… is in cooldown (${minutesLeft}min left). Figma REST API tools unavailable.`);
+      throw new Error(
+        `Figma Console's internal Figma token has expired (this happens after ~11 hours). ` +
+        `The figmaconsole_* tools that use Figma's REST API are temporarily unavailable. ` +
+        `The token will be retried in ~${minutesLeft} minutes. ` +
+        `Other tools (guardian_*, plugin execution) still work normally.`
+      );
+    }
+    // Cooldown expired — clear the mark and let them try again
+    staleOAuthTokens.delete(currentFingerprint);
+    console.log(`[${label}] Stale cooldown expired for ${currentFingerprint}…, allowing retry.`);
+  }
+
   const cached = mcpClients.get(url);
 
   if (cached) {
+    const ageMs = Date.now() - cached.connectedAt;
     // If the token changed (user re-authenticated), evict and reconnect
     if (cached.tokenFingerprint && currentFingerprint && cached.tokenFingerprint !== currentFingerprint) {
       console.log(`[${label}] Token changed (was ${cached.tokenFingerprint}… → now ${currentFingerprint}…) — evicting cached session.`);
+      // Token changed — the old fingerprint's cooldown no longer applies
+      if (cached.tokenFingerprint) staleOAuthTokens.delete(cached.tokenFingerprint);
+      await evict(url);
+    } else if (ageMs > OAUTH_SESSION_MAX_AGE_MS) {
+      console.log(`[${label}] Session expired (age ${Math.round(ageMs / 1000)}s > ${OAUTH_SESSION_MAX_AGE_MS / 1000}s) — evicting cached session.`);
       await evict(url);
     } else {
-      console.log(`[${label}] Reusing cached session (age ${Math.round((Date.now() - cached.connectedAt) / 1000)}s, token ${currentFingerprint ?? "unknown"}…).`);
+      console.log(`[${label}] Reusing cached session (age ${Math.round(ageMs / 1000)}s, token ${currentFingerprint ?? "unknown"}…).`);
       return cached;
     }
   }
@@ -538,16 +586,16 @@ async function getOrConnectWithAuthSession(url: string, label: string, authProvi
   console.log(`[${label}] Creating new authenticated connection.`);
   const entry = await connectMCPWithAuth(url, label, authProvider, headers);
   entry.tokenFingerprint = currentFingerprint;
+  entry.authProvider = authProvider;
   return entry;
 }
 
 /**
- * Wraps tools with timeout only — no eviction, no reconnect on failure.
- * Use for session-based OAuth MCPs (e.g. Southleft) where eviction would destroy
- * the authenticated session and reconnect without auth.
+ * Wraps tools with timeout. On auth errors (403 / Invalid token), evicts the
+ * cached MCP connection so the next chat request establishes a fresh one.
  */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-function wrapToolsWithTimeout(tools: Record<string, any>, label: string): Record<string, any> {
+function wrapToolsWithTimeout(tools: Record<string, any>, label: string, mcpUrl?: string): Record<string, any> {
   const wrapped: Record<string, unknown> = {};
   for (const [name, tool] of Object.entries(tools)) {
     wrapped[name] = {
@@ -559,6 +607,20 @@ function wrapToolsWithTimeout(tools: Record<string, any>, label: string): Record
           `Tool "${name}"`,
         );
         console.log(`[${label}] Tool "${name}" raw result:`, JSON.stringify(toolResult)?.substring(0, 300));
+        // Detect auth failures from the upstream server and evict the stale session.
+        // Also mark the token fingerprint as stale so subsequent requests don't
+        // reconnect with the same expired token (e.g. Figma token expired on Southleft).
+        const resultStr = typeof toolResult === 'string' ? toolResult : JSON.stringify(toolResult);
+        if (mcpUrl && resultStr && (/Invalid token/i.test(resultStr) || /"status"\s*:\s*403/.test(resultStr))) {
+          const cached = mcpClients.get(mcpUrl);
+          if (cached?.tokenFingerprint) {
+            staleOAuthTokens.set(cached.tokenFingerprint, Date.now());
+            console.warn(`[${label}] Auth error detected in tool "${name}" — token ${cached.tokenFingerprint}… marked stale for ${STALE_TOKEN_COOLDOWN_MS / 60_000}min, evicting session`);
+          } else {
+            console.warn(`[${label}] Auth error detected in tool "${name}" — evicting cached session`);
+          }
+          await evict(mcpUrl);
+        }
         return toolResult;
       },
     };
@@ -747,8 +809,8 @@ async function connectMCPs(
       const prefixedTools = Object.fromEntries(
         Object.entries(tools).map(([name, tool]) => [`figmaconsole_${name}`, tool])
       );
-      // Use timeout-only wrapper (no retry/eviction) to preserve the OAuth session
-      Object.assign(allTools, wrapToolsWithTimeout(prefixedTools, "FigmaConsole"));
+      // Timeout wrapper with auth-error eviction — stale Figma tokens trigger reconnect on next request
+      Object.assign(allTools, wrapToolsWithTimeout(prefixedTools, "FigmaConsole", figmaConsoleMcpUrl));
       console.log("[FigmaConsole] Connected successfully");
     } else {
       console.log("[FigmaConsole] No OAuth tokens found — skipping (user needs to sign in via Figma Console button)");

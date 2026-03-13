@@ -30,7 +30,12 @@
         "STORAGE_POSTGRES_HOST",
         "STORAGE_POSTGRES_URL",
         "STORAGE_POSTGRES_DATABASE",
-        "STORAGE_SUPABASE_SECRET_KEY"
+        "STORAGE_SUPABASE_SECRET_KEY",
+        "TEMPORAL_ADDRESS",
+        "TEMPORAL_NAMESPACE",
+        "TEMPORAL_TASK_QUEUE",
+        "TEMPORAL_ENABLED",
+        "NEXT_PUBLIC_TEMPORAL_ENABLED"
       ]
     },
     "dev": { "cache": false, "persistent": true },

@@ -19,6 +19,8 @@
     "@ai-sdk/react": "^3.0.79",
     "@ai-sdk/xai": "^3.0.54",
     "@guardian/mcp-server": "workspace:*",
+    "@guardian/orchestrations": "workspace:*",
+    "@guardian/temporal": "workspace:*",
     "@modelcontextprotocol/sdk": "^1.27.1",
     "@supabase/ssr": "^0.8.0",
     "@supabase/supabase-js": "^2.98.0",

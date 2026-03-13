@@ -159,7 +159,10 @@ export function useFigmaExecuteChannel(
           });
         }
       })
-      // Collaborative Agents — orchestration events forwarded to useOrchestration via callback ref
+      // Collaborative Agents — orchestration events forwarded to useOrchestration via callback ref.
+      // When TEMPORAL_ENABLED is set, orchestration signals flow through Temporal instead
+      // of Supabase RT broadcasts. These handlers remain for backwards compatibility
+      // but are effectively no-ops when no callbacks are registered.
       .on("broadcast", { event: "orchestration_invite" }, (payload) => {
         if (eventLogRef?.current) pushPluginEvent(eventLogRef.current, { dir: "in", channel: "supabase", type: "orchestration_invite" });
         orchestrationCallbacksRef?.current?.onInvite?.(payload.payload);

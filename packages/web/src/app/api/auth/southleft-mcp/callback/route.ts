@@ -74,6 +74,7 @@ export async function GET(request: NextRequest) {
         try {
           const tokens = JSON.parse(c.value as string);
           accessToken = tokens.access_token || tokens.accessToken;
+          console.log("[Southleft Callback] Token payload keys:", Object.keys(tokens), "| refresh_token present:", !!tokens.refresh_token, "| expires_in:", tokens.expires_in);
         } catch (e) {
           console.error("[Southleft Callback] Error parsing tokens:", e);
         }

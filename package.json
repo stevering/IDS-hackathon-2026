@@ -14,6 +14,7 @@
     "build:extension": "turbo run build --filter=@guardian/chrome-extension",
     "dev:overlay": "turbo run dev --filter=@guardian/electron-overlay",
     "build:overlay": "turbo run build --filter=@guardian/electron-overlay",
+    "dev:temporal": "dotenv -- tsx packages/temporal/src/worker.ts",
     "build": "turbo run build",
     "lint": "turbo run lint",
     "typecheck": "turbo run typecheck"
@@ -27,7 +28,9 @@
       "esbuild",
       "sharp",
       "unrs-resolver",
-      "electron"
+      "electron",
+      "@swc/core",
+      "protobufjs"
     ]
   }
 }
