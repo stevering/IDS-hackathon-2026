@@ -26,12 +26,27 @@ export async function callLLM(params: LLMCallParams): Promise<LLMCallResult> {
       )
     : undefined;
 
+  // Build a lookup of toolCallId → toolName from assistant messages
+  const toolCallNameMap = new Map<string, string>();
+  for (const m of params.messages) {
+    if (m.toolCalls) {
+      for (const tc of m.toolCalls) {
+        toolCallNameMap.set(tc.id, tc.name);
+      }
+    }
+  }
+
   // Convert our LLMMessage[] to AI SDK ModelMessage[] format
   const messages = params.messages.map((m) => {
     if (m.role === "tool") {
       return {
         role: "tool" as const,
-        content: [{ type: "tool-result" as const, toolCallId: m.toolCallId!, result: m.content }],
+        content: [{
+          type: "tool-result" as const,
+          toolCallId: m.toolCallId!,
+          toolName: toolCallNameMap.get(m.toolCallId!) ?? "unknown",
+          result: m.content,
+        }],
       };
     }
     if (m.role === "assistant" && m.toolCalls?.length) {
