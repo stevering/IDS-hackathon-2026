@@ -22,6 +22,7 @@ import { useTemporalOrchestration } from "./hooks/useTemporalOrchestration";
 import type { AgentRole, Orchestration } from "@/types/orchestration";
 import { ConversationSwitcher } from "@/components/ConversationSwitcher";
 import { OrchestrationStatusBar } from "@/components/OrchestrationStatusBar";
+import { OrchestrationEventLog } from "@/components/OrchestrationEventLog";
 import { MCPStatusBar } from "@/components/MCPStatusBar";
 
 import { AgentMessageBubble } from "@/components/AgentMessageBubble";
@@ -2870,14 +2871,12 @@ export default function Home() {
                                       fileName: c.figmaContext?.fileName,
                                       pluginClientId: c.clientId,
                                     }));
-                                  console.log("[ORCHESTRATE] targetAgents:", targetAgents, "from agents:", structSeg.agents, "clients:", clients.map(c => c.shortId));
                                   if (targetAgents.length === 0) { console.warn("[ORCHESTRATE] No matching agents found — aborting"); return; }
                                   const wfId = await temporal.startOrchestration({
                                     task: lastUserText,
                                     targetAgents,
                                     model: selectedModel,
                                   });
-                                  console.log("[ORCHESTRATE] startOrchestration returned:", wfId, "error:", temporal.error);
                                 }}
                                 disabled={isLoading || temporal.isActive || temporal.starting}
                                 className="my-3 flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm font-medium border transition-all cursor-pointer bg-amber-500/10 border-amber-500/25 text-amber-300 hover:bg-amber-500/20 hover:border-amber-500/40 disabled:opacity-40 disabled:cursor-not-allowed"
@@ -3071,6 +3070,14 @@ export default function Home() {
             </div>
           );
           })}
+
+          {/* Temporal orchestration live event feed */}
+          {temporal.events.length > 0 && (
+            <OrchestrationEventLog
+              events={temporal.events}
+              agents={temporal.agents}
+            />
+          )}
 
           {isLoading && <ThinkingIndicator />}
 
