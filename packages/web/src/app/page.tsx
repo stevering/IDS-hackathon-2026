@@ -888,13 +888,19 @@ function CopyDebugButton({
               ...(e.to ? { to: e.to } : {}),
               ...(e.meta ? { meta: e.meta } : {}),
             }))
-          ).sort((a, b) => new Date(a.ts).getTime() - new Date(b.ts).getTime())
+          ).sort((a, b) => {
+            const dt = new Date(a.ts).getTime() - new Date(b.ts).getTime();
+            // Stable sort: tiebreak by sourceClientId so order is deterministic across clients
+            return dt !== 0 ? dt : a.sourceClientId.localeCompare(b.sourceClientId);
+          })
         : [];
 
-      // Per-client breakdown
+      // Per-client breakdown — use each trace's own clientState for resolution
       const perClient: Record<string, unknown> = {};
       if (unified) {
         for (const t of unified.traces) {
+          const cs = (t.clientState ?? {}) as Record<string, unknown>;
+          const traceFigmaCtx = cs.figmaContext as FigmaPluginContext | null ?? null;
           perClient[t.sourceClientId] = {
             shortId: t.sourceShortId,
             clientType: t.clientType,
@@ -905,9 +911,9 @@ function CopyDebugButton({
               clients,
               t.sourceShortId ?? t.sourceClientId,
               t.sourceClientId,
-              (t.clientState as Record<string, unknown>)?.model as string ?? model,
-              (t.clientState as Record<string, unknown>)?.isFigmaPlugin as boolean ?? false,
-              figmaContext,
+              cs.model as string ?? model,
+              cs.isFigmaPlugin as boolean ?? false,
+              traceFigmaCtx,
             ),
           };
         }
