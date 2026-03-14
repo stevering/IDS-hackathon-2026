@@ -235,14 +235,20 @@ async function fetchTemporalHistory(
   }[] = [];
 
   try {
-    const iter = handle.fetchHistory();
+    const historyResult = await handle.fetchHistory();
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    for await (const event of (iter as any).events ?? iter) {
-      const mapped = mapHistoryEvent(event);
-      if (mapped) history.push(mapped);
+    const events = (historyResult as any)?.events ?? [];
+    for (const event of events) {
+      try {
+        const mapped = mapHistoryEvent(event);
+        if (mapped) history.push(mapped);
+      } catch {
+        // Skip malformed events
+      }
     }
-  } catch {
-    // fetchHistory may fail if workflow not found — non-fatal
+    console.log(`[debug-traces] fetchHistory for ${workflowId}: ${events.length} raw → ${history.length} mapped`);
+  } catch (err) {
+    console.warn("[debug-traces] fetchHistory failed for", workflowId, err);
   }
 
   return history;
@@ -261,7 +267,51 @@ function mapHistoryEvent(event: any): {
       ).toISOString()
     : new Date().toISOString();
 
-  const eventType: string = event.eventType ?? "";
+  // eventType can be a string ("EVENT_TYPE_...") or a number (proto enum).
+  // Temporal SDK returns numbers in the JS object but strings in JSON serialization.
+  const rawType = event.eventType;
+  if (!rawType) return null;
+
+  // Map numeric proto enums to string names
+  const numericMap: Record<number, string> = {
+    1: "WORKFLOW_EXECUTION_STARTED",
+    2: "WORKFLOW_EXECUTION_COMPLETED",
+    3: "WORKFLOW_EXECUTION_FAILED",
+    4: "WORKFLOW_EXECUTION_TIMED_OUT",
+    5: "WORKFLOW_TASK_SCHEDULED",
+    6: "WORKFLOW_TASK_STARTED",
+    7: "WORKFLOW_TASK_COMPLETED",
+    8: "WORKFLOW_TASK_TIMED_OUT",
+    9: "WORKFLOW_TASK_FAILED",
+    10: "ACTIVITY_TASK_SCHEDULED",
+    11: "ACTIVITY_TASK_STARTED",
+    12: "ACTIVITY_TASK_COMPLETED",
+    13: "ACTIVITY_TASK_FAILED",
+    14: "ACTIVITY_TASK_TIMED_OUT",
+    15: "ACTIVITY_TASK_CANCEL_REQUESTED",
+    16: "ACTIVITY_TASK_CANCELED",
+    17: "TIMER_STARTED",
+    18: "TIMER_FIRED",
+    19: "TIMER_CANCELED",
+    20: "WORKFLOW_EXECUTION_CANCEL_REQUESTED",
+    21: "WORKFLOW_EXECUTION_CANCELED",
+    23: "WORKFLOW_EXECUTION_SIGNALED",
+    24: "WORKFLOW_EXECUTION_TERMINATED",
+    25: "WORKFLOW_EXECUTION_CONTINUED_AS_NEW",
+    26: "START_CHILD_WORKFLOW_EXECUTION_INITIATED",
+    28: "CHILD_WORKFLOW_EXECUTION_STARTED",
+    29: "CHILD_WORKFLOW_EXECUTION_COMPLETED",
+    30: "CHILD_WORKFLOW_EXECUTION_FAILED",
+    32: "CHILD_WORKFLOW_EXECUTION_TERMINATED",
+    34: "SIGNAL_EXTERNAL_WORKFLOW_EXECUTION_INITIATED",
+    36: "EXTERNAL_WORKFLOW_EXECUTION_SIGNALED",
+  };
+
+  const eventType: string = typeof rawType === "number"
+    ? (numericMap[rawType] ?? `UNKNOWN_${rawType}`)
+    : typeof rawType === "string"
+      ? rawType.replace(/^EVENT_TYPE_/, "")
+      : String(rawType);
 
   if (eventType.includes("WORKFLOW_EXECUTION_STARTED")) {
     return { ts, type: "workflow_started" };
