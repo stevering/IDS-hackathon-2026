@@ -7,6 +7,7 @@
 
 import { NextResponse } from "next/server";
 import { createClient as createSupabaseUserClient } from "@/lib/supabase/server";
+import { createLogger } from "@/lib/log";
 
 export const dynamic = "force-dynamic";
 
@@ -43,10 +44,14 @@ export async function POST(
     );
   }
 
+  const log = createLogger("orch/signal", { u: user.id.slice(0, 8), wf: workflowId, signal: signalName });
+
   try {
     const { getTemporalClient, userInputSignal, stopSignal } = await import("@guardian/temporal/client");
     const client = await getTemporalClient();
     const handle = client.workflow.getHandle(workflowId);
+
+    log.info("sending signal");
 
     switch (signalName) {
       case "userInput":
@@ -58,15 +63,17 @@ export async function POST(
         break;
 
       default:
+        log.warn("unknown signal type");
         return NextResponse.json(
           { error: `Unknown signal: ${signalName}` },
           { status: 400 }
         );
     }
 
+    log.info("signal sent");
     return NextResponse.json({ ok: true });
   } catch (error) {
-    console.error(`[orchestration/${workflowId}/signal] Failed:`, error);
+    log.error(`failed: ${error}`);
     return NextResponse.json(
       { error: "Failed to send signal" },
       { status: 500 }

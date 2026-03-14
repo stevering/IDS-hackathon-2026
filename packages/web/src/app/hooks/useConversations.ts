@@ -55,7 +55,9 @@ export function useConversations(clientId: string, enabled = true) {
   const activeConversation = conversations.find((c) => c.id === activeConversationId) ?? null;
 
   const parallelConversations = conversations.filter(
-    (c) => c.orchestration_id !== null && c.id !== activeConversationId,
+    (c) =>
+      (c.orchestration_id !== null || !!(c.metadata as Record<string, unknown>)?.workflowId) &&
+      c.id !== activeConversationId,
   );
 
   // ── Load conversations ─────────────────────────────────────────────────
@@ -174,7 +176,8 @@ export function useConversations(clientId: string, enabled = true) {
       metadata?: Record<string, unknown>;
     }): Promise<Conversation | null> => {
       const conv = await createConversationInternal(opts);
-      if (conv && !opts?.orchestrationId) {
+      const isOrchConv = opts?.orchestrationId || opts?.metadata?.workflowId;
+      if (conv && !isOrchConv) {
         // Auto-switch to new standalone conversations
         setActiveConversationId(conv.id);
       }

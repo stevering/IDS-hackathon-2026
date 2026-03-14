@@ -343,14 +343,16 @@ function renderEvent(event: OrchestrationSSEEvent, index: number, agents: AgentV
     // ── User input received ───────────────────────────────────────────
     case "user_input_received":
       return (
-        <div key={index} className="flex justify-center my-1">
-          <div className="px-2.5 py-0.5 rounded-full text-[10px] border border-blue-500/15 bg-blue-500/10 text-blue-400/70">
-            User input received
+        <div key={index} className="flex justify-end mx-2 sm:mx-4 my-1.5">
+          <div className="max-w-[80%] rounded-lg border border-blue-500/25 bg-blue-500/15 px-3 py-2">
             {event.targetAgentId && (
-              <span className="ml-1 text-blue-400/50">
+              <div className="text-[10px] text-blue-400/50 mb-1">
                 &rarr; {event.targetAgentId}
-              </span>
+              </div>
             )}
+            <div className="text-xs text-blue-200/80 leading-relaxed">
+              {event.content ?? "User input received"}
+            </div>
           </div>
         </div>
       );

@@ -15,6 +15,8 @@ export async function GET() {
   return NextResponse.json({
     autoAccept: row?.auto_accept ?? false,
     defaultModel: row?.default_model ?? null,
+    approvalMode: row?.approval_mode ?? "trust",
+    guardEnabled: row?.guard_enabled ?? true,
   });
 }
 
@@ -29,12 +31,17 @@ export async function PATCH(req: Request) {
     return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
   }
 
-  const { autoAccept, defaultModel } = body;
+  const { autoAccept, defaultModel, approvalMode, guardEnabled } = body;
 
   // At least one field must be provided
-  if (typeof autoAccept === "undefined" && typeof defaultModel === "undefined") {
+  if (
+    typeof autoAccept === "undefined" &&
+    typeof defaultModel === "undefined" &&
+    typeof approvalMode === "undefined" &&
+    typeof guardEnabled === "undefined"
+  ) {
     return NextResponse.json(
-      { error: "At least one setting (autoAccept, defaultModel) is required" },
+      { error: "At least one setting is required" },
       { status: 400 },
     );
   }
@@ -46,15 +53,23 @@ export async function PATCH(req: Request) {
   if (typeof defaultModel !== "undefined" && defaultModel !== null && typeof defaultModel !== "string") {
     return NextResponse.json({ error: "defaultModel must be a string or null" }, { status: 400 });
   }
+  if (typeof approvalMode !== "undefined" && approvalMode !== "trust" && approvalMode !== "brave") {
+    return NextResponse.json({ error: "approvalMode must be 'trust' or 'brave'" }, { status: 400 });
+  }
+  if (typeof guardEnabled !== "undefined" && typeof guardEnabled !== "boolean") {
+    return NextResponse.json({ error: "guardEnabled must be a boolean" }, { status: 400 });
+  }
 
   // Build RPC params — only pass what was provided
   const params: Record<string, unknown> = {};
   if (typeof autoAccept !== "undefined") params.p_auto_accept = autoAccept;
   if (typeof defaultModel !== "undefined") params.p_default_model = defaultModel;
+  if (typeof approvalMode !== "undefined") params.p_approval_mode = approvalMode;
+  if (typeof guardEnabled !== "undefined") params.p_guard_enabled = guardEnabled;
 
   const { error } = await supabase.rpc("update_settings", params);
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
-  return NextResponse.json({ ok: true, autoAccept, defaultModel });
+  return NextResponse.json({ ok: true, autoAccept, defaultModel, approvalMode, guardEnabled });
 }

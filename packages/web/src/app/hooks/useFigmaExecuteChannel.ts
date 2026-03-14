@@ -27,7 +27,10 @@ export function useFigmaExecuteChannel(
   enabled: boolean,
   clientInfo?: ClientInfo,
   eventLogRef?: React.RefObject<PluginEvent[]>,
+  onOrchestrationDetected?: (workflowId: string) => void,
 ): { clients: PresenceClient[]; clientId: string; channelRef: React.RefObject<ReturnType<ReturnType<typeof createClient>["channel"]> | null> } {
+  const onOrchestrationDetectedRef = useRef(onOrchestrationDetected);
+  onOrchestrationDetectedRef.current = onOrchestrationDetected;
   const busy = useRef(false);
   const executeCodeRef = useRef(executeCode);
   executeCodeRef.current = executeCode;
@@ -96,12 +99,18 @@ export function useFigmaExecuteChannel(
 
     channel
       .on("broadcast", { event: "execute_request" }, async (payload) => {
-        const { requestId, code, timeout, targetClientId } = payload.payload as {
+        const { requestId, code, timeout, targetClientId, workflowId } = payload.payload as {
           requestId: string;
           code: string;
           timeout: number;
           targetClientId?: string;
+          workflowId?: string;
         };
+
+        // Notify about orchestration workflowId (once per unique ID)
+        if (workflowId && onOrchestrationDetectedRef.current) {
+          onOrchestrationDetectedRef.current(workflowId);
+        }
 
         // Log ALL observed requests (before filtering) — from=mcp-server, to=targetClientId
         if (eventLogRef?.current) pushPluginEvent(eventLogRef.current, { dir: "in", channel: "supabase", type: "execute_request", from: "mcp-server", to: targetClientId ?? "broadcast", summary: `code=${code}` });

@@ -75,6 +75,11 @@ export default function AccountPage() {
   const [defaultModelSearch, setDefaultModelSearch] = useState("");
   const defaultModelBtnRef = useRef<HTMLButtonElement>(null);
 
+  // Orchestration settings
+  const [approvalMode, setApprovalMode] = useState<"trust" | "brave">("trust");
+  const [guardEnabled, setGuardEnabled] = useState(true);
+  const [savingOrchSettings, setSavingOrchSettings] = useState(false);
+
   const handleDropdownClose = useCallback(() => {
     setDropdownOpen(false);
     setSearch("");
@@ -123,10 +128,12 @@ export default function AccountPage() {
       setKeys(keysData.keys ?? []);
       setUsage(usageData.daily ? usageData : null);
 
-      // Load default model from user settings
+      // Load user settings (default model + orchestration)
       if (settingsRes.ok) {
         const settingsData = await settingsRes.json();
         setDefaultModel(settingsData.defaultModel ?? null);
+        if (settingsData.approvalMode) setApprovalMode(settingsData.approvalMode);
+        if (typeof settingsData.guardEnabled === "boolean") setGuardEnabled(settingsData.guardEnabled);
       }
 
       // Build dynamic provider list from Gateway catalog
@@ -625,6 +632,100 @@ export default function AccountPage() {
             </div>
           );
         })()}
+      </section>
+
+      {/* Orchestration settings */}
+      <section className="mb-8 p-4 rounded-xl bg-white/[0.06] border border-white/[0.15] backdrop-blur-md">
+        <h2 className="text-sm font-medium mb-1">Orchestration</h2>
+        <p className="text-xs text-white/40 mb-4">
+          Control how remote code execution behaves during collaborative orchestration.
+        </p>
+
+        {/* Trust / Brave selector */}
+        <div className="flex gap-3 mb-4">
+          {(["trust", "brave"] as const).map((mode) => (
+            <button
+              key={mode}
+              onClick={async () => {
+                setApprovalMode(mode);
+                setSavingOrchSettings(true);
+                await fetch("/api/user/settings", {
+                  method: "PATCH",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ approvalMode: mode }),
+                }).catch(() => {});
+                setSavingOrchSettings(false);
+              }}
+              disabled={savingOrchSettings}
+              className={`flex-1 p-3 rounded-lg border text-left transition-colors cursor-pointer ${
+                approvalMode === mode
+                  ? mode === "trust"
+                    ? "border-amber-500/40 bg-amber-500/10"
+                    : "border-emerald-500/40 bg-emerald-500/10"
+                  : "border-white/10 bg-white/[0.03] hover:bg-white/5"
+              }`}
+            >
+              <div className="flex items-center gap-2 mb-1">
+                <span
+                  className={`w-3 h-3 rounded-full border-2 flex items-center justify-center ${
+                    approvalMode === mode
+                      ? mode === "trust"
+                        ? "border-amber-400"
+                        : "border-emerald-400"
+                      : "border-white/30"
+                  }`}
+                >
+                  {approvalMode === mode && (
+                    <span
+                      className={`w-1.5 h-1.5 rounded-full ${
+                        mode === "trust" ? "bg-amber-400" : "bg-emerald-400"
+                      }`}
+                    />
+                  )}
+                </span>
+                <span className="text-sm font-medium capitalize">{mode}</span>
+              </div>
+              <p className="text-[11px] text-white/40 ml-5">
+                {mode === "trust"
+                  ? "Review and approve each code execution before it runs."
+                  : "Auto-execute all commands. Faster, but no review step."}
+              </p>
+            </button>
+          ))}
+        </div>
+
+        {/* Guard toggle */}
+        <div className="flex items-center justify-between gap-3 p-3 rounded-lg border border-white/10 bg-white/[0.03]">
+          <div>
+            <div className="text-sm font-medium">Guard</div>
+            <p className="text-[11px] text-white/40 mt-0.5">
+              Always require approval for critical operations (remove, flatten, detach) regardless of mode.
+            </p>
+          </div>
+          <button
+            onClick={async () => {
+              const next = !guardEnabled;
+              setGuardEnabled(next);
+              setSavingOrchSettings(true);
+              await fetch("/api/user/settings", {
+                method: "PATCH",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ guardEnabled: next }),
+              }).catch(() => {});
+              setSavingOrchSettings(false);
+            }}
+            disabled={savingOrchSettings}
+            className={`relative shrink-0 w-10 h-5 rounded-full transition-colors cursor-pointer ${
+              guardEnabled ? "bg-emerald-600" : "bg-white/20"
+            }`}
+          >
+            <span
+              className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
+                guardEnabled ? "translate-x-5" : ""
+              }`}
+            />
+          </button>
+        </div>
       </section>
 
       {/* Connected Clients */}

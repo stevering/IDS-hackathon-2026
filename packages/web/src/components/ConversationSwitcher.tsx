@@ -29,8 +29,11 @@ export function ConversationSwitcher({
   const hasUnread = unreadIds && unreadIds.size > 0;
 
   // Separate parallel (orchestration) conversations from standalone ones
-  const standalone = conversations.filter((c) => !c.orchestration_id);
-  const parallel = conversations.filter((c) => !!c.orchestration_id);
+  // Match both legacy orchestration_id (UUID) and new metadata.workflowId (Temporal)
+  const isOrchestration = (c: typeof conversations[number]) =>
+    !!c.orchestration_id || !!(c.metadata as Record<string, unknown>)?.workflowId;
+  const standalone = conversations.filter((c) => !isOrchestration(c));
+  const parallel = conversations.filter(isOrchestration);
 
   return (
     <div className="relative">

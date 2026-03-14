@@ -127,6 +127,8 @@ export type ExecuteCodeParams = {
   code: string;
   /** Timeout in ms */
   timeoutMs?: number;
+  /** Orchestrator workflow ID — forwarded to plugin for SSE stream */
+  workflowId?: string;
 };
 
 export type ExecuteCodeResult = {

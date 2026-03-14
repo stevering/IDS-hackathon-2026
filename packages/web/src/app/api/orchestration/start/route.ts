@@ -7,6 +7,7 @@
 import { NextResponse } from "next/server";
 import { createClient as createSupabaseUserClient } from "@/lib/supabase/server";
 import type { StartOrchestrationParams, AgentId } from "@guardian/orchestrations";
+import { createLogger } from "@/lib/log";
 
 export const dynamic = "force-dynamic";
 
@@ -42,6 +43,9 @@ export async function POST(request: Request) {
     );
   }
 
+  const workflowId = `orch-${user.id.slice(0, 8)}-${Date.now()}`;
+  const log = createLogger("orch/start", { u: user.id.slice(0, 8), wf: workflowId });
+
   try {
     // Dynamic import to avoid loading Temporal client when feature is disabled
     const { getTemporalClient, getTaskQueue } = await import("@guardian/temporal/client");
@@ -58,7 +62,11 @@ export async function POST(request: Request) {
       context,
     };
 
-    const workflowId = `orch-${user.id.slice(0, 8)}-${Date.now()}`;
+    log.info("starting orchestration", {
+      agents: targetAgents.map((a: AgentId) => a.shortId).join(","),
+      model: model ?? "default",
+      task: task.slice(0, 80),
+    });
 
     // Use string workflow name — do NOT import the workflow function directly
     // as it depends on @temporalio/workflow which only works inside the sandbox.
@@ -68,12 +76,14 @@ export async function POST(request: Request) {
       args: [params],
     });
 
+    log.info("workflow started");
+
     return NextResponse.json({
       workflowId: handle.workflowId,
       orchestrationId: workflowId,
     });
   } catch (error) {
-    console.error("[orchestration/start] Failed to start workflow:", error);
+    log.error(`failed to start: ${error}`);
     return NextResponse.json(
       { error: "Failed to start orchestration" },
       { status: 500 }

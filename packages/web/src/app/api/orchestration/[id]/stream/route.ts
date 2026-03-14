@@ -7,6 +7,7 @@
 
 import { createClient as createSupabaseUserClient } from "@/lib/supabase/server";
 import type { OrchestrationStatusResponse } from "@guardian/orchestrations";
+import { createLogger } from "@/lib/log";
 
 export const dynamic = "force-dynamic";
 
@@ -30,6 +31,8 @@ export async function GET(
     return new Response("Unauthorized", { status: 401 });
   }
 
+  const log = createLogger("orch/stream", { u: user.id.slice(0, 8), wf: workflowId });
+
   const encoder = new TextEncoder();
 
   const stream = new ReadableStream({
@@ -39,6 +42,7 @@ export async function GET(
       // Handle client disconnect
       request.signal.addEventListener("abort", () => {
         closed = true;
+        log.info("client disconnected");
       });
 
       try {
@@ -46,18 +50,27 @@ export async function GET(
         const client = await getTemporalClient();
         const handle = client.workflow.getHandle(workflowId);
 
-        // Send initial connection event
+        log.info("SSE connected");
         controller.enqueue(
           encoder.encode(`data: ${JSON.stringify({ type: "connected", workflowId })}\n\n`)
         );
 
         let lastKeepalive = Date.now();
+        let pollCount = 0;
 
         while (!closed) {
           try {
             const status: OrchestrationStatusResponse = await handle.query(statusQuery);
 
+            pollCount++;
+
             // Stream new events
+            if (status.events.length > 0) {
+              log.info(`${status.events.length} new events`, {
+                poll: pollCount,
+                types: status.events.map((e: { type: string }) => e.type).join(","),
+              });
+            }
             for (const event of status.events) {
               if (closed) break;
               controller.enqueue(
@@ -80,6 +93,7 @@ export async function GET(
 
             // Check if orchestration is done
             if (status.status !== "active") {
+              log.info(`orchestration ended`, { status: status.status, polls: pollCount });
               controller.enqueue(
                 encoder.encode(
                   `data: ${JSON.stringify({
@@ -94,6 +108,7 @@ export async function GET(
             // Workflow may have completed — check if it's a "not found" type error
             const msg = String(queryError);
             if (msg.includes("not found") || msg.includes("completed")) {
+              log.info("workflow gone, treating as completed", { polls: pollCount });
               controller.enqueue(
                 encoder.encode(
                   `data: ${JSON.stringify({
@@ -116,6 +131,7 @@ export async function GET(
           await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
         }
       } catch (err) {
+        log.error(`stream error: ${err}`);
         if (!closed) {
           controller.enqueue(
             encoder.encode(

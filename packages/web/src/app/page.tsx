@@ -5,7 +5,7 @@ import { DefaultChatTransport, lastAssistantMessageIsCompleteWithToolCalls } fro
 import { useState, useRef, useEffect, useMemo, useCallback } from "react";
 import Link from "next/link";
 import type { GatewayModel } from "./api/gateway-models/route";
-import { useFigmaPlugin, pushPluginEvent, type PluginEvent, type FigmaPluginContext } from "./hooks/useFigmaPlugin";
+import { useFigmaPlugin, pushPluginEvent, type PluginEvent, type FigmaPluginContext, type ExecuteCodeResult } from "./hooks/useFigmaPlugin";
 import { useFigmaExecuteChannel } from "./hooks/useFigmaExecuteChannel";
 import { useClientRegistry } from "./hooks/useClientRegistry";
 import { TargetSelector, type TargetItem } from "@/components/TargetSelector";
@@ -23,6 +23,11 @@ import type { AgentRole, Orchestration } from "@/types/orchestration";
 import { ConversationSwitcher } from "@/components/ConversationSwitcher";
 import { OrchestrationStatusBar } from "@/components/OrchestrationStatusBar";
 import { OrchestrationEventLog } from "@/components/OrchestrationEventLog";
+import { OrchestrationBanner } from "@/components/OrchestrationBanner";
+import { ApprovalOverlay } from "@/components/ApprovalOverlay";
+import { useOrchestrationConversation } from "./hooks/useOrchestrationConversation";
+import { usePluginOrchestration } from "./hooks/usePluginOrchestration";
+import { detectCriticalOperations, isCriticalOperation } from "@/lib/guard";
 import { MCPStatusBar } from "@/components/MCPStatusBar";
 
 import { AgentMessageBubble } from "@/components/AgentMessageBubble";
@@ -681,6 +686,7 @@ function CopyDebugButton({
   figmaContext,
   selectedNodeCount,
   eventLog,
+  temporalOrchestration,
 }: {
   messages: { id: string; role: string; parts: { type: string; text?: string }[] }[];
   clients: { clientId: string; shortId: string; label: string; type: string; fileKey?: string; agentRole?: AgentRole; figmaContext?: { fileName?: string } }[];
@@ -700,6 +706,16 @@ function CopyDebugButton({
   figmaContext: FigmaPluginContext | null;
   selectedNodeCount: number;
   eventLog: PluginEvent[];
+  temporalOrchestration?: {
+    workflowId: string | null;
+    isActive: boolean;
+    completedStatus: string | null;
+    agents: { shortId: string; status: string; label?: string; fileName?: string }[];
+    events: { type: string; [key: string]: unknown }[];
+    connected: boolean;
+    streamError: string | null;
+    timerRemainingMs: number | null;
+  };
 }) {
   const [copied, setCopied] = useState(false);
 
@@ -721,6 +737,19 @@ function CopyDebugButton({
       selectedNodeCount,
       enabledMcps,
       mcpReachable,
+      ...(temporalOrchestration?.workflowId ? {
+        temporalOrchestration: {
+          workflowId: temporalOrchestration.workflowId,
+          isActive: temporalOrchestration.isActive,
+          completedStatus: temporalOrchestration.completedStatus,
+          connected: temporalOrchestration.connected,
+          streamError: temporalOrchestration.streamError,
+          timerRemainingMs: temporalOrchestration.timerRemainingMs,
+          agents: temporalOrchestration.agents,
+          eventCount: temporalOrchestration.events.length,
+          events: temporalOrchestration.events.map(e => ({ type: e.type, ...(e.agentShortId ? { agent: e.agentShortId } : {}), ...(e.content ? { content: (e.content as string).slice(0, 200) } : {}), ...(e.status ? { status: e.status } : {}) })),
+        },
+      } : {}),
       thisClient: { clientId: myClientId, shortId: myShortId, agentRole },
       orchestration: orchestration
         ? { id: orchestration.id, status: orchestration.status, orchestratorClientId: orchestration.orchestratorClientId, conversationId: orchestration.conversationId }
@@ -938,7 +967,64 @@ export default function Home() {
   // Get clientId from channel hook first, then register with server
   const [registryShortId, setRegistryShortId] = useState<string | null>(null);
 
-  const { clients, clientId: myClientId, channelRef } = useFigmaExecuteChannel(executeCode, true, {
+  // Stable ref for plugin orchestration detection (wired after pluginOrch hook)
+  const orchDetectedRef = useRef<((wfId: string) => void) | null>(null);
+  const orchDetectedCallback = useCallback((wfId: string) => {
+    orchDetectedRef.current?.(wfId);
+  }, []);
+
+  // ── Approval-gated executeCode wrapper ────────────────────────────
+  // Refs for approval state (declared later, wired via refs to avoid hook order issues)
+  const approvalModeRef = useRef<"trust" | "brave">("trust");
+  const guardEnabledRef = useRef(true);
+  const allowAllSessionRef = useRef(false);
+  const setPendingApprovalRef = useRef<(val: {
+    code: string;
+    agentLabel?: string;
+    resolve: (approved: boolean) => void;
+  } | null) => void>(() => {});
+
+  const gatedExecuteCode = useCallback(
+    async (code: string, timeout?: number): Promise<ExecuteCodeResult> => {
+      const mode = approvalModeRef.current;
+      const guard = guardEnabledRef.current;
+      const sessionAllowed = allowAllSessionRef.current;
+      const critical = isCriticalOperation(code);
+
+      // Brave mode: always auto-execute, no exceptions
+      if (mode === "brave") {
+        return executeCode(code, timeout);
+      }
+
+      // Trust mode with "Allow all session" — skip approval for non-critical ops
+      // Guard forces approval on critical ops even with "Allow all session"
+      if (sessionAllowed && !(guard && critical)) {
+        return executeCode(code, timeout);
+      }
+
+      // Show approval overlay and wait for user decision
+      return new Promise<ExecuteCodeResult>((resolve) => {
+        setPendingApprovalRef.current({
+          code,
+          resolve: (approved: boolean) => {
+            if (approved) {
+              executeCode(code, timeout).then(resolve);
+            } else {
+              resolve({ success: false, error: "User rejected execution" });
+            }
+          },
+        });
+      });
+    },
+    [executeCode],
+  );
+
+  // All clients go through the approval gate.
+  // In brave mode: auto-execute (unless guard flags critical ops).
+  // In trust mode: show ApprovalOverlay before each execution.
+  const channelExecuteCode = gatedExecuteCode;
+
+  const { clients, clientId: myClientId, channelRef } = useFigmaExecuteChannel(channelExecuteCode, true, {
     type: clientTypeForChannel,
     label: clientLabel,
     fileKey: clientFileKey,
@@ -950,7 +1036,7 @@ export default function Home() {
       currentUser: figmaContext.currentUser,
     } : undefined,
     serverShortId: registryShortId,
-  }, eventLog);
+  }, eventLog, isFigmaPlugin ? orchDetectedCallback : undefined);
 
   // Register client with the server-side registry (needs clientId from channel hook)
   // Wait for iframe detection to settle so we send the correct type/label
@@ -989,6 +1075,53 @@ export default function Home() {
   // ── Collaborative Agents orchestration ──────────────────────────────
   // Orchestration runs on Temporal (backend workflows + SSE)
   const temporal = useTemporalOrchestration();
+
+  // ── Orchestration conversation (webapp-initiated) ──────────────────
+  const orchConv = useOrchestrationConversation({
+    workflowId: temporal.workflowId,
+    activeConversationId,
+    conversations,
+    createConversation,
+    switchConversation,
+  });
+
+  // ── Plugin orchestration (plugin-side, receives workflowId via broadcast) ──
+  const pluginOrch = usePluginOrchestration({
+    conversations,
+    createConversation,
+    switchConversation,
+    activeConversationId,
+  });
+
+  // Wire the plugin orchestration detection ref now that pluginOrch is available
+  orchDetectedRef.current = pluginOrch.handleOrchestrationDetected;
+
+  // ── Trust/Brave approval state ────────────────────────────────────
+  const [approvalMode, setApprovalMode] = useState<"trust" | "brave">("trust");
+  const [guardEnabled, setGuardEnabled] = useState(true);
+  const [pendingApproval, setPendingApproval] = useState<{
+    code: string;
+    agentLabel?: string;
+    resolve: (approved: boolean) => void;
+  } | null>(null);
+  const [allowAllSession, setAllowAllSession] = useState(false);
+
+  // Sync approval refs so the gated wrapper (declared earlier) sees latest state
+  approvalModeRef.current = approvalMode;
+  guardEnabledRef.current = guardEnabled;
+  allowAllSessionRef.current = allowAllSession;
+  setPendingApprovalRef.current = setPendingApproval;
+
+  // Fetch user settings on mount (approval mode + guard)
+  useEffect(() => {
+    fetch("/api/user/settings")
+      .then((res) => res.ok ? res.json() : null)
+      .then((data) => {
+        if (data?.approvalMode) setApprovalMode(data.approvalMode);
+        if (typeof data?.guardEnabled === "boolean") setGuardEnabled(data.guardEnabled);
+      })
+      .catch(() => {});
+  }, []);
 
   // Legacy orchestration values — kept as static defaults for any remaining
   // UI references during the transition. Will be removed in a future cleanup.
@@ -1291,7 +1424,12 @@ export default function Home() {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
+  const orchScrollContainerRef = useRef<HTMLDivElement>(null);
   const shouldAutoScroll = useRef(true);
+
+  // Whether we should show the orchestration panel (combined for webapp + plugin)
+  const showOrchPanel = (!isFigmaPlugin && orchConv.isInOrchestrationConversation)
+    || (isFigmaPlugin && pluginOrch.isInOrchestrationConversation);
 
   const figmaMcpUrlRef = useRef(figmaMcpUrl);
   figmaMcpUrlRef.current = figmaMcpUrl;
@@ -1838,10 +1976,15 @@ export default function Home() {
       loggedUserMsgIds.current.clear();
       prevMsgCount.current = 0;
       setMcpConnectionStatus("idle");
-      // Reset orchestration state — events/agents belong to the previous conversation
-      temporal.reset();
+      // Reset orchestration state ONLY if we're NOT switching to/from the orchestration conversation.
+      // Otherwise we'd kill the SSE stream the moment we auto-switch to the orchestration conv.
+      const isOrchConv = orchConv.orchestrationConversationId === activeConversationId;
+      const wasOrchConv = orchConv.orchestrationConversationId === prevConvIdForLog.current;
+      if (!isOrchConv && !wasOrchConv && !orchConv.hasActiveOrchestration) {
+        temporal.reset();
+      }
     }
-  }, [activeConversationId, eventLog, temporal]);
+  }, [activeConversationId, eventLog, temporal, orchConv.orchestrationConversationId, orchConv.hasActiveOrchestration]);
 
   // ── Helpers for MCP_STATUS parsing and tool output ──
 
@@ -2111,6 +2254,16 @@ export default function Home() {
     e.preventDefault();
     if (!input.trim() || isLoading) return;
     shouldAutoScroll.current = true;
+
+    // If in an orchestration conversation and orchestration is active,
+    // send as user input to the orchestrator instead of as a chat message
+    if (orchConv.isInOrchestrationConversation && temporal.isActive) {
+      temporal.sendUserInput(input.trim());
+      setInput("");
+      if (inputRef.current) inputRef.current.style.height = "auto";
+      return;
+    }
+
     sendMessage({ text: input });
     setInput("");
     if (inputRef.current) {
@@ -2529,17 +2682,66 @@ export default function Home() {
             </div>
           )}
           <MCPStatusBar status={mcpConnectionStatus} />
+
+          {/* Unified orchestration banner — adapts for chat vs orchestration view */}
+          {!isFigmaPlugin && orchConv.hasActiveOrchestration && (
+            <OrchestrationBanner
+              active={temporal.isActive || !!temporal.completedStatus}
+              isInOrchestrationConversation={orchConv.isInOrchestrationConversation}
+              onView={orchConv.switchToOrchestration}
+              onBack={orchConv.switchBackToChat}
+              timerRemainingMs={temporal.timerRemainingMs}
+              completedStatus={temporal.completedStatus}
+            />
+          )}
+          {isFigmaPlugin && pluginOrch.hasOrchestration && (
+            <OrchestrationBanner
+              active={pluginOrch.hasOrchestration}
+              isInOrchestrationConversation={pluginOrch.isInOrchestrationConversation}
+              onView={pluginOrch.switchToOrchestration}
+              onBack={() => {
+                // Plugin: go back to the previous conversation
+                const prev = conversations.find(c => !(c.metadata as Record<string, unknown>)?.workflowId && c.id !== pluginOrch.orchestrationConversationId);
+                if (prev) switchConversation(prev.id);
+              }}
+              timerRemainingMs={pluginOrch.stream.timerRemainingMs}
+              completedStatus={pluginOrch.stream.completedStatus}
+            />
+          )}
         </header>
 
-        <div ref={scrollContainerRef} onScroll={handleScroll} className={`relative flex-1 overflow-y-auto px-3 sm:px-4 pb-40 ${
-          agentRole !== "idle" && mcpConnectionStatus !== "idle"
-            ? "pt-[7rem]"
-            : agentRole !== "idle"
-            ? "pt-[5.5rem]"
-            : mcpConnectionStatus !== "idle"
-            ? "pt-[5rem]"
-            : "pt-16"
+
+        {/* Slide container — overflow hidden wrapper with two scrollable panels */}
+        {/* Banner visible flag for dynamic padding */}
+        <div className={`relative flex-1 overflow-hidden ${
+          (() => {
+            const hasBanner = (!isFigmaPlugin && orchConv.hasActiveOrchestration)
+              || (isFigmaPlugin && pluginOrch.hasOrchestration);
+            const base = agentRole !== "idle" && mcpConnectionStatus !== "idle"
+              ? "pt-[7rem]"
+              : agentRole !== "idle"
+              ? "pt-[5.5rem]"
+              : mcpConnectionStatus !== "idle"
+              ? "pt-[5rem]"
+              : "pt-16";
+            const withBanner = agentRole !== "idle" && mcpConnectionStatus !== "idle"
+              ? "pt-[9rem]"
+              : agentRole !== "idle"
+              ? "pt-[7.5rem]"
+              : mcpConnectionStatus !== "idle"
+              ? "pt-[7rem]"
+              : "pt-[5.5rem]";
+            return hasBanner ? withBanner : base;
+          })()
         }`}>
+          <div
+            className="flex h-full transition-transform duration-150 ease-in-out"
+            style={{ transform: showOrchPanel ? "translateX(-100%)" : "translateX(0)" }}
+          >
+            {/* ── Left panel: Normal chat conversation ── */}
+            <div className="min-w-full h-full flex flex-col">
+            <div ref={scrollContainerRef} onScroll={handleScroll} className="flex-1 overflow-y-auto px-3 sm:px-4 pb-4">
+              {/* Chat panel content starts here */}
           {messages.length === 0 && (
             <div className="flex flex-col items-center justify-center h-full text-center px-4">
               <div className="text-4xl mb-4">🛡️</div>
@@ -3073,14 +3275,6 @@ export default function Home() {
           );
           })}
 
-          {/* Temporal orchestration live event feed */}
-          {temporal.events.length > 0 && (
-            <OrchestrationEventLog
-              events={temporal.events}
-              agents={temporal.agents}
-            />
-          )}
-
           {isLoading && <ThinkingIndicator />}
 
           {/* Copy debug context button — always visible after all messages */}
@@ -3104,6 +3298,16 @@ export default function Home() {
               figmaContext={figmaContext}
               selectedNodeCount={selectedNode?.nodes?.length ?? 0}
               eventLog={eventLog.current}
+              temporalOrchestration={{
+                workflowId: temporal.workflowId,
+                isActive: temporal.isActive,
+                completedStatus: temporal.completedStatus,
+                agents: temporal.agents,
+                events: temporal.events,
+                connected: temporal.connected,
+                streamError: temporal.streamError,
+                timerRemainingMs: temporal.timerRemainingMs,
+              }}
             />
           )}
 
@@ -3120,184 +3324,327 @@ export default function Home() {
           )}
 
           <div ref={messagesEndRef} />
-        </div>
-
-        <div className="absolute bottom-0 left-0 right-0 z-20 px-3 sm:px-4 pt-6 pb-[calc(0.75rem+env(safe-area-inset-bottom))] pointer-events-none">
-          <div className="pointer-events-auto">
-          <form
-            onSubmit={onSubmit}
-            className="relative mx-auto max-w-3xl rounded-2xl border border-white/30 overflow-visible"
-            style={{ background: "rgba(10,10,10,0.25)", backdropFilter: "blur(6px) saturate(1.3)", WebkitBackdropFilter: "blur(6px) saturate(1.3)", boxShadow: "0 8px 40px rgba(0,0,0,0.6), 0 2px 8px rgba(0,0,0,0.4), 0 1px 0 rgba(255,255,255,0.05) inset" }}
-          >
-            <textarea
-              ref={inputRef}
-              value={input}
-              onChange={(e) => {
-                setInput(e.target.value);
-                e.target.style.height = "auto";
-                const maxH = window.innerHeight * 0.3;
-                e.target.style.height = Math.min(e.target.scrollHeight, maxH) + "px";
-              }}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && !e.shiftKey) {
-                  e.preventDefault();
-                  onSubmit(e);
-                }
-              }}
-              placeholder="Ask Guardian to check a component..."
-              className={`w-full bg-transparent px-4 pt-3 pb-12 text-sm text-white placeholder:text-white/45 focus:outline-none resize-none overflow-y-auto ${isLoading ? "opacity-50" : ""}`}
-              readOnly={isLoading}
-              rows={3}
-            />
-            {/* Bottom bar inside the form */}
-            <div className="absolute bottom-0 left-0 right-0 flex items-center justify-between gap-2 px-3 py-2">
-              {/* Left: target selectors */}
-              <div className="flex items-center gap-2">
-                <TargetSelector
-                  items={designTargets}
-                  label="Design"
-                  tooltip="Select which design tool receives commands"
-                  emptyDescription="All design integrations are disabled. Enable Figma MCP, Plugin, or Console in settings."
-                  selected={selectedDesignTarget}
-                  onSelect={setSelectedDesignTarget}
-                />
-                <TargetSelector
-                  items={codeTargets}
-                  label="Code"
-                  tooltip="Select which code tool to use"
-                  emptyDescription="All code integrations are disabled. Enable Code Editor or GitHub MCP in settings."
-                  selected={selectedCodeTarget}
-                  onSelect={setSelectedCodeTarget}
-                />
-              </div>
-              {/* Right: model picker + send */}
-              <div className="flex items-center gap-2">
-              {byokKeys.length === 0 ? (
-                /* Free tier */
-                <div className="flex items-center gap-2">
-                  <span className="text-xs text-white/55">
-                    Free tier · Grok
-                  </span>
-                  <Link
-                    href="/account"
-                    className="text-xs text-violet-400 hover:text-violet-300 transition-colors underline underline-offset-2"
-                  >
-                    Add API key
-                  </Link>
-                </div>
-              ) : (
-                /* BYOK — model picker */
-                <div className="relative">
-                  {(() => {
-                    const hasGateway = byokKeys.some((k) => k.provider === "gateway");
-                    const directProviders = new Set(byokKeys.filter((k) => k.provider !== "gateway").map((k) => k.provider));
-                    const visibleModels = hasGateway
-                      ? gatewayModels
-                      : gatewayModels.filter((m) => directProviders.has(m.owned_by));
-                    const getModelValue = (m: GatewayModel) =>
-                      hasGateway ? m.id : `${m.owned_by}/${m.id.split("/").pop()}`;
-
-                    const selectedGw = visibleModels.find((m) => getModelValue(m) === selectedModel);
-                    const selectedLabel = selectedGw
-                      ? `${selectedGw.name}${selectedGw.tags?.includes("reasoning") ? " ✦" : ""}`
-                      : selectedModel;
-
-                    const grouped = visibleModels.reduce<Record<string, GatewayModel[]>>((acc, m) => {
-                      (acc[m.owned_by] ??= []).push(m);
-                      return acc;
-                    }, {});
-
-                    const query = modelSearch.toLowerCase();
-                    const filteredGrouped = Object.entries(grouped).reduce<Record<string, GatewayModel[]>>((acc, [provider, models]) => {
-                      const filtered = models.filter((m) =>
-                        m.name.toLowerCase().includes(query) || provider.toLowerCase().includes(query)
-                      );
-                      if (filtered.length > 0) acc[provider] = filtered;
-                      return acc;
-                    }, {});
-
-                    return (
-                      <>
-                        <button
-                          ref={modelBtnRef}
-                          type="button"
-                          onClick={() => { setModelDropdownOpen(!modelDropdownOpen); setModelSearch(""); }}
-                          className="flex items-center gap-1.5 px-2 py-1 rounded-lg text-xs text-white/50 hover:text-white/80 transition-colors cursor-pointer max-w-[200px]"
-                        >
-                          <span className="truncate">{selectedLabel}</span>
-                          <svg
-                            width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                            strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
-                            className={`shrink-0 transition-transform ${modelDropdownOpen ? "rotate-180" : ""}`}
-                          >
-                            <path d="M6 9l6 6 6-6" />
-                          </svg>
-                        </button>
-
-                        <GlassDropdown open={modelDropdownOpen} onClose={handleModelDropdownClose} anchorRef={modelBtnRef} side="top" align="right" width={256}>
-                            <div className="p-2 border-b border-white/[0.06]">
-                              <input
-                                type="text"
-                                placeholder="Search models..."
-                                value={modelSearch}
-                                onChange={(e) => setModelSearch(e.target.value)}
-                                autoFocus
-                                className="w-full px-2.5 py-1.5 rounded-md bg-white/5 border border-white/10 text-xs outline-none focus:border-white/25 transition-colors placeholder:text-white/25"
-                              />
-                            </div>
-                            <div className="max-h-60 overflow-y-auto py-1">
-                              {Object.entries(filteredGrouped).map(([provider, models]) => (
-                                <div key={provider}>
-                                  <div className="px-3 py-1.5 text-[10px] font-semibold text-white/30 uppercase tracking-wider">
-                                    {provider.charAt(0).toUpperCase() + provider.slice(1)}
-                                  </div>
-                                  {models.map((m) => {
-                                    const value = getModelValue(m);
-                                    const isReasoning = m.tags?.includes("reasoning");
-                                    return (
-                                      <button
-                                        key={m.id}
-                                        type="button"
-                                        onClick={() => {
-                                          setSelectedModel(value);
-                                          setModelDropdownOpen(false);
-                                          setModelSearch("");
-                                        }}
-                                        className={`w-full text-left px-3 py-1.5 text-xs transition-colors cursor-pointer ${
-                                          selectedModel === value
-                                            ? "bg-violet-600/30 text-white"
-                                            : "text-white/60 hover:bg-white/5 hover:text-white/90"
-                                        }`}
-                                      >
-                                        {m.name}{isReasoning ? <span title="Supports reasoning">{" "}✦</span> : ""}
-                                      </button>
-                                    );
-                                  })}
-                                </div>
-                              ))}
-                              {Object.keys(filteredGrouped).length === 0 && (
-                                <p className="px-3 py-3 text-xs text-white/30 text-center">No model found</p>
-                              )}
-                            </div>
-                        </GlassDropdown>
-                      </>
-                    );
-                  })()}
+            </div>
+            {/* ── Chat input form (inside the chat panel) ── */}
+            <div className="shrink-0 px-3 sm:px-4 pt-2 pb-[calc(0.75rem+env(safe-area-inset-bottom))]">
+              <div className="max-w-3xl mx-auto">
+              {/* Approval overlay — sticky above the input form */}
+              {pendingApproval && (
+                <div className="mb-2">
+                  <ApprovalOverlay
+                    code={pendingApproval.code}
+                    agentLabel={pendingApproval.agentLabel}
+                    criticalOps={detectCriticalOperations(pendingApproval.code)}
+                    onAllow={() => {
+                      pendingApproval.resolve(true);
+                      setPendingApproval(null);
+                    }}
+                    onAllowAll={() => {
+                      setAllowAllSession(true);
+                      pendingApproval.resolve(true);
+                      setPendingApproval(null);
+                    }}
+                    onReject={() => {
+                      pendingApproval.resolve(false);
+                      setPendingApproval(null);
+                    }}
+                  />
                 </div>
               )}
-              <button
-                type="submit"
-                disabled={isLoading || !input.trim()}
-                className="p-1.5 rounded-lg bg-white text-black hover:bg-white/90 disabled:bg-white/10 disabled:text-white/20 disabled:cursor-not-allowed transition-colors shrink-0 cursor-pointer"
-              >
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M12 19V5" />
-                  <path d="M5 12l7-7 7 7" />
-                </svg>
-              </button>
               </div>
+              <form
+                onSubmit={onSubmit}
+                className="relative mx-auto max-w-3xl rounded-2xl border border-white/30 overflow-visible"
+                style={{ background: "rgba(10,10,10,0.25)", backdropFilter: "blur(6px) saturate(1.3)", WebkitBackdropFilter: "blur(6px) saturate(1.3)", boxShadow: "0 8px 40px rgba(0,0,0,0.6), 0 2px 8px rgba(0,0,0,0.4), 0 1px 0 rgba(255,255,255,0.05) inset" }}
+              >
+                <textarea
+                  ref={inputRef}
+                  value={input}
+                  onChange={(e) => {
+                    setInput(e.target.value);
+                    e.target.style.height = "auto";
+                    const maxH = window.innerHeight * 0.3;
+                    e.target.style.height = Math.min(e.target.scrollHeight, maxH) + "px";
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && !e.shiftKey) {
+                      e.preventDefault();
+                      onSubmit(e);
+                    }
+                  }}
+                  placeholder="Ask Guardian to check a component..."
+                  className={`w-full bg-transparent px-4 pt-3 pb-12 text-sm text-white placeholder:text-white/45 focus:outline-none resize-none overflow-y-auto ${isLoading ? "opacity-50" : ""}`}
+                  readOnly={isLoading}
+                  rows={3}
+                />
+                {/* Bottom bar inside the form */}
+                <div className="absolute bottom-0 left-0 right-0 flex items-center justify-between gap-2 px-3 py-2">
+                  {/* Left: target selectors */}
+                  <div className="flex items-center gap-2">
+                    <TargetSelector
+                      items={designTargets}
+                      label="Design"
+                      tooltip="Select which design tool receives commands"
+                      emptyDescription="All design integrations are disabled. Enable Figma MCP, Plugin, or Console in settings."
+                      selected={selectedDesignTarget}
+                      onSelect={setSelectedDesignTarget}
+                    />
+                    <TargetSelector
+                      items={codeTargets}
+                      label="Code"
+                      tooltip="Select which code tool to use"
+                      emptyDescription="All code integrations are disabled. Enable Code Editor or GitHub MCP in settings."
+                      selected={selectedCodeTarget}
+                      onSelect={setSelectedCodeTarget}
+                    />
+                  </div>
+                  {/* Right: model picker + send */}
+                  <div className="flex items-center gap-2">
+                  {byokKeys.length === 0 ? (
+                    /* Free tier */
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs text-white/55">
+                        Free tier · Grok
+                      </span>
+                      <Link
+                        href="/account"
+                        className="text-xs text-violet-400 hover:text-violet-300 transition-colors underline underline-offset-2"
+                      >
+                        Add API key
+                      </Link>
+                    </div>
+                  ) : (
+                    /* BYOK — model picker */
+                    <div className="relative">
+                      {(() => {
+                        const hasGateway = byokKeys.some((k) => k.provider === "gateway");
+                        const directProviders = new Set(byokKeys.filter((k) => k.provider !== "gateway").map((k) => k.provider));
+                        const visibleModels = hasGateway
+                          ? gatewayModels
+                          : gatewayModels.filter((m) => directProviders.has(m.owned_by));
+                        const getModelValue = (m: GatewayModel) =>
+                          hasGateway ? m.id : `${m.owned_by}/${m.id.split("/").pop()}`;
+
+                        const selectedGw = visibleModels.find((m) => getModelValue(m) === selectedModel);
+                        const selectedLabel = selectedGw
+                          ? `${selectedGw.name}${selectedGw.tags?.includes("reasoning") ? " ✦" : ""}`
+                          : selectedModel;
+
+                        const grouped = visibleModels.reduce<Record<string, GatewayModel[]>>((acc, m) => {
+                          (acc[m.owned_by] ??= []).push(m);
+                          return acc;
+                        }, {});
+
+                        const query = modelSearch.toLowerCase();
+                        const filteredGrouped = Object.entries(grouped).reduce<Record<string, GatewayModel[]>>((acc, [provider, models]) => {
+                          const filtered = models.filter((m) =>
+                            m.name.toLowerCase().includes(query) || provider.toLowerCase().includes(query)
+                          );
+                          if (filtered.length > 0) acc[provider] = filtered;
+                          return acc;
+                        }, {});
+
+                        return (
+                          <>
+                            <button
+                              ref={modelBtnRef}
+                              type="button"
+                              onClick={() => { setModelDropdownOpen(!modelDropdownOpen); setModelSearch(""); }}
+                              className="flex items-center gap-1.5 px-2 py-1 rounded-lg text-xs text-white/50 hover:text-white/80 transition-colors cursor-pointer max-w-[200px]"
+                            >
+                              <span className="truncate">{selectedLabel}</span>
+                              <svg
+                                width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
+                                className={`shrink-0 transition-transform ${modelDropdownOpen ? "rotate-180" : ""}`}
+                              >
+                                <path d="M6 9l6 6 6-6" />
+                              </svg>
+                            </button>
+
+                            <GlassDropdown open={modelDropdownOpen} onClose={handleModelDropdownClose} anchorRef={modelBtnRef} side="top" align="right" width={256}>
+                                <div className="p-2 border-b border-white/[0.06]">
+                                  <input
+                                    type="text"
+                                    placeholder="Search models..."
+                                    value={modelSearch}
+                                    onChange={(e) => setModelSearch(e.target.value)}
+                                    autoFocus
+                                    className="w-full px-2.5 py-1.5 rounded-md bg-white/5 border border-white/10 text-xs outline-none focus:border-white/25 transition-colors placeholder:text-white/25"
+                                  />
+                                </div>
+                                <div className="max-h-60 overflow-y-auto py-1">
+                                  {Object.entries(filteredGrouped).map(([provider, models]) => (
+                                    <div key={provider}>
+                                      <div className="px-3 py-1.5 text-[10px] font-semibold text-white/30 uppercase tracking-wider">
+                                        {provider.charAt(0).toUpperCase() + provider.slice(1)}
+                                      </div>
+                                      {models.map((m) => {
+                                        const value = getModelValue(m);
+                                        const isReasoning = m.tags?.includes("reasoning");
+                                        return (
+                                          <button
+                                            key={m.id}
+                                            type="button"
+                                            onClick={() => {
+                                              setSelectedModel(value);
+                                              setModelDropdownOpen(false);
+                                              setModelSearch("");
+                                            }}
+                                            className={`w-full text-left px-3 py-1.5 text-xs transition-colors cursor-pointer ${
+                                              selectedModel === value
+                                                ? "bg-violet-600/30 text-white"
+                                                : "text-white/60 hover:bg-white/5 hover:text-white/90"
+                                            }`}
+                                          >
+                                            {m.name}{isReasoning ? <span title="Supports reasoning">{" "}✦</span> : ""}
+                                          </button>
+                                        );
+                                      })}
+                                    </div>
+                                  ))}
+                                  {Object.keys(filteredGrouped).length === 0 && (
+                                    <p className="px-3 py-3 text-xs text-white/30 text-center">No model found</p>
+                                  )}
+                                </div>
+                            </GlassDropdown>
+                          </>
+                        );
+                      })()}
+                    </div>
+                  )}
+                  <button
+                    type="submit"
+                    disabled={isLoading || !input.trim()}
+                    className="p-1.5 rounded-lg bg-white text-black hover:bg-white/90 disabled:bg-white/10 disabled:text-white/20 disabled:cursor-not-allowed transition-colors shrink-0 cursor-pointer"
+                  >
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M12 19V5" />
+                      <path d="M5 12l7-7 7 7" />
+                    </svg>
+                  </button>
+                  </div>
+                </div>
+              </form>
             </div>
-          </form>
+            </div>{/* end chat panel */}
+
+            {/* ── Right panel: Orchestration conversation ── */}
+            <div className="min-w-full h-full flex flex-col">
+            <div ref={orchScrollContainerRef} className="flex-1 overflow-y-auto px-3 sm:px-4 pb-4">
+              {/* Orchestration event log — webapp side */}
+              {!isFigmaPlugin && temporal.events.length > 0 && (
+                <OrchestrationEventLog
+                  events={temporal.events}
+                  agents={temporal.agents}
+                />
+              )}
+              {/* Orchestration event log — plugin side */}
+              {isFigmaPlugin && pluginOrch.stream.events.length > 0 && (
+                <OrchestrationEventLog
+                  events={pluginOrch.stream.events}
+                  agents={pluginOrch.stream.agents}
+                />
+              )}
+              {/* Welcome placeholder when no events yet */}
+              {((!isFigmaPlugin && temporal.events.length === 0) || (isFigmaPlugin && pluginOrch.stream.events.length === 0)) && (
+                <div className="flex flex-col items-center justify-center h-full text-center px-4">
+                  <div className="text-4xl mb-4">🛡️</div>
+                  <h2 className="text-lg font-semibold mb-2">Orchestration</h2>
+                  <p className="text-sm text-white/70 max-w-md">
+                    Waiting for orchestration events...
+                  </p>
+                </div>
+              )}
+              {/* Debug context button in orchestration view */}
+              {((!isFigmaPlugin && temporal.events.length > 0) || (isFigmaPlugin && pluginOrch.stream.events.length > 0)) && (
+                <CopyDebugButton
+                  messages={messages}
+                  clients={clients}
+                  myClientId={myClientId}
+                  myShortId={myDisplayShortId}
+                  agentRole={agentRole}
+                  orchestration={orchestration}
+                  collaborators={collaborators}
+                  activeConversationId={activeConversationId}
+                  conversations={conversations}
+                  model={selectedModel}
+                  chatStatus={status}
+                  chatError={error}
+                  enabledMcps={enabledMcps}
+                  mcpReachable={mcpReachable}
+                  isFigmaPlugin={isFigmaPlugin}
+                  figmaContext={figmaContext}
+                  selectedNodeCount={selectedNode?.nodes?.length ?? 0}
+                  eventLog={eventLog.current}
+                />
+              )}
+            </div>
+            {/* ── Orchestration input form (simpler, inside the orch panel) ── */}
+            <div className="shrink-0 px-3 sm:px-4 pt-2 pb-[calc(0.75rem+env(safe-area-inset-bottom))]">
+              {/* Approval overlay — also in orchestration panel for plugins */}
+              {pendingApproval && (
+                <div className="mb-2 max-w-3xl mx-auto">
+                  <ApprovalOverlay
+                    code={pendingApproval.code}
+                    agentLabel={pendingApproval.agentLabel}
+                    criticalOps={detectCriticalOperations(pendingApproval.code)}
+                    onAllow={() => {
+                      pendingApproval.resolve(true);
+                      setPendingApproval(null);
+                    }}
+                    onAllowAll={() => {
+                      setAllowAllSession(true);
+                      pendingApproval.resolve(true);
+                      setPendingApproval(null);
+                    }}
+                    onReject={() => {
+                      pendingApproval.resolve(false);
+                      setPendingApproval(null);
+                    }}
+                  />
+                </div>
+              )}
+              <form
+                onSubmit={onSubmit}
+                className="relative mx-auto max-w-3xl rounded-2xl border border-white/30 overflow-visible"
+                style={{ background: "rgba(10,10,10,0.25)", backdropFilter: "blur(6px) saturate(1.3)", WebkitBackdropFilter: "blur(6px) saturate(1.3)", boxShadow: "0 8px 40px rgba(0,0,0,0.6), 0 2px 8px rgba(0,0,0,0.4), 0 1px 0 rgba(255,255,255,0.05) inset" }}
+              >
+                <textarea
+                  value={input}
+                  onChange={(e) => {
+                    setInput(e.target.value);
+                    e.target.style.height = "auto";
+                    const maxH = window.innerHeight * 0.3;
+                    e.target.style.height = Math.min(e.target.scrollHeight, maxH) + "px";
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && !e.shiftKey) {
+                      e.preventDefault();
+                      onSubmit(e);
+                    }
+                  }}
+                  placeholder="Send message to orchestrator..."
+                  className={`w-full bg-transparent px-4 pt-3 pb-10 text-sm text-white placeholder:text-white/45 focus:outline-none resize-none overflow-y-auto ${isLoading ? "opacity-50" : ""}`}
+                  readOnly={isLoading}
+                  rows={2}
+                />
+                <div className="absolute bottom-0 right-0 flex items-center gap-2 px-3 py-2">
+                  <button
+                    type="submit"
+                    disabled={isLoading || !input.trim()}
+                    className="p-1.5 rounded-lg bg-white text-black hover:bg-white/90 disabled:bg-white/10 disabled:text-white/20 disabled:cursor-not-allowed transition-colors shrink-0 cursor-pointer"
+                  >
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M12 19V5" />
+                      <path d="M5 12l7-7 7 7" />
+                    </svg>
+                  </button>
+                </div>
+              </form>
+            </div>
+            </div>{/* end orchestration panel */}
+
           </div>
         </div>
       </div>

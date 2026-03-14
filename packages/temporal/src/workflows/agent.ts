@@ -172,6 +172,7 @@ export async function agentWorkflow(input: AgentWorkflowInput): Promise<void> {
               pluginClientId: rEffect.pluginClientId || input.agent.pluginClientId || "",
               userId: input.userId,
               code: rEffect.code,
+              workflowId: state.orchestratorWorkflowId,
             });
 
             const toolCallId = figmaToolCallIds[figmaToolCallIdx++];
@@ -234,6 +235,7 @@ async function executeLLMLoop(
           pluginClientId: effect.pluginClientId || state.agent.pluginClientId || "",
           userId,
           code: effect.code,
+          workflowId: state.orchestratorWorkflowId,
         });
 
         const toolCallId = loopFigmaIds[loopFigmaIdx++];
