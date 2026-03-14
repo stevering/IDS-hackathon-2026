@@ -1838,8 +1838,10 @@ export default function Home() {
       loggedUserMsgIds.current.clear();
       prevMsgCount.current = 0;
       setMcpConnectionStatus("idle");
+      // Reset orchestration state — events/agents belong to the previous conversation
+      temporal.reset();
     }
-  }, [activeConversationId, eventLog]);
+  }, [activeConversationId, eventLog, temporal]);
 
   // ── Helpers for MCP_STATUS parsing and tool output ──
 
