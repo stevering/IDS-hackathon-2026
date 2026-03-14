@@ -2,7 +2,6 @@
 
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useRouter } from "next/navigation";
-import Link from "next/link";
 import { useGuardianPresence } from "@/app/hooks/useGuardianPresence";
 import { ConnectedClients } from "@/components/ConnectedClients";
 import { GlassDropdown } from "@/components/GlassDropdown";
@@ -235,34 +234,11 @@ export default function AccountPage() {
   const fmtCompact = (n: number) => n >= 1000 ? `${Math.round(n / 1000)}k` : String(n);
 
   return (
-    <div className="relative min-h-screen">
-      <div className="absolute inset-0 overflow-hidden pointer-events-none z-0">
-        <div className="wave-bg-layer wave-bg-1" />
-        <div className="wave-bg-layer wave-bg-2" />
-        <div className="wave-bg-layer wave-bg-3" />
-        <div className="wave-bg-noise" />
-        <div className="aurora aurora-1" />
-        <div className="aurora aurora-2" />
-        <div className="aurora aurora-3" />
-        <div className="aurora aurora-4" />
-        <div className="aurora aurora-5" />
-      </div>
-      <div className="relative z-10 px-4 py-10 max-w-2xl mx-auto">
-      {/* Header */}
-      <div className="flex items-center justify-between mb-8">
-        <div>
-          <h1 className="text-xl font-semibold">Account settings</h1>
-          <p className="text-sm text-white/40 mt-0.5">Manage your API keys and usage</p>
-        </div>
-        <Link
-          href="/"
-          className="text-sm text-white/40 hover:text-white/70 transition-colors flex items-center gap-1.5"
-        >
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M19 12H5M5 12l7-7M5 12l7 7" />
-          </svg>
-          Back to chat
-        </Link>
+      <div className="px-4 py-8 max-w-2xl mx-auto">
+      {/* Page title */}
+      <div className="mb-8">
+        <h1 className="text-xl font-semibold">Account settings</h1>
+        <p className="text-sm text-white/40 mt-0.5">Manage your API keys and usage</p>
       </div>
 
       {/* Usage */}
@@ -731,6 +707,5 @@ export default function AccountPage() {
       {/* Connected Clients */}
       <ConnectedClients clients={presenceClients} loading={presenceLoading} />
       </div>
-    </div>
   );
 }

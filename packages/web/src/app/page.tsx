@@ -27,6 +27,7 @@ import { OrchestrationBanner } from "@/components/OrchestrationBanner";
 import { ApprovalOverlay } from "@/components/ApprovalOverlay";
 import { useOrchestrationConversation } from "./hooks/useOrchestrationConversation";
 import { usePluginOrchestration } from "./hooks/usePluginOrchestration";
+import { useDebugTrace, type UnifiedDebugReport } from "./hooks/useDebugTrace";
 import { detectCriticalOperations, isCriticalOperation } from "@/lib/guard";
 import { MCPStatusBar } from "@/components/MCPStatusBar";
 
@@ -665,8 +666,116 @@ function execCommandCopy(text: string): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------
-// CopyDebugButton — copies full debug context to clipboard
+// CopyDebugButton — pushes trace to Supabase, fetches unified report, copies
 // ---------------------------------------------------------------------------
+
+/** Build a local timeline from events (used for both local-only and per-client traces) */
+function buildTimeline(
+  eventLog: PluginEvent[],
+  clients: { clientId: string; shortId: string; label: string; type: string; fileKey?: string; agentRole?: AgentRole; figmaContext?: { fileName?: string } }[],
+  myShortId: string,
+  myClientId: string,
+  model: string,
+  isFigmaPlugin: boolean,
+  figmaContext: FigmaPluginContext | null,
+) {
+  const resolveId = (id: string | undefined) => {
+    if (!id) return undefined;
+    const c = clients.find(cl => cl.clientId === id);
+    return c?.shortId ?? id;
+  };
+  const pluginParentLabel = isFigmaPlugin
+    ? (clients.find(c => c.type === "figma-plugin" && c.fileKey === figmaContext?.fileKey)?.shortId ?? "figma-plugin")
+    : "self (no plugin)";
+
+  return eventLog
+    .slice()
+    .sort((a, b) => a.ts - b.ts)
+    .map(e => {
+      let from: string | undefined = e.from ? resolveId(e.from) : undefined;
+      let to: string | undefined = e.to ? resolveId(e.to) : undefined;
+      let fromId: string | undefined = e.from ?? undefined;
+      let toId: string | undefined = e.to ?? undefined;
+
+      if (!from && !to) {
+        const aiLabel = model;
+        if (e.channel === "chat") {
+          switch (e.type) {
+            case "chat:user":
+              from = myShortId; fromId = myClientId; to = aiLabel; break;
+            case "chat:mcp-status":
+              from = "server"; to = myShortId; toId = myClientId; break;
+            case "chat:reasoning":
+              from = aiLabel; to = myShortId; toId = myClientId; break;
+            case "chat:tool:call":
+              from = aiLabel; to = e.summary; break;
+            case "chat:tool:result":
+            case "chat:tool:error":
+              from = e.summary; to = aiLabel; break;
+            case "chat:assistant:text":
+              from = aiLabel; to = myShortId; toId = myClientId; break;
+            default:
+              if (e.type.includes("user")) { from = myShortId; fromId = myClientId; to = aiLabel; }
+              else { from = aiLabel; to = myShortId; toId = myClientId; }
+          }
+        } else if (e.channel === "postMessage") {
+          if (e.dir === "out") { from = myShortId; fromId = myClientId; to = pluginParentLabel; }
+          else { from = pluginParentLabel; to = myShortId; toId = myClientId; }
+        } else if (e.channel === "supabase") {
+          if (e.dir === "out") { from = myShortId; fromId = myClientId; to = "broadcast"; }
+          else { from = "broadcast"; to = myShortId; toId = myClientId; }
+        }
+      }
+
+      const showFromId = fromId && fromId !== from && fromId !== "mcp-server" && fromId !== "server";
+      const showToId = toId && toId !== to && toId !== "mcp-server" && toId !== "server";
+
+      const resolvedParts = e.parts?.map((part: unknown) => {
+        if (!part || typeof part !== "object") return part;
+        const p = part as Record<string, unknown>;
+        if (p.output && typeof p.output === "object") {
+          const out = p.output as Record<string, unknown>;
+          if (Array.isArray(out.result)) {
+            return {
+              ...p,
+              output: {
+                ...out,
+                result: (out.result as Record<string, unknown>[]).map(r => ({
+                  ...r,
+                  ...(typeof r.clientId === "string" ? { client: resolveId(r.clientId as string) } : {}),
+                })),
+              },
+            };
+          }
+        }
+        return part;
+      });
+
+      const resolvedMeta = e.meta
+        ? {
+            ...e.meta,
+            ...(typeof e.meta.respondedBy === "string"
+              ? { respondedById: e.meta.respondedBy, respondedBy: resolveId(e.meta.respondedBy as string) }
+              : {}),
+          }
+        : undefined;
+
+      return {
+        ts: new Date(e.ts).toISOString(),
+        dir: e.dir,
+        from,
+        ...(showFromId ? { fromId } : {}),
+        to,
+        ...(showToId ? { toId } : {}),
+        channel: e.channel,
+        type: e.type,
+        ...(e.summary ? { summary: e.summary } : {}),
+        ...(resolvedParts ? { parts: resolvedParts } : {}),
+        ...(resolvedMeta ? { meta: resolvedMeta } : {}),
+      };
+    });
+}
+
 function CopyDebugButton({
   messages,
   clients,
@@ -687,6 +796,8 @@ function CopyDebugButton({
   selectedNodeCount,
   eventLog,
   temporalOrchestration,
+  pushTrace,
+  fetchUnifiedDebug,
 }: {
   messages: { id: string; role: string; parts: { type: string; text?: string }[] }[];
   clients: { clientId: string; shortId: string; label: string; type: string; fileKey?: string; agentRole?: AgentRole; figmaContext?: { fileName?: string } }[];
@@ -716,167 +827,156 @@ function CopyDebugButton({
     streamError: string | null;
     timerRemainingMs: number | null;
   };
+  pushTrace: (
+    events: PluginEvent[],
+    clientState: Record<string, unknown>,
+    meta: { sourceClientId: string; sourceShortId?: string; clientType?: string }
+  ) => Promise<boolean>;
+  fetchUnifiedDebug: () => Promise<UnifiedDebugReport | null>;
 }) {
   const [copied, setCopied] = useState(false);
+  const [loading, setLoading] = useState(false);
 
-  const handleCopy = () => {
-    const debugData = {
-      timestamp: new Date().toISOString(),
-      model,
-      chatStatus,
-      ...(chatError ? { chatError: chatError.message } : {}),
-      isFigmaPlugin,
-      ...(figmaContext ? {
-        figmaContext: {
-          fileKey: figmaContext.fileKey,
-          fileName: figmaContext.fileName,
-          currentPage: figmaContext.currentPage,
-          currentUser: figmaContext.currentUser,
-        },
-      } : {}),
-      selectedNodeCount,
-      enabledMcps,
-      mcpReachable,
-      ...(temporalOrchestration?.workflowId ? {
-        temporalOrchestration: {
-          workflowId: temporalOrchestration.workflowId,
-          isActive: temporalOrchestration.isActive,
-          completedStatus: temporalOrchestration.completedStatus,
-          connected: temporalOrchestration.connected,
-          streamError: temporalOrchestration.streamError,
-          timerRemainingMs: temporalOrchestration.timerRemainingMs,
-          agents: temporalOrchestration.agents,
-          eventCount: temporalOrchestration.events.length,
-          events: temporalOrchestration.events,
-        },
-      } : {}),
-      thisClient: { clientId: myClientId, shortId: myShortId, agentRole },
-      orchestration: orchestration
-        ? { id: orchestration.id, status: orchestration.status, orchestratorClientId: orchestration.orchestratorClientId, conversationId: orchestration.conversationId }
-        : null,
-      collaborators: collaborators.map(c => ({ clientId: c.clientId, shortId: c.shortId, label: c.label, status: c.status, task: c.task, conversationId: c.conversationId })),
-      connectedClients: clients.map(c => ({ clientId: c.clientId, shortId: c.shortId, label: c.label, type: c.type, agentRole: c.agentRole, fileName: c.figmaContext?.fileName })),
-      activeConversationId,
-      conversations: conversations.map(c => ({ id: c.id, title: c.title, orchestrationId: c.orchestration_id })),
-      // Unified chronological timeline — chat messages (with tool call details inline),
-      // postMessage events, and Supabase realtime events, all sorted by timestamp.
-      timeline: (() => {
-        // Resolve a raw clientId to its shortId (from presence), or keep as-is
-        const resolveId = (id: string | undefined) => {
-          if (!id) return undefined;
-          const c = clients.find(cl => cl.clientId === id);
-          return c?.shortId ?? id;
-        };
-        // Label for the Figma plugin parent when using postMessage
-        const pluginParentLabel = isFigmaPlugin
-          ? (clients.find(c => c.type === "figma-plugin" && c.fileKey === figmaContext?.fileKey)?.shortId ?? "figma-plugin")
-          : "self (no plugin)";
+  const handleCopy = async () => {
+    setLoading(true);
+    try {
+      // Build client state snapshot
+      const clientState: Record<string, unknown> = {
+        model,
+        agentRole,
+        enabledMcps,
+        mcpReachable,
+        isFigmaPlugin,
+        selectedNodeCount,
+        ...(figmaContext ? {
+          figmaContext: {
+            fileKey: figmaContext.fileKey,
+            fileName: figmaContext.fileName,
+            currentPage: figmaContext.currentPage,
+          },
+        } : {}),
+      };
 
-        return eventLog
-          .slice()
-          .sort((a, b) => a.ts - b.ts)
-          .map(e => {
-            // Resolve from/to: keep raw clientId as fromId/toId, resolve to shortId for from/to
-            let from: string | undefined = e.from ? resolveId(e.from) : undefined;
-            let to: string | undefined = e.to ? resolveId(e.to) : undefined;
-            let fromId: string | undefined = e.from ?? undefined;
-            let toId: string | undefined = e.to ?? undefined;
+      // Step 1: push this client's trace (upserts — updates if already pushed)
+      await pushTrace(eventLog, clientState, {
+        sourceClientId: myClientId,
+        sourceShortId: myShortId,
+        clientType: isFigmaPlugin ? "figma-plugin" : "webapp",
+      });
 
-            // Compute from/to for events that don't have them set
-            if (!from && !to) {
-              const aiLabel = model;
-              if (e.channel === "chat") {
-                switch (e.type) {
-                  case "chat:user":
-                    from = myShortId; fromId = myClientId; to = aiLabel; break;
-                  case "chat:mcp-status":
-                    from = "server"; to = myShortId; toId = myClientId; break;
-                  case "chat:reasoning":
-                    from = aiLabel; to = myShortId; toId = myClientId; break;
-                  case "chat:tool:call":
-                    from = aiLabel; to = e.summary; break;
-                  case "chat:tool:result":
-                  case "chat:tool:error":
-                    from = e.summary; to = aiLabel; break;
-                  case "chat:assistant:text":
-                    from = aiLabel; to = myShortId; toId = myClientId; break;
-                  default:
-                    if (e.type.includes("user")) { from = myShortId; fromId = myClientId; to = aiLabel; }
-                    else { from = aiLabel; to = myShortId; toId = myClientId; }
-                }
-              } else if (e.channel === "postMessage") {
-                if (e.dir === "out") { from = myShortId; fromId = myClientId; to = pluginParentLabel; }
-                else { from = pluginParentLabel; to = myShortId; toId = myClientId; }
-              } else if (e.channel === "supabase") {
-                // Orchestration / unknown supabase events
-                if (e.dir === "out") { from = myShortId; fromId = myClientId; to = "broadcast"; }
-                else { from = "broadcast"; to = myShortId; toId = myClientId; }
-              }
-            }
+      // Step 2: fetch unified traces from all clients
+      const unified = await fetchUnifiedDebug();
 
-            // Only include fromId/toId when they differ from the resolved label
-            // (i.e. when they are actual clientIds, not semantic labels like "server" or model name)
-            const showFromId = fromId && fromId !== from && fromId !== "mcp-server" && fromId !== "server";
-            const showToId = toId && toId !== to && toId !== "mcp-server" && toId !== "server";
+      // Step 3: build debug JSON
+      const hasMultipleClients = unified && unified.traces.length > 1;
+      const isOrchestration = !!(unified?.orchestrationId || unified?.workflowId || temporalOrchestration?.workflowId);
+      const conversationType = isOrchestration ? "orchestration" : "classic";
 
-            // Resolve clientIds inside parts (e.g. output.result[].clientId → client shortId)
-            const resolvedParts = e.parts?.map((part: unknown) => {
-              if (!part || typeof part !== "object") return part;
-              const p = part as Record<string, unknown>;
-              if (p.output && typeof p.output === "object") {
-                const out = p.output as Record<string, unknown>;
-                if (Array.isArray(out.result)) {
-                  return {
-                    ...p,
-                    output: {
-                      ...out,
-                      result: (out.result as Record<string, unknown>[]).map(r => ({
-                        ...r,
-                        ...(typeof r.clientId === "string" ? { client: resolveId(r.clientId as string) } : {}),
-                      })),
-                    },
-                  };
-                }
-              }
-              return part;
-            });
-
-            // Resolve clientIds inside meta (respondedBy → shortId, keep raw as respondedById)
-            const resolvedMeta = e.meta
-              ? {
-                  ...e.meta,
-                  ...(typeof e.meta.respondedBy === "string"
-                    ? { respondedById: e.meta.respondedBy, respondedBy: resolveId(e.meta.respondedBy as string) }
-                    : {}),
-                }
-              : undefined;
-
-            return {
+      // Unified timeline: merge all client traces sorted by ts
+      const unifiedTimeline = unified
+        ? unified.traces.flatMap(t =>
+            (t.events as PluginEvent[]).map(e => ({
               ts: new Date(e.ts).toISOString(),
+              sourceShortId: t.sourceShortId,
+              sourceClientId: t.sourceClientId,
               dir: e.dir,
-              from,
-              ...(showFromId ? { fromId } : {}),
-              to,
-              ...(showToId ? { toId } : {}),
               channel: e.channel,
               type: e.type,
               ...(e.summary ? { summary: e.summary } : {}),
-              ...(resolvedParts ? { parts: resolvedParts } : {}),
-              ...(resolvedMeta ? { meta: resolvedMeta } : {}),
-            };
-          });
-      })(),
-    };
+              ...(e.parts ? { parts: e.parts } : {}),
+              ...(e.from ? { from: e.from } : {}),
+              ...(e.to ? { to: e.to } : {}),
+              ...(e.meta ? { meta: e.meta } : {}),
+            }))
+          ).sort((a, b) => new Date(a.ts).getTime() - new Date(b.ts).getTime())
+        : [];
 
-    const preamble = `<guardian-debug-context>
-Below is a debug snapshot from the Guardian webapp (a Figma-integrated AI design assistant).
-Use it to understand what happened during the session. All data is client-side only.
+      // Per-client breakdown
+      const perClient: Record<string, unknown> = {};
+      if (unified) {
+        for (const t of unified.traces) {
+          perClient[t.sourceClientId] = {
+            shortId: t.sourceShortId,
+            clientType: t.clientType,
+            clientState: t.clientState,
+            eventCount: (t.events as unknown[]).length,
+            timeline: buildTimeline(
+              t.events as PluginEvent[],
+              clients,
+              t.sourceShortId ?? t.sourceClientId,
+              t.sourceClientId,
+              (t.clientState as Record<string, unknown>)?.model as string ?? model,
+              (t.clientState as Record<string, unknown>)?.isFigmaPlugin as boolean ?? false,
+              figmaContext,
+            ),
+          };
+        }
+      }
+
+      const debugData = {
+        timestamp: new Date().toISOString(),
+        conversationId: activeConversationId,
+        conversationType,
+
+        thisClient: { clientId: myClientId, shortId: myShortId, clientType: isFigmaPlugin ? "figma-plugin" : "webapp", agentRole },
+        connectedClients: clients.map(c => ({ clientId: c.clientId, shortId: c.shortId, label: c.label, type: c.type, agentRole: c.agentRole, fileName: c.figmaContext?.fileName })),
+        model,
+        chatStatus,
+        ...(chatError ? { chatError: chatError.message } : {}),
+        isFigmaPlugin,
+        ...(figmaContext ? {
+          figmaContext: {
+            fileKey: figmaContext.fileKey,
+            fileName: figmaContext.fileName,
+            currentPage: figmaContext.currentPage,
+            currentUser: figmaContext.currentUser,
+          },
+        } : {}),
+        selectedNodeCount,
+        enabledMcps,
+        mcpReachable,
+        ...(temporalOrchestration?.workflowId ? {
+          temporalOrchestration: {
+            workflowId: temporalOrchestration.workflowId,
+            isActive: temporalOrchestration.isActive,
+            completedStatus: temporalOrchestration.completedStatus,
+            connected: temporalOrchestration.connected,
+            streamError: temporalOrchestration.streamError,
+            timerRemainingMs: temporalOrchestration.timerRemainingMs,
+            agents: temporalOrchestration.agents,
+            eventCount: temporalOrchestration.events.length,
+            events: temporalOrchestration.events,
+          },
+        } : {}),
+
+        orchestration: orchestration
+          ? { id: orchestration.id, status: orchestration.status, orchestratorClientId: orchestration.orchestratorClientId, conversationId: orchestration.conversationId }
+          : null,
+        collaborators: collaborators.map(c => ({ clientId: c.clientId, shortId: c.shortId, label: c.label, status: c.status, task: c.task, conversationId: c.conversationId })),
+        conversations: conversations.map(c => ({ id: c.id, title: c.title, orchestrationId: c.orchestration_id })),
+
+        // Local timeline (always included — same format as before for backward compat)
+        timeline: buildTimeline(eventLog, clients, myShortId, myClientId, model, isFigmaPlugin, figmaContext),
+
+        // Unified data (from all clients persisted in Supabase)
+        ...(hasMultipleClients ? { unifiedTimeline } : {}),
+        perClient,
+        ...(unified?.temporalHistory ? { temporalHistory: unified.temporalHistory } : {}),
+      };
+
+      const preamble = `<guardian-debug-context>
+Below is a unified debug snapshot from the Guardian webapp (a Figma-integrated AI design assistant).
+Use it to understand what happened during the session. Traces are persisted in Supabase and merged from all connected clients.
 
 Key concepts:
-- timeline: chronological log of everything that happened in this conversation.
+- conversationType: "classic" (single client) or "orchestration" (multi-client with Temporal).
+- timeline: chronological log from THIS client (same as before, always present).
   Each entry has: ts (timestamp), dir, from (sender shortId), to (receiver shortId), channel, type.
   When from/to refer to a connected client, fromId/toId contain the raw clientId for cross-referencing
   with connectedClients. Labels like "server", model name, or tool name have no clientId.
+- unifiedTimeline: all events from ALL connected clients, sorted by ts, each tagged with sourceShortId/sourceClientId. Only present when multiple clients contributed traces.
+- perClient: per-client breakdown with metadata snapshots (clientState) and individual timelines.
+- temporalHistory: Temporal workflow internals (only for orchestrations) — signals, activities, child workflows.
 - channel "chat" event types (live events have accurate per-part timestamps):
   - "chat:user" = user message sent to the AI. parts[0] has { type:"text", text }.
   - "chat:mcp-status" = MCP connection status change. summary is "connecting", "connected", or "error".
@@ -901,18 +1001,21 @@ Key concepts:
 
 `;
 
-    const text = preamble + "```json\n" + JSON.stringify(debugData, null, 2) + "\n```\n</guardian-debug-context>";
-    copyToClipboard(text).then(() => {
+      const text = preamble + "```json\n" + JSON.stringify(debugData, null, 2) + "\n```\n</guardian-debug-context>";
+      await copyToClipboard(text);
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
-    });
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
     <div className="flex mt-1">
       <button
         onClick={handleCopy}
-        className="flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] text-white/15 hover:text-white/50 hover:bg-white/5 transition-colors cursor-pointer"
+        disabled={loading}
+        className="flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] text-white/15 hover:text-white/50 hover:bg-white/5 transition-colors cursor-pointer disabled:opacity-30"
         title="Copy debug context to clipboard"
       >
         {copied ? (
@@ -921,6 +1024,13 @@ Key concepts:
               <path d="M20 6L9 17l-5-5" />
             </svg>
             Copied
+          </>
+        ) : loading ? (
+          <>
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="animate-spin">
+              <circle cx="12" cy="12" r="10" strokeDasharray="31.4 31.4" strokeLinecap="round" />
+            </svg>
+            Syncing...
           </>
         ) : (
           <>
@@ -1090,6 +1200,11 @@ export default function Home() {
 
   // Wire the plugin orchestration detection ref now that pluginOrch is available
   orchDetectedRef.current = pluginOrch.handleOrchestrationDetected;
+
+  // ── Debug traces (persistent, unified across clients) ─────────────
+  // When an orchestration is active, use workflowId as the shared key across all clients
+  const activeWorkflowId = isFigmaPlugin ? pluginOrch.workflowId : temporal.workflowId;
+  const { pushTrace, fetchUnifiedDebug } = useDebugTrace(activeConversationId, activeWorkflowId);
 
   // ── Trust/Brave approval state ────────────────────────────────────
   const [approvalMode, setApprovalMode] = useState<"trust" | "brave">("trust");
@@ -1800,6 +1915,35 @@ export default function Home() {
   // but concurrent addToolResult calls corrupt the SDK's internal state, causing
   // "Tool result is missing for tool call figma_plugin_execute:N" errors.
   const figmaExecQueueRef = useRef<Promise<void>>(Promise.resolve());
+  // ── Auto-push debug trace on orchestration completion ─────────────
+  const orchCompletedStatus = isFigmaPlugin ? pluginOrch.completedStatus : temporal.completedStatus;
+  const autoPushFired = useRef(false);
+  useEffect(() => {
+    if (!orchCompletedStatus) {
+      autoPushFired.current = false;
+      return;
+    }
+    if (autoPushFired.current) return;
+    const timer = setTimeout(() => {
+      autoPushFired.current = true;
+      pushTrace(eventLog.current, {
+        model: selectedModel,
+        agentRole,
+        enabledMcps,
+        mcpReachable,
+        isFigmaPlugin,
+        selectedNodeCount: selectedNode?.nodes?.length ?? 0,
+        ...(figmaContext ? { figmaContext: { fileKey: figmaContext.fileKey, fileName: figmaContext.fileName } } : {}),
+      }, {
+        sourceClientId: myClientId,
+        sourceShortId: myDisplayShortId,
+        clientType: isFigmaPlugin ? "figma-plugin" : "webapp",
+      });
+    }, 2000);
+    return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [orchCompletedStatus]);
+
   // Cooldown flag: true while a figma_plugin_execute is executing or within 300ms
   // after addToolResult. Prevents message injection during the brief "ready" gap
   // between addToolResult and the SDK starting the next maxSteps stream.
@@ -3317,6 +3461,8 @@ export default function Home() {
                 streamError: temporal.streamError,
                 timerRemainingMs: temporal.timerRemainingMs,
               }}
+              pushTrace={pushTrace}
+              fetchUnifiedDebug={fetchUnifiedDebug}
             />
           )}
 
@@ -3606,6 +3752,8 @@ export default function Home() {
                     streamError: temporal.streamError,
                     timerRemainingMs: temporal.timerRemainingMs,
                   }}
+                  pushTrace={pushTrace}
+                  fetchUnifiedDebug={fetchUnifiedDebug}
                 />
               )}
             </div>

@@ -117,5 +117,7 @@ export function usePluginOrchestration() {
     stream,
     /** Current workflow ID */
     workflowId,
+    /** Completed status (null while running) */
+    completedStatus: stream.completedStatus,
   };
 }
