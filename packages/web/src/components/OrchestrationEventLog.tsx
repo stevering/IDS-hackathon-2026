@@ -12,6 +12,15 @@ import type { OrchestrationSSEEvent, AgentViewState } from "@guardian/orchestrat
 type Props = {
   events: OrchestrationSSEEvent[];
   agents: AgentViewState[];
+  /**
+   * When set, filter events to only show those relevant to a specific agent.
+   * Always shows: orchestration_started, orchestration_completed, error.
+   * Shows directives/reports/status only if agentShortId matches.
+   * Shows user_input_received only if targetAgentId matches.
+   * Hides orchestrator_thinking and other-agent events.
+   * When undefined: show all events (unchanged behavior for webapp).
+   */
+  agentFilter?: string;
 };
 
 // ---------------------------------------------------------------------------
@@ -22,6 +31,52 @@ const HIDDEN_EVENT_TYPES = new Set(["timer_tick", "connected"]);
 
 function isVisibleEvent(e: OrchestrationSSEEvent): boolean {
   return !HIDDEN_EVENT_TYPES.has(e.type);
+}
+
+/**
+ * When agentFilter is set, only show events relevant to a specific agent.
+ * Global events (started, completed, error) always pass through.
+ * Agent-specific events (directives, reports, status) only pass if they
+ * match the agent's shortId. Orchestrator thinking is hidden for plugins.
+ */
+function matchesAgentFilter(e: OrchestrationSSEEvent, agentFilter: string): boolean {
+  switch (e.type) {
+    // Always visible — global orchestration lifecycle events
+    case "orchestration_started":
+    case "orchestration_completed":
+    case "error":
+      return true;
+
+    // Agent-scoped events — show only if agent matches
+    case "orchestrator_directive":
+    case "agent_status_changed":
+    case "agent_report":
+      return e.agentShortId === agentFilter;
+
+    // User input — show only if targeted at this agent (or untargeted)
+    case "user_input_received":
+      return !e.targetAgentId || e.targetAgentId === agentFilter;
+
+    // Peer/broadcast messages — show if this agent is sender or receiver
+    case "peer_message":
+      return e.fromAgentId === agentFilter || e.toAgentId === agentFilter;
+    case "broadcast_message":
+      return e.fromAgentId === agentFilter;
+
+    // Sub-conversations — show if agent participates
+    case "sub_conv_opened":
+      return e.participantIds.includes(agentFilter);
+    case "sub_conv_message":
+      return e.fromAgentId === agentFilter;
+
+    // Orchestrator thinking — hidden in filtered mode (too noisy for plugin)
+    case "orchestrator_thinking":
+      return false;
+
+    // Hide everything else (timer_tick, sub_conv_closed, etc.)
+    default:
+      return false;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -410,9 +465,13 @@ function renderEvent(event: OrchestrationSSEEvent, index: number, agents: AgentV
  * events in the chat area. Filters out noise events (timer_tick, connected)
  * and auto-scrolls to the bottom when new events arrive.
  */
-export function OrchestrationEventLog({ events, agents }: Props) {
+export function OrchestrationEventLog({ events, agents, agentFilter }: Props) {
   const endRef = useRef<HTMLDivElement>(null);
-  const visibleEvents = events.filter(isVisibleEvent);
+  const visibleEvents = events.filter((e) => {
+    if (!isVisibleEvent(e)) return false;
+    if (agentFilter) return matchesAgentFilter(e, agentFilter);
+    return true;
+  });
 
   // Auto-scroll to the latest event
   useEffect(() => {

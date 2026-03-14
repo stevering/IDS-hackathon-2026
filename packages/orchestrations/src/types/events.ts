@@ -57,8 +57,10 @@ export type OrchestrationStatusResponse = {
   orchestrationId: string;
   status: "active" | "completed" | "cancelled" | "timed_out";
   agents: AgentViewState[];
-  /** New events since last query (drained on read) */
+  /** Events since the requested cursor */
   events: OrchestrationSSEEvent[];
+  /** Cursor position (= total event count). Pass this as sinceIndex on next query. */
+  eventCursor: number;
   /** Timer remaining in ms */
   timerRemainingMs: number | null;
   /** Total orchestration duration in ms */

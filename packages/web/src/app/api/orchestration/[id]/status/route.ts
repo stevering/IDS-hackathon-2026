@@ -35,7 +35,7 @@ export async function GET(
     const client = await getTemporalClient();
     const handle = client.workflow.getHandle(workflowId);
 
-    const status: OrchestrationStatusResponse = await handle.query(statusQuery);
+    const status: OrchestrationStatusResponse = await handle.query(statusQuery, 0);
 
     return NextResponse.json(status);
   } catch (error) {

@@ -747,7 +747,7 @@ function CopyDebugButton({
           timerRemainingMs: temporalOrchestration.timerRemainingMs,
           agents: temporalOrchestration.agents,
           eventCount: temporalOrchestration.events.length,
-          events: temporalOrchestration.events.map(e => ({ type: e.type, ...(e.agentShortId ? { agent: e.agentShortId } : {}), ...(e.content ? { content: (e.content as string).slice(0, 200) } : {}), ...(e.status ? { status: e.status } : {}) })),
+          events: temporalOrchestration.events,
         },
       } : {}),
       thisClient: { clientId: myClientId, shortId: myShortId, agentRole },
@@ -1086,12 +1086,7 @@ export default function Home() {
   });
 
   // ── Plugin orchestration (plugin-side, receives workflowId via broadcast) ──
-  const pluginOrch = usePluginOrchestration({
-    conversations,
-    createConversation,
-    switchConversation,
-    activeConversationId,
-  });
+  const pluginOrch = usePluginOrchestration();
 
   // Wire the plugin orchestration detection ref now that pluginOrch is available
   orchDetectedRef.current = pluginOrch.handleOrchestrationDetected;
@@ -1429,7 +1424,7 @@ export default function Home() {
 
   // Whether we should show the orchestration panel (combined for webapp + plugin)
   const showOrchPanel = (!isFigmaPlugin && orchConv.isInOrchestrationConversation)
-    || (isFigmaPlugin && pluginOrch.isInOrchestrationConversation);
+    || (isFigmaPlugin && pluginOrch.isViewingOrchestration);
 
   const figmaMcpUrlRef = useRef(figmaMcpUrl);
   figmaMcpUrlRef.current = figmaMcpUrl;
@@ -2264,6 +2259,15 @@ export default function Home() {
       return;
     }
 
+    // Plugin: if viewing orchestration and it is active,
+    // send as user input targeted to this agent
+    if (isFigmaPlugin && pluginOrch.isViewingOrchestration && pluginOrch.isActive) {
+      pluginOrch.sendUserInput(input.trim(), myDisplayShortId);
+      setInput("");
+      if (inputRef.current) inputRef.current.style.height = "auto";
+      return;
+    }
+
     sendMessage({ text: input });
     setInput("");
     if (inputRef.current) {
@@ -2697,13 +2701,9 @@ export default function Home() {
           {isFigmaPlugin && pluginOrch.hasOrchestration && (
             <OrchestrationBanner
               active={pluginOrch.hasOrchestration}
-              isInOrchestrationConversation={pluginOrch.isInOrchestrationConversation}
-              onView={pluginOrch.switchToOrchestration}
-              onBack={() => {
-                // Plugin: go back to the previous conversation
-                const prev = conversations.find(c => !(c.metadata as Record<string, unknown>)?.workflowId && c.id !== pluginOrch.orchestrationConversationId);
-                if (prev) switchConversation(prev.id);
-              }}
+              isInOrchestrationConversation={pluginOrch.isViewingOrchestration}
+              onView={pluginOrch.showOrchestration}
+              onBack={pluginOrch.hideOrchestration}
               timerRemainingMs={pluginOrch.stream.timerRemainingMs}
               completedStatus={pluginOrch.stream.completedStatus}
             />
@@ -3298,7 +3298,16 @@ export default function Home() {
               figmaContext={figmaContext}
               selectedNodeCount={selectedNode?.nodes?.length ?? 0}
               eventLog={eventLog.current}
-              temporalOrchestration={{
+              temporalOrchestration={isFigmaPlugin ? {
+                workflowId: pluginOrch.workflowId,
+                isActive: pluginOrch.isActive,
+                completedStatus: pluginOrch.stream.completedStatus,
+                agents: pluginOrch.stream.agents,
+                events: pluginOrch.stream.events,
+                connected: pluginOrch.stream.connected,
+                streamError: pluginOrch.stream.error,
+                timerRemainingMs: pluginOrch.stream.timerRemainingMs,
+              } : {
                 workflowId: temporal.workflowId,
                 isActive: temporal.isActive,
                 completedStatus: temporal.completedStatus,
@@ -3539,11 +3548,12 @@ export default function Home() {
                   agents={temporal.agents}
                 />
               )}
-              {/* Orchestration event log — plugin side */}
+              {/* Orchestration event log — plugin side (filtered to this agent) */}
               {isFigmaPlugin && pluginOrch.stream.events.length > 0 && (
                 <OrchestrationEventLog
                   events={pluginOrch.stream.events}
                   agents={pluginOrch.stream.agents}
+                  agentFilter={myDisplayShortId}
                 />
               )}
               {/* Welcome placeholder when no events yet */}
@@ -3577,6 +3587,25 @@ export default function Home() {
                   figmaContext={figmaContext}
                   selectedNodeCount={selectedNode?.nodes?.length ?? 0}
                   eventLog={eventLog.current}
+                  temporalOrchestration={isFigmaPlugin ? {
+                    workflowId: pluginOrch.workflowId,
+                    isActive: pluginOrch.isActive,
+                    completedStatus: pluginOrch.stream.completedStatus,
+                    agents: pluginOrch.stream.agents,
+                    events: pluginOrch.stream.events,
+                    connected: pluginOrch.stream.connected,
+                    streamError: pluginOrch.stream.error,
+                    timerRemainingMs: pluginOrch.stream.timerRemainingMs,
+                  } : {
+                    workflowId: temporal.workflowId,
+                    isActive: temporal.isActive,
+                    completedStatus: temporal.completedStatus,
+                    agents: temporal.agents,
+                    events: temporal.events,
+                    connected: temporal.connected,
+                    streamError: temporal.streamError,
+                    timerRemainingMs: temporal.timerRemainingMs,
+                  }}
                 />
               )}
             </div>

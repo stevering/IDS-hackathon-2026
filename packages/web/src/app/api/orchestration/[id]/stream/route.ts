@@ -57,12 +57,14 @@ export async function GET(
 
         let lastKeepalive = Date.now();
         let pollCount = 0;
+        let lastCursor = 0;
 
         while (!closed) {
           try {
-            const status: OrchestrationStatusResponse = await handle.query(statusQuery);
+            const status: OrchestrationStatusResponse = await handle.query(statusQuery, lastCursor);
 
             pollCount++;
+            lastCursor = status.eventCursor;
 
             // Stream new events
             if (status.events.length > 0) {

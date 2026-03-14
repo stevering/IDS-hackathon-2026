@@ -29,7 +29,7 @@ import {
   handleCancellation,
   handleBroadcastRelay,
   getAgentViewStates,
-  drainEvents,
+  getEventsSince,
   IDLE_NUDGE_MS,
   GRACE_PERIOD_MS,
   type OrchestratorState,
@@ -108,15 +108,17 @@ export async function orchestratorWorkflow(
   });
 
   // ── Query handler ────────────────────────────────────────────────────────
-  setHandler(statusQuery, () => {
+  setHandler(statusQuery, (sinceIndex?: number) => {
     const elapsed = Date.now() - state.startedAt;
     const remaining = Math.max(0, state.maxDurationMs - elapsed);
+    const { events, cursor } = getEventsSince(state, sinceIndex ?? 0);
 
     return {
       orchestrationId: state.orchestrationId,
       status: state.status,
       agents: getAgentViewStates(state),
-      events: drainEvents(state),
+      events,
+      eventCursor: cursor,
       timerRemainingMs: state.status === "active" ? remaining : null,
       totalDurationMs: state.maxDurationMs,
     };

@@ -12,6 +12,7 @@ import {
   handleCancellation,
   handleBroadcastRelay,
   getAgentViewStates,
+  getEventsSince,
   drainEvents,
 } from "../engine/orchestrator-logic.js";
 import type { StartOrchestrationParams, AgentState } from "../types/agents.js";
@@ -330,7 +331,32 @@ describe("getAgentViewStates", () => {
   });
 });
 
-describe("drainEvents", () => {
+describe("getEventsSince", () => {
+  it("returns events from cursor without clearing", () => {
+    const state = createOrchestratorState(makeParams([makeAgent("a")]));
+    state.eventLog.push({ type: "orchestrator_thinking", content: "test" });
+    state.eventLog.push({ type: "orchestrator_thinking", content: "test2" });
+
+    const { events, cursor } = getEventsSince(state, 0);
+    expect(events).toHaveLength(2);
+    expect(cursor).toBe(2);
+    // Events are NOT cleared
+    expect(state.eventLog).toHaveLength(2);
+  });
+
+  it("returns only new events from a given cursor", () => {
+    const state = createOrchestratorState(makeParams([makeAgent("a")]));
+    state.eventLog.push({ type: "orchestrator_thinking", content: "old" });
+    state.eventLog.push({ type: "orchestrator_thinking", content: "new" });
+
+    const { events, cursor } = getEventsSince(state, 1);
+    expect(events).toHaveLength(1);
+    expect(events[0]).toEqual({ type: "orchestrator_thinking", content: "new" });
+    expect(cursor).toBe(2);
+  });
+});
+
+describe("drainEvents (deprecated)", () => {
   it("returns and clears event log", () => {
     const state = createOrchestratorState(makeParams([makeAgent("a")]));
     state.eventLog.push({ type: "orchestrator_thinking", content: "test" });

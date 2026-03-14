@@ -84,5 +84,5 @@ export const pluginDisconnectedSignal = defineSignal<[PluginDisconnectedPayload]
 // Query definitions
 // ---------------------------------------------------------------------------
 
-/** Query the orchestration status (for SSE polling) */
-export const statusQuery = defineQuery<OrchestrationStatusResponse>("status");
+/** Query the orchestration status (for SSE polling). Optional sinceIndex cursor for incremental reads. */
+export const statusQuery = defineQuery<OrchestrationStatusResponse, [number?]>("status");

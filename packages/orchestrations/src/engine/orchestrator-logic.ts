@@ -494,9 +494,17 @@ export function getAgentViewStates(state: OrchestratorState): AgentViewState[] {
 }
 
 // ---------------------------------------------------------------------------
-// Drain events (for SSE polling)
+// Get events since cursor (for SSE polling — non-destructive)
 // ---------------------------------------------------------------------------
 
+export function getEventsSince(state: OrchestratorState, sinceIndex = 0): { events: OrchestrationSSEEvent[]; cursor: number } {
+  return {
+    events: state.eventLog.slice(sinceIndex),
+    cursor: state.eventLog.length,
+  };
+}
+
+/** @deprecated Use getEventsSince instead — drainEvents clears events and breaks multi-client SSE. */
 export function drainEvents(state: OrchestratorState): OrchestrationSSEEvent[] {
   const events = [...state.eventLog];
   state.eventLog = [];

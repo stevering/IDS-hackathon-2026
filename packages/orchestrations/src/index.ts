@@ -18,6 +18,7 @@ export {
   handleCancellation,
   handleBroadcastRelay,
   getAgentViewStates,
+  getEventsSince,
   drainEvents,
   DEFAULT_MAX_DURATION_MS,
   IDLE_NUDGE_MS,
