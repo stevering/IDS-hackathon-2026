@@ -13,6 +13,8 @@ export type AgentState = {
   agent: AgentId;
   /** Current status */
   status: "pending" | "active" | "completed" | "failed" | "interrupted";
+  /** Whether the agent itself confirmed completion (via report, not just orchestrator marking) */
+  confirmedByAgent: boolean;
   /** Temporal child workflow handle (opaque, set by the engine adapter) */
   workflowHandle?: unknown;
   /** Last report received */

@@ -238,10 +238,10 @@ export async function agentWorkflow(input: AgentWorkflowInput): Promise<void> {
             }
             didExecTool = true;
           } else if (rEffect.type === "emit_activity") {
-            if (mainPendingCodeExecuted.length > 0) {
-              rEffect.activities.unshift(...mainPendingCodeExecuted.splice(0));
-            }
-            await executeEffect(state, rEffect, input.userId);
+            const merged = mainPendingCodeExecuted.length > 0
+              ? { ...rEffect, activities: [...mainPendingCodeExecuted.splice(0), ...rEffect.activities] }
+              : rEffect;
+            await executeEffect(state, merged, input.userId);
           } else if (rEffect.type === "call_llm") {
             pendingLLM = { messages: rEffect.messages, tools: rEffect.tools };
           } else {
@@ -327,10 +327,10 @@ async function executeLLMLoop(
         needsContinue = true;
       } else if (effect.type === "emit_activity") {
         // Inject any pending code_executed results into this batch
-        if (pendingCodeExecutedActivities.length > 0) {
-          effect.activities.unshift(...pendingCodeExecutedActivities.splice(0));
-        }
-        await executeEffect(state, effect, userId);
+        const merged = pendingCodeExecutedActivities.length > 0
+          ? { ...effect, activities: [...pendingCodeExecutedActivities.splice(0), ...effect.activities] }
+          : effect;
+        await executeEffect(state, merged, userId);
       } else if (effect.type === "call_llm") {
         if (!didExecuteTool) {
           messages = effect.messages;

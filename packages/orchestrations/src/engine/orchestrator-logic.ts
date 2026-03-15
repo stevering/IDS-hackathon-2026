@@ -83,7 +83,7 @@ export type OrchestratorEffect =
 export function createOrchestratorState(params: StartOrchestrationParams): OrchestratorState {
   const agents = new Map<string, AgentState>();
   for (const agent of params.targetAgents) {
-    agents.set(agent.shortId, { agent, status: "pending" });
+    agents.set(agent.shortId, { agent, status: "pending", confirmedByAgent: false });
   }
 
   return {
@@ -256,6 +256,7 @@ export function processReports(state: OrchestratorState): OrchestratorEffect[] {
     if (report.status === "completed" || report.status === "failed" || report.status === "interrupted") {
       agentState.status = report.status === "completed" ? "completed"
         : report.status === "interrupted" ? "interrupted" : "failed";
+      agentState.confirmedByAgent = true;
     }
 
     // Inject report into LLM history
@@ -407,9 +408,10 @@ export function checkCompletion(state: OrchestratorState): OrchestratorEffect | 
     };
   }
 
-  // All agents done check
+  // All agents done check — require agent self-confirmation, not just orchestrator marking.
+  // The orchestrator LLM may emit [AGENT_DONE] before the agent has actually reported.
   const allDone = Array.from(state.agents.values()).every(
-    (a) => a.status === "completed" || a.status === "failed" || a.status === "interrupted"
+    (a) => a.confirmedByAgent && (a.status === "completed" || a.status === "failed" || a.status === "interrupted")
   );
 
   if (allDone) {
