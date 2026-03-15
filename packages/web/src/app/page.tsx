@@ -21,6 +21,7 @@ import { matchesShortId, type CollaboratorInfo } from "./hooks/useOrchestration"
 import { useTemporalOrchestration } from "./hooks/useTemporalOrchestration";
 import type { AgentRole, Orchestration } from "@/types/orchestration";
 import { ConversationSwitcher } from "@/components/ConversationSwitcher";
+import { ConversationSidebar } from "@/components/ConversationSidebar";
 import { OrchestrationStatusBar } from "@/components/OrchestrationStatusBar";
 import { OrchestrationEventLog } from "@/components/OrchestrationEventLog";
 import { OrchestrationBanner } from "@/components/OrchestrationBanner";
@@ -1193,6 +1194,7 @@ export default function Home() {
     switchConversation,
     deleteConversation,
     updateTitle,
+    renameConversation,
     loadConversations,
     ensureConversation,
   } = useConversations(myClientId, !!myClientId);
@@ -1268,7 +1270,26 @@ export default function Home() {
       isDev ? process.env.NEXT_PUBLIC_PROXY_LOCAL_CODE_MCP : process.env.NEXT_PUBLIC_LOCAL_MCP_CODE_URL
   );//"http://[::1]:3846/sse");
   const [figmaAccessToken, setFigmaAccessToken] = useState("");
-  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+
+  // Sync collapsed state from localStorage after hydration
+  useEffect(() => {
+    const stored = localStorage.getItem("guardian-sidebar-collapsed");
+    if (stored === "true") setSidebarCollapsed(true);
+  }, []);
+  const toggleSidebar = useCallback(() => {
+    // On mobile: toggle open/close. On desktop: toggle collapsed/expanded.
+    if (window.innerWidth < 768) {
+      setSidebarOpen((prev) => !prev);
+    } else {
+      setSidebarCollapsed((prev) => {
+        const next = !prev;
+        localStorage.setItem("guardian-sidebar-collapsed", String(next));
+        return next;
+      });
+    }
+  }, []);
   const [figmaOAuth, setFigmaOAuth] = useState(false);
   const [southleftOAuth, setSouthleftOAuth] = useState(false);
   const [githubOAuth, setGithubOAuth] = useState(false);
@@ -2459,33 +2480,9 @@ export default function Home() {
   const figmaMode = getMcpConnectionMode(figmaMcpUrl || (figmaOAuth ? "https://mcp.figma.com/mcp" : ""));
   const codeMode = getMcpConnectionMode(codeProjectPath || "");
 
-  return (
-    <div className="relative flex h-screen text-white overflow-hidden">
-      {settingsOpen && (
-        <div
-          className="fixed inset-0 bg-black/50 z-40 md:hidden"
-          onClick={() => setSettingsOpen(false)}
-        />
-      )}
-      <div
-        className={`${settingsOpen ? "w-full sm:w-80 translate-x-0" : "w-0 -translate-x-full md:translate-x-0"} fixed top-0 left-0 md:relative md:top-auto md:left-auto z-50 md:z-auto h-full transition-all duration-200 overflow-hidden glass-sidebar`}
-      >
-        <div className="p-4 w-full sm:w-80 h-full overflow-y-auto">
-          <div className="flex items-center justify-between mb-4">
-            <h2 className="text-sm font-semibold text-white/60 uppercase tracking-wider">
-              MCP Connections
-            </h2>
-            <button
-              onClick={() => setSettingsOpen(false)}
-              className="p-1 rounded-md hover:bg-white/10 text-white/40 hover:text-white/80 transition-colors"
-              title="Close"
-            >
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M18 6L6 18M6 6l12 12"/>
-              </svg>
-            </button>
-          </div>
-
+  // ── Settings content for sidebar tab ──────────────────────────────
+  const settingsContent = (
+      <>
           {/* MCP Toggles */}
           <div className="mb-4 p-3 bg-white/5 rounded-md border border-white/10">
             <p className="text-xs text-white/50 mb-2 font-medium">Enable MCPs</p>
@@ -2736,32 +2733,61 @@ export default function Home() {
 
           <div className="mt-6 p-3 bg-white/5 rounded-md">
             <p className="text-xs text-white/40 leading-relaxed">
-              Set your online URLs for Figma MCCP and Code MCP,
+              Set your online URLs for Figma MCP and Code MCP,
               or configure your local proxy.
             </p>
           </div>
-        </div>
+      </>
+    );
+
+    return (
+    <div className="relative flex h-screen text-white overflow-hidden">
+      {/* Background layers — behind everything (sidebar + chat) */}
+      <div className="absolute inset-0 overflow-hidden pointer-events-none z-0">
+        <div className="wave-bg-layer wave-bg-1" />
+        <div className="wave-bg-layer wave-bg-2" />
+        <div className="wave-bg-layer wave-bg-3" />
+        <div className="wave-bg-noise" />
+        <div className="aurora aurora-1" />
+        <div className="aurora aurora-2" />
+        <div className="aurora aurora-3" />
+        <div className="aurora aurora-4" />
+        <div className="aurora aurora-5" />
+      </div>
+      {/* Mobile backdrop */}
+      {sidebarOpen && (
+        <div
+          className="fixed inset-0 bg-black/50 z-40 md:hidden"
+          onClick={() => setSidebarOpen(false)}
+        />
+      )}
+      {/* Sidebar — mobile: fixed full-width drawer, desktop: relative column */}
+      <div className={`${
+        sidebarOpen
+          ? "fixed top-0 left-0 z-50 w-full sm:w-72 h-full translate-x-0"
+          : "fixed top-0 left-0 z-50 w-full sm:w-72 h-full -translate-x-full"
+      } ${sidebarCollapsed ? "md:w-12" : "md:w-72"} md:relative md:top-auto md:left-auto md:z-auto md:h-full md:translate-x-0 transition-all duration-200`}>
+        <ConversationSidebar
+          conversations={conversations}
+          activeId={activeConversationId}
+          onSwitch={(id) => { handleSwitchConversation(id); setSidebarOpen(false); }}
+          onCreate={() => { createConversation(); setSidebarOpen(false); }}
+          onDelete={deleteConversation}
+          onRename={renameConversation}
+          collapsed={sidebarCollapsed}
+          onToggleCollapse={toggleSidebar}
+          settingsContent={settingsContent}
+        />
       </div>
 
       <div className="flex-1 flex flex-col min-w-0 relative">
-        <div className="absolute inset-0 overflow-hidden pointer-events-none z-0">
-          <div className="wave-bg-layer wave-bg-1" />
-          <div className="wave-bg-layer wave-bg-2" />
-          <div className="wave-bg-layer wave-bg-3" />
-          <div className="wave-bg-noise" />
-          <div className="aurora aurora-1" />
-          <div className="aurora aurora-2" />
-          <div className="aurora aurora-3" />
-          <div className="aurora aurora-4" />
-          <div className="aurora aurora-5" />
-        </div>
         <header className="absolute top-0 left-0 right-0 z-20 flex flex-col" style={{ background: "rgba(10,10,10,0.3)", backdropFilter: "blur(6px) saturate(1.3)", WebkitBackdropFilter: "blur(6px) saturate(1.3)", boxShadow: "0 4px 24px rgba(0,0,0,0.5), 0 1px 0 rgba(255,255,255,0.06) inset" }}>
           <div className="flex items-center justify-between px-3 sm:px-4 py-3 border-b border-white/30">
           <div className="flex items-center gap-2 sm:gap-3 min-w-0">
             <button
-              onClick={() => setSettingsOpen(!settingsOpen)}
+              onClick={toggleSidebar}
               className="p-2 rounded-md hover:bg-white/5 transition-colors shrink-0 cursor-pointer"
-              title="Toggle settings"
+              title="Toggle sidebar"
             >
               <svg
                 width="18"
@@ -2771,8 +2797,7 @@ export default function Home() {
                 stroke="currentColor"
                 strokeWidth="2"
               >
-                <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z" />
-                <circle cx="12" cy="12" r="3" />
+                <path d="M3 12h18M3 6h18M3 18h18" />
               </svg>
             </button>
             <div className="min-w-0">
@@ -2806,13 +2831,10 @@ export default function Home() {
                 </svg>
               </button>
             )}
-            <ConversationSwitcher
-              conversations={conversations}
-              activeId={activeConversationId}
-              onSwitch={handleSwitchConversation}
-              onCreate={() => createConversation()}
-              onDelete={deleteConversation}
-            />
+            {/* Active conversation title indicator */}
+            <span className="text-xs text-white/50 truncate max-w-[160px] hidden sm:inline">
+              {activeConversation?.title ?? "New conversation"}
+            </span>
             <EditableClientId
               shortId={myDisplayShortId}
               onRenamed={async (newShortId) => {
@@ -2905,7 +2927,7 @@ export default function Home() {
             <div className="min-w-full h-full flex flex-col">
             <div ref={scrollContainerRef} onScroll={handleScroll} className="flex-1 overflow-y-auto px-3 sm:px-4 pb-4">
               {/* Chat panel content starts here */}
-          {messages.length === 0 && (
+          {messages.length === 0 && messagesLoaded && (
             <div className="flex flex-col items-center justify-center h-full text-center px-4">
               <div className="text-4xl mb-4">🛡️</div>
               <h2 className="text-lg font-semibold mb-2">

@@ -101,8 +101,13 @@ export function useConversations(clientId: string, enabled = true) {
       try {
         const convs = await loadConversations();
         console.log("[Conversations] Loaded:", convs?.length ?? 0, "conversations");
-        if (!convs || convs.length === 0) {
-          // Create a default conversation
+        if (!convs) {
+          // Load failed (auth not ready, network error) — do NOT create a default
+          console.warn("[Conversations] Load returned undefined, skipping init");
+          return;
+        }
+        if (convs.length === 0) {
+          // Genuinely no conversations — create a default
           console.log("[Conversations] Creating default conversation...");
           const newConv = await createConversationInternal();
           console.log("[Conversations] Created:", newConv?.id ?? "FAILED");
@@ -180,6 +185,12 @@ export function useConversations(clientId: string, enabled = true) {
       if (conv && !isOrchConv) {
         // Auto-switch to new standalone conversations
         setActiveConversationId(conv.id);
+        // Mark as active on server so F5 restores the right conversation
+        fetch(`/api/conversations/${conv.id}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ isActive: true, clientId: clientIdRef.current }),
+        }).catch(() => {});
       }
       return conv;
     },
@@ -266,6 +277,7 @@ export function useConversations(clientId: string, enabled = true) {
     switchConversation,
     deleteConversation,
     updateTitle,
+    renameConversation: updateTitle,
     setActiveConversation: setActiveConversationById,
     ensureConversation,
   };
