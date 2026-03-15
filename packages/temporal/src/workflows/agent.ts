@@ -67,27 +67,6 @@ const { executeFigmaCode } = proxyActivities<FigmaActivities>({
 // Guardrail: notify orchestrator when plugin code is blocked
 // ---------------------------------------------------------------------------
 
-async function emitCodeExecuted(
-  execResult: { success: boolean; error?: string; result?: unknown },
-  state: AgentWorkflowState
-): Promise<void> {
-  try {
-    const handle = getExternalWorkflowHandle(state.orchestratorWorkflowId);
-    await handle.signal(agentActivitySignal, {
-      agentShortId: state.agent.shortId,
-      activities: [{
-        action: "code_executed" as const,
-        success: execResult.success,
-        summary: execResult.success
-          ? `OK${execResult.result ? `: ${String(execResult.result).slice(0, 80)}` : ""}`
-          : (execResult.error?.slice(0, 100) ?? "Execution failed"),
-      }],
-    });
-  } catch {
-    // Orchestrator may have already completed
-  }
-}
-
 async function notifyGuardrailIfBlocked(
   execResult: { success: boolean; error?: string },
   state: AgentWorkflowState
@@ -212,8 +191,6 @@ export async function agentWorkflow(input: AgentWorkflowInput): Promise<void> {
           .map((tc) => tc.id);
         let figmaToolCallIdx = 0;
 
-        const mainPendingCodeExecuted: import("@guardian/orchestrations").AgentActivity[] = [];
-
         for (const rEffect of responseEffects) {
           if (rEffect.type === "execute_figma_code") {
             const execResult = await executeFigmaCode({
@@ -223,13 +200,17 @@ export async function agentWorkflow(input: AgentWorkflowInput): Promise<void> {
               workflowId: state.orchestratorWorkflowId,
             });
 
-            mainPendingCodeExecuted.push({
-              action: "code_executed" as const,
-              success: execResult.success ?? false,
-              summary: execResult.success
-                ? `OK${execResult.result ? `: ${String(execResult.result).slice(0, 200)}` : ""}`
-                : (execResult.error?.slice(0, 200) ?? "Execution failed"),
-            });
+            // Emit code_executed as its own signal immediately
+            await executeEffect(state, {
+              type: "emit_activity",
+              activities: [{
+                action: "code_executed" as const,
+                success: execResult.success ?? false,
+                summary: execResult.success
+                  ? `OK${execResult.result ? `: ${String(execResult.result).slice(0, 200)}` : ""}`
+                  : (execResult.error?.slice(0, 200) ?? "Execution failed"),
+              }],
+            }, input.userId);
             await notifyGuardrailIfBlocked(execResult, state);
 
             const toolCallId = figmaToolCallIds[figmaToolCallIdx++];
@@ -238,19 +219,12 @@ export async function agentWorkflow(input: AgentWorkflowInput): Promise<void> {
             }
             didExecTool = true;
           } else if (rEffect.type === "emit_activity") {
-            const merged = mainPendingCodeExecuted.length > 0
-              ? { ...rEffect, activities: [...mainPendingCodeExecuted.splice(0), ...rEffect.activities] }
-              : rEffect;
-            await executeEffect(state, merged, input.userId);
+            await executeEffect(state, rEffect, input.userId);
           } else if (rEffect.type === "call_llm") {
             pendingLLM = { messages: rEffect.messages, tools: rEffect.tools };
           } else {
             await executeEffect(state, rEffect, input.userId);
           }
-        }
-
-        if (mainPendingCodeExecuted.length > 0) {
-          await executeEffect(state, { type: "emit_activity", activities: mainPendingCodeExecuted }, input.userId);
         }
 
         // Continue LLM loop with correct messages (including tool results)
@@ -296,9 +270,6 @@ async function executeLLMLoop(
       .map((tc) => tc.id);
     let loopFigmaIdx = 0;
 
-    // Collect code_executed results to inject into the emit_activity effect
-    const pendingCodeExecutedActivities: import("@guardian/orchestrations").AgentActivity[] = [];
-
     for (const effect of effects) {
       if (effect.type === "execute_figma_code") {
         const execResult = await executeFigmaCode({
@@ -308,14 +279,17 @@ async function executeLLMLoop(
           workflowId: state.orchestratorWorkflowId,
         });
 
-        // Store code_executed to inject into the next emit_activity batch
-        pendingCodeExecutedActivities.push({
-          action: "code_executed" as const,
-          success: execResult.success ?? false,
-          summary: execResult.success
-            ? `OK${execResult.result ? `: ${String(execResult.result).slice(0, 200)}` : ""}`
-            : (execResult.error?.slice(0, 200) ?? "Execution failed"),
-        });
+        // Emit code_executed as its own signal immediately — guarantees visibility
+        await executeEffect(state, {
+          type: "emit_activity",
+          activities: [{
+            action: "code_executed" as const,
+            success: execResult.success ?? false,
+            summary: execResult.success
+              ? `OK${execResult.result ? `: ${String(execResult.result).slice(0, 200)}` : ""}`
+              : (execResult.error?.slice(0, 200) ?? "Execution failed"),
+          }],
+        }, userId);
         await notifyGuardrailIfBlocked(execResult, state);
 
         const toolCallId = loopFigmaIds[loopFigmaIdx++];
@@ -326,11 +300,7 @@ async function executeLLMLoop(
         didExecuteTool = true;
         needsContinue = true;
       } else if (effect.type === "emit_activity") {
-        // Inject any pending code_executed results into this batch
-        const merged = pendingCodeExecutedActivities.length > 0
-          ? { ...effect, activities: [...pendingCodeExecutedActivities.splice(0), ...effect.activities] }
-          : effect;
-        await executeEffect(state, merged, userId);
+        await executeEffect(state, effect, userId);
       } else if (effect.type === "call_llm") {
         if (!didExecuteTool) {
           messages = effect.messages;
@@ -342,11 +312,6 @@ async function executeLLMLoop(
       } else {
         await executeEffect(state, effect, userId);
       }
-    }
-
-    // If code_executed wasn't injected (no emit_activity in this batch), emit separately
-    if (pendingCodeExecutedActivities.length > 0) {
-      await executeEffect(state, { type: "emit_activity", activities: pendingCodeExecutedActivities }, userId);
     }
 
     // If tools were executed but no call_llm effect, still continue

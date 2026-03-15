@@ -279,13 +279,18 @@ export async function orchestratorWorkflow(
           continue;
         }
 
-        // Final drain loop: keep flushing activities/guardrails until empty.
-        // Signals can arrive during each drain, so we loop until stable.
-        let drainIterations = 0;
-        while (
-          (state.pendingActivities.length > 0 || state.pendingGuardrails.length > 0) &&
-          drainIterations++ < 5
-        ) {
+        // Final drain: wait for any trailing agent activity signals.
+        // Use condition() which wakes instantly when a signal arrives,
+        // with a 2s timeout so we don't wait forever.
+        // Repeat up to 3 times to catch cascading signals.
+        for (let drain = 0; drain < 3; drain++) {
+          // Wait up to 2s for new activities/guardrails to arrive
+          await condition(
+            () => state.pendingActivities.length > 0 || state.pendingGuardrails.length > 0,
+            2000
+          );
+
+          // Drain whatever arrived
           if (state.pendingActivities.length > 0) {
             const finalActivities = processAgentActivities(state);
             await executeEffects(state, finalActivities, params.userId);
@@ -294,8 +299,11 @@ export async function orchestratorWorkflow(
             const finalGuardrails = processGuardrailBlocked(state);
             await executeEffects(state, finalGuardrails, params.userId);
           }
-          // Brief yield to let any in-flight signals land
-          await sleep(200);
+
+          // Also check for late reports (agent confirmed after grace period)
+          if (state.pendingReports.length > 0) {
+            break; // Go back to main loop to process them
+          }
         }
 
         await saveOrchestrationState({
