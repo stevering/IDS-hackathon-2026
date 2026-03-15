@@ -263,6 +263,21 @@ export function processReports(state: OrchestratorState): OrchestratorEffect[] {
     const reportMsg = `[Agent report from #${report.agentShortId} — ${report.status}]${report.summary ? `\n${report.summary}` : ""}`;
     state.messageHistory.push({ role: "user", content: reportMsg });
 
+    // Emit orchestrator_input so the UI shows what Guardian sent to the orchestrator LLM
+    effects.push({
+      type: "emit_event",
+      event: {
+        type: "orchestrator_input",
+        content: reportMsg,
+        fromAgentShortId: report.agentShortId,
+      },
+    });
+    state.eventLog.push({
+      type: "orchestrator_input",
+      content: reportMsg,
+      fromAgentShortId: report.agentShortId,
+    });
+
     effects.push({
       type: "emit_event",
       event: {

@@ -71,8 +71,9 @@ function matchesAgentFilter(e: OrchestrationSSEEvent, agentFilter: string): bool
     case "sub_conv_message":
       return e.fromAgentId === agentFilter;
 
-    // Orchestrator thinking — hidden in filtered mode (too noisy for plugin)
+    // Orchestrator thinking/input — hidden in filtered mode (too noisy for plugin)
     case "orchestrator_thinking":
+    case "orchestrator_input":
       return false;
 
     // Hide everything else (timer_tick, sub_conv_closed, etc.)
@@ -498,6 +499,28 @@ function renderEvent(event: OrchestrationSSEEvent, index: number, agents: AgentV
         </div>
       );
 
+    // ── Orchestrator input (Guardian → Orchestrator LLM) ─────────────
+    case "orchestrator_input":
+      return (
+        <div key={index} className="mx-2 sm:mx-4 my-0.5">
+          <div className="ml-4 mr-2 rounded border border-white/8 bg-white/[0.02] px-3 py-1.5">
+            <div className="flex items-center gap-1.5 mb-0.5">
+              <span className="text-[9px] font-medium text-white/30 uppercase tracking-wider">
+                Guardian &rarr; Orchestrator
+              </span>
+              {event.fromAgentShortId && (
+                <span className="text-[9px] text-white/20">
+                  (from {event.fromAgentShortId})
+                </span>
+              )}
+            </div>
+            <div className="text-[10px] text-white/40 leading-relaxed whitespace-pre-wrap">
+              {event.content.length > 200 ? `${event.content.slice(0, 200)}...` : event.content}
+            </div>
+          </div>
+        </div>
+      );
+
     default:
       return null;
   }
@@ -592,6 +615,16 @@ function AgentActivityItem({ activity, agentShortId }: { activity: AgentActivity
             ? "bg-emerald-500/5 border-emerald-500/10 text-emerald-400/60 hover:bg-emerald-500/10"
             : "bg-red-500/5 border-red-500/10 text-red-400/60 hover:bg-red-500/10"
           }
+        />
+      );
+
+    case "guardian_message":
+      return (
+        <ExpandableActivity
+          label={`Guardian → ${activity.recipient}`}
+          preview={activity.message}
+          detail={activity.message}
+          colorClass="bg-white/[0.02] border-white/8 text-white/40 hover:bg-white/[0.04]"
         />
       );
 

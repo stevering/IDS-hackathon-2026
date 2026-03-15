@@ -185,9 +185,10 @@ export type GuardrailBlockedPayload = {
 export type AgentActivity =
   | { action: "thinking"; content: string }
   | { action: "tool_call"; toolName: string; summary: string }
-  | { action: "code_review_rejected"; issues: string[] }
+  | { action: "code_review_rejected"; issues: string[]; feedback?: string }
   | { action: "code_review_passed"; codeSnippet: string }
-  | { action: "code_executed"; success: boolean; summary: string };
+  | { action: "code_executed"; success: boolean; summary: string }
+  | { action: "guardian_message"; recipient: string; message: string };
 
 export type AgentActivityPayload = {
   /** Which agent is reporting activity */

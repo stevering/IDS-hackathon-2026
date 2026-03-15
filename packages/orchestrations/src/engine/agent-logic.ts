@@ -577,35 +577,43 @@ function processToolCall(
       // Phase 1: programmatic linter — instant, free
       const codeIssues = reviewFigmaCode(args.code);
       if (codeIssues.length > 0) {
-        activities.push({ action: "code_review_rejected", issues: codeIssues });
-        injectToolResult(
-          state,
-          tc.id,
-          JSON.stringify({
-            success: false,
-            codeReview: codeIssues,
-            error: `Code review rejected (${codeIssues.length} issue${codeIssues.length > 1 ? "s" : ""}). Fix and retry.`,
-          })
-        );
+        const linterFeedback = JSON.stringify({
+          success: false,
+          codeReview: codeIssues,
+          error: `Code review rejected (${codeIssues.length} issue${codeIssues.length > 1 ? "s" : ""}). Fix and retry.`,
+        });
+        activities.push({ action: "code_review_rejected", issues: codeIssues, feedback: linterFeedback });
+        activities.push({
+          action: "guardian_message",
+          recipient: `agent ${state.agent.shortId}`,
+          message: linterFeedback,
+        });
+        injectToolResult(state, tc.id, linterFeedback);
         break;
       }
 
       // Phase 2: LLM self-review — store code, ask LLM to confirm
       activities.push({ action: "code_review_passed", codeSnippet: args.code });
       state.pendingFigmaCode = { code: args.code, toolCallId: tc.id };
+      const selfReviewPrompt =
+        "Code passed automated checks. Before execution, review it yourself:\n" +
+        "1. Does the code match exactly what the directive asked for?\n" +
+        "2. Are fills/strokes using { r, g, b } without 'a' (alpha)?\n" +
+        "3. Is the code using correct Figma Plugin API methods?\n" +
+        "4. Will the return value confirm what was done?\n\n" +
+        "If the code is correct → call figma_confirm_execute()\n" +
+        "If you spot an issue → call figma_plugin_execute() again with the fix.";
+      activities.push({
+        action: "guardian_message",
+        recipient: `agent ${state.agent.shortId}`,
+        message: selfReviewPrompt,
+      });
       injectToolResult(
         state,
         tc.id,
         JSON.stringify({
           status: "pending_review",
-          message:
-            "Code passed automated checks. Before execution, review it yourself:\n" +
-            "1. Does the code match exactly what the directive asked for?\n" +
-            "2. Are fills/strokes using { r, g, b } without 'a' (alpha)?\n" +
-            "3. Is the code using correct Figma Plugin API methods?\n" +
-            "4. Will the return value confirm what was done?\n\n" +
-            "If the code is correct → call figma_confirm_execute()\n" +
-            "If you spot an issue → call figma_plugin_execute() again with the fix.",
+          message: selfReviewPrompt,
           codeToReview: args.code,
         })
       );

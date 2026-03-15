@@ -213,9 +213,20 @@ export async function agentWorkflow(input: AgentWorkflowInput): Promise<void> {
             }, input.userId);
             await notifyGuardrailIfBlocked(execResult, state);
 
+            // Emit guardian_message for the tool execution result sent back to the agent LLM
+            const execResultJson = JSON.stringify(execResult);
+            await executeEffect(state, {
+              type: "emit_activity",
+              activities: [{
+                action: "guardian_message" as const,
+                recipient: `agent ${state.agent.shortId}`,
+                message: execResultJson,
+              }],
+            }, input.userId);
+
             const toolCallId = figmaToolCallIds[figmaToolCallIdx++];
             if (toolCallId) {
-              injectToolResult(state, toolCallId, JSON.stringify(execResult));
+              injectToolResult(state, toolCallId, execResultJson);
             }
             didExecTool = true;
           } else if (rEffect.type === "emit_activity") {
@@ -292,9 +303,20 @@ async function executeLLMLoop(
         }, userId);
         await notifyGuardrailIfBlocked(execResult, state);
 
+        // Emit guardian_message for the tool execution result sent back to the agent LLM
+        const loopExecResultJson = JSON.stringify(execResult);
+        await executeEffect(state, {
+          type: "emit_activity",
+          activities: [{
+            action: "guardian_message" as const,
+            recipient: `agent ${state.agent.shortId}`,
+            message: loopExecResultJson,
+          }],
+        }, userId);
+
         const toolCallId = loopFigmaIds[loopFigmaIdx++];
         if (toolCallId) {
-          injectToolResult(state, toolCallId, JSON.stringify(execResult));
+          injectToolResult(state, toolCallId, loopExecResultJson);
         }
 
         didExecuteTool = true;
