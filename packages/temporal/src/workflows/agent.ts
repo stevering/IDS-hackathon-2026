@@ -46,6 +46,8 @@ import {
   pluginDisconnectedSignal,
   agentReportSignal,
   subConvNotifySignal,
+  guardrailBlockedSignal,
+  agentActivitySignal,
 } from "../signals/definitions.js";
 
 import type { LLMActivities, FigmaActivities } from "../activities/types.js";
@@ -60,6 +62,49 @@ const { executeFigmaCode } = proxyActivities<FigmaActivities>({
   startToCloseTimeout: "30 seconds",
   retry: { maximumAttempts: 2 },
 });
+
+// ---------------------------------------------------------------------------
+// Guardrail: notify orchestrator when plugin code is blocked
+// ---------------------------------------------------------------------------
+
+async function emitCodeExecuted(
+  execResult: { success: boolean; error?: string; result?: unknown },
+  state: AgentWorkflowState
+): Promise<void> {
+  try {
+    const handle = getExternalWorkflowHandle(state.orchestratorWorkflowId);
+    await handle.signal(agentActivitySignal, {
+      agentShortId: state.agent.shortId,
+      activities: [{
+        action: "code_executed" as const,
+        success: execResult.success,
+        summary: execResult.success
+          ? `OK${execResult.result ? `: ${String(execResult.result).slice(0, 80)}` : ""}`
+          : (execResult.error?.slice(0, 100) ?? "Execution failed"),
+      }],
+    });
+  } catch {
+    // Orchestrator may have already completed
+  }
+}
+
+async function notifyGuardrailIfBlocked(
+  execResult: { success: boolean; error?: string },
+  state: AgentWorkflowState
+): Promise<void> {
+  if (execResult.success) return;
+  if (!execResult.error?.startsWith("BLOCKED:")) return;
+  try {
+    const handle = getExternalWorkflowHandle(state.orchestratorWorkflowId);
+    await handle.signal(guardrailBlockedSignal, {
+      agentShortId: state.agent.shortId,
+      blockedAction: execResult.error.replace(/^BLOCKED:\s*/, "").split(" is ")[0],
+      reason: execResult.error,
+    });
+  } catch {
+    // Orchestrator may have already completed
+  }
+}
 
 // Re-export for convenience within the workflow sandbox
 export type { AgentWorkflowInput } from "./types.js";
@@ -160,9 +205,10 @@ export async function agentWorkflow(input: AgentWorkflowInput): Promise<void> {
         let pendingLLM: { messages: typeof effect.messages; tools: typeof effect.tools } | null = null;
 
         // Collect all figma tool call IDs in order, then match them to execute effects
+        const figmaToolNames = new Set(["figma_plugin_execute", "figma_confirm_execute"]);
         const figmaToolCallIds = state.messageHistory
           .flatMap((m) => m.toolCalls ?? [])
-          .filter((tc) => tc.name === "figma_plugin_execute")
+          .filter((tc) => figmaToolNames.has(tc.name))
           .map((tc) => tc.id);
         let figmaToolCallIdx = 0;
 
@@ -174,6 +220,16 @@ export async function agentWorkflow(input: AgentWorkflowInput): Promise<void> {
               code: rEffect.code,
               workflowId: state.orchestratorWorkflowId,
             });
+
+            // Store code_executed activity for the next processLLMResponse batch
+            state.pendingCodeResults.push({
+              action: "code_executed" as const,
+              success: execResult.success ?? false,
+              summary: execResult.success
+                ? `OK${execResult.result ? `: ${String(execResult.result).slice(0, 200)}` : ""}`
+                : (execResult.error?.slice(0, 200) ?? "Execution failed"),
+            });
+            await notifyGuardrailIfBlocked(execResult, state);
 
             const toolCallId = figmaToolCallIds[figmaToolCallIdx++];
             if (toolCallId) {
@@ -223,9 +279,10 @@ async function executeLLMLoop(
     let didExecuteTool = false;
 
     // Collect figma tool call IDs for sequential matching
+    const loopFigmaNames = new Set(["figma_plugin_execute", "figma_confirm_execute"]);
     const loopFigmaIds = state.messageHistory
       .flatMap((m) => m.toolCalls ?? [])
-      .filter((tc) => tc.name === "figma_plugin_execute")
+      .filter((tc) => loopFigmaNames.has(tc.name))
       .map((tc) => tc.id);
     let loopFigmaIdx = 0;
 
@@ -237,6 +294,16 @@ async function executeLLMLoop(
           code: effect.code,
           workflowId: state.orchestratorWorkflowId,
         });
+
+        // Store code_executed activity for the next processLLMResponse batch
+        state.pendingCodeResults.push({
+          action: "code_executed" as const,
+          success: execResult.success ?? false,
+          summary: execResult.success
+            ? `OK${execResult.result ? `: ${String(execResult.result).slice(0, 200)}` : ""}`
+            : (execResult.error?.slice(0, 200) ?? "Execution failed"),
+        });
+        await notifyGuardrailIfBlocked(execResult, state);
 
         const toolCallId = loopFigmaIds[loopFigmaIdx++];
         if (toolCallId) {
@@ -370,6 +437,19 @@ async function executeEffect(
           participantIds: effect.participantIds,
           topic: effect.topic,
           reason: effect.reason,
+        });
+      } catch {
+        // Orchestrator may have already completed
+      }
+      break;
+    }
+
+    case "emit_activity": {
+      try {
+        const handle = getExternalWorkflowHandle(state.orchestratorWorkflowId);
+        await handle.signal(agentActivitySignal, {
+          agentShortId: state.agent.shortId,
+          activities: effect.activities,
         });
       } catch {
         // Orchestrator may have already completed

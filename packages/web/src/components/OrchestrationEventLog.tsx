@@ -3,7 +3,7 @@
 import { useState, useEffect, useRef } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import type { OrchestrationSSEEvent, AgentViewState } from "@guardian/orchestrations";
+import type { OrchestrationSSEEvent, AgentViewState, AgentActivity } from "@guardian/orchestrations";
 
 // ---------------------------------------------------------------------------
 // Props
@@ -51,6 +51,8 @@ function matchesAgentFilter(e: OrchestrationSSEEvent, agentFilter: string): bool
     case "orchestrator_directive":
     case "agent_status_changed":
     case "agent_report":
+    case "guardrail_blocked":
+    case "agent_activity":
       return e.agentShortId === agentFilter;
 
     // User input — show only if targeted at this agent (or untargeted)
@@ -217,6 +219,39 @@ function renderEvent(event: OrchestrationSSEEvent, index: number, agents: AgentV
         </div>
       );
     }
+
+    // ── Guardrail blocked ────────────────────────────────────────────
+    case "guardrail_blocked":
+      return (
+        <div key={index} className="mx-2 sm:mx-4 my-1.5">
+          <div className="ml-4 mr-2 rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2">
+            <div className="flex items-center gap-2 mb-1">
+              <svg
+                width="14"
+                height="14"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                className="shrink-0 text-red-400"
+              >
+                <path d="M12 9v4m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
+              </svg>
+              <span className="text-[10px] font-bold text-red-400 uppercase tracking-wider">
+                Guardrail
+              </span>
+              <span className="text-[10px] text-red-300/60">
+                {event.agentShortId}
+              </span>
+            </div>
+            <div className="text-xs text-red-200/70 leading-relaxed">
+              <span className="font-medium text-red-300/80">{event.blockedAction}</span>
+              {" — "}
+              {event.reason}
+            </div>
+          </div>
+        </div>
+      );
 
     // ── Agent report ──────────────────────────────────────────────────
     case "agent_report": {
@@ -449,6 +484,115 @@ function renderEvent(event: OrchestrationSSEEvent, index: number, agents: AgentV
             <span className="font-medium">Error:</span> {event.message}
           </div>
         </div>
+      );
+
+    // ── Agent activity (internal visibility) ─────────────────────────
+    case "agent_activity":
+      return (
+        <div key={index} className="mx-2 sm:mx-4 my-0.5">
+          <div className="ml-6 mr-2 space-y-0.5">
+            {event.activities.map((act, ai) => (
+              <AgentActivityItem key={ai} activity={act} agentShortId={event.agentShortId} />
+            ))}
+          </div>
+        </div>
+      );
+
+    default:
+      return null;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Agent activity item renderer
+// ---------------------------------------------------------------------------
+
+function ExpandableActivity({
+  label,
+  preview,
+  detail,
+  colorClass,
+}: {
+  label: string;
+  preview: string;
+  detail: string;
+  colorClass: string;
+}) {
+  const [open, setOpen] = useState(false);
+  return (
+    <button
+      onClick={() => setOpen(!open)}
+      className={`flex items-start gap-1.5 text-[10px] px-2 py-0.5 rounded transition-colors w-full text-left cursor-pointer border ${colorClass}`}
+    >
+      <svg
+        className={`h-2.5 w-2.5 shrink-0 mt-0.5 transition-transform ${open ? "rotate-90" : ""}`}
+        viewBox="0 0 24 24"
+        fill="currentColor"
+      >
+        <path d="M8.59 16.59L13.17 12 8.59 7.41 10 6l6 6-6 6z" />
+      </svg>
+      <span className="font-mono font-medium shrink-0">{label}</span>
+      {!open && <span className="truncate opacity-60 min-w-0">{preview}</span>}
+      {open && (
+        <span className="whitespace-pre-wrap opacity-80 break-all min-w-0">{detail}</span>
+      )}
+    </button>
+  );
+}
+
+function AgentActivityItem({ activity, agentShortId }: { activity: AgentActivity; agentShortId: string }) {
+  switch (activity.action) {
+    case "thinking":
+      return (
+        <ExpandableActivity
+          label={agentShortId}
+          preview={activity.content}
+          detail={activity.content}
+          colorClass="bg-cyan-500/5 border-cyan-500/10 text-cyan-400/60 hover:bg-cyan-500/10"
+        />
+      );
+
+    case "tool_call":
+      return (
+        <ExpandableActivity
+          label={`${agentShortId} ${activity.toolName}`}
+          preview={activity.summary}
+          detail={activity.summary}
+          colorClass="bg-indigo-500/5 border-indigo-500/10 text-indigo-400/60 hover:bg-indigo-500/10"
+        />
+      );
+
+    case "code_review_passed":
+      return (
+        <ExpandableActivity
+          label={`${agentShortId} Linter OK | Self-review`}
+          preview={activity.codeSnippet}
+          detail={activity.codeSnippet}
+          colorClass="bg-emerald-500/5 border-emerald-500/10 text-emerald-400/60 hover:bg-emerald-500/10"
+        />
+      );
+
+    case "code_review_rejected":
+      return (
+        <ExpandableActivity
+          label={`${agentShortId} Linter rejected`}
+          preview={`${activity.issues.length} issue${activity.issues.length > 1 ? "s" : ""}`}
+          detail={activity.issues.join("\n")}
+          colorClass="bg-red-500/10 border-red-500/15 text-red-400/70 hover:bg-red-500/15"
+        />
+      );
+
+    case "code_executed":
+      return (
+        <ExpandableActivity
+          label={`${agentShortId} ${activity.success ? "Executed" : "Failed"}`}
+          preview={activity.summary}
+          detail={activity.summary}
+          colorClass={activity.success
+            ? "bg-emerald-500/5 border-emerald-500/10 text-emerald-400/60 hover:bg-emerald-500/10"
+            : "bg-red-500/5 border-red-500/10 text-red-400/60 hover:bg-red-500/10"
+          }
+        />
       );
 
     default:

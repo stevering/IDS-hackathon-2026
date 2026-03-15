@@ -358,6 +358,30 @@ figma.ui.onmessage = async (msg: IncomingMessage): Promise<void> => {
   }
 
   // ============================================================================
+  // Figma API autocorrect — fix common LLM mistakes before execution
+  // ============================================================================
+
+  /**
+   * LLMs frequently generate invalid Figma Plugin API code. Rather than
+   * burning through all agent steps on the same error, we silently fix
+   * the most common mistakes so the code runs on the first try.
+   *
+   * Each fix is a targeted regex with a narrow scope to avoid unintended
+   * side effects. Fixes are additive — they never remove valid code.
+   */
+  function figmaApiAutocorrect(code: string): string {
+    let fixed = code;
+
+    // Fix 1: Remove 'a' (alpha) key from color objects in fills/strokes.
+    // Figma .fills/.strokes use { r, g, b } — NOT { r, g, b, a }.
+    // Alpha goes in the paint's `opacity` field, not in the color.
+    // Matches: , a: 1  or  , a: 0.5  right before a closing brace.
+    fixed = fixed.replace(/,\s*a\s*:\s*[\d.]+\s*(?=\s*\})/g, '');
+
+    return fixed;
+  }
+
+  // ============================================================================
   // EXECUTE_CODE - Arbitrary code execution
   // ============================================================================
   if (type === 'EXECUTE_CODE') {
@@ -378,6 +402,32 @@ figma.ui.onmessage = async (msg: IncomingMessage): Promise<void> => {
     };
 
     try {
+      // ── Guardrail: decode HTML entities that some LLMs emit ──────────
+      // kimi-k2.5 and others sometimes produce &amp; / &lt; / &gt; / &quot;
+      // inside tool-call code strings, causing syntax errors.
+      let sanitized = msg.code
+        .replace(/&amp;/g, '&')
+        .replace(/&lt;/g, '<')
+        .replace(/&gt;/g, '>')
+        .replace(/&quot;/g, '"')
+        .replace(/&#39;/g, "'")
+        .replace(/&apos;/g, "'");
+
+      // ── Guardrail: block figma.closePlugin() ─────────────────────────
+      // The LLM must never close the plugin — it kills the bridge.
+      // Return an error so the orchestrator/agent knows it was refused.
+      if (/figma\s*\.\s*closePlugin\s*\(/.test(sanitized)) {
+        figma.notify('⚠️ AI tried to close the plugin — blocked', { timeout: 5000, error: true });
+        sendResult({
+          success: false,
+          error: 'BLOCKED: figma.closePlugin() is forbidden during execution. The plugin must stay open for the orchestration to continue. Remove this call and retry.',
+        });
+        return;
+      }
+
+      // ── Figma API autocorrect ──────────────────────────────────────
+      sanitized = figmaApiAutocorrect(sanitized);
+
       // Wrap the user code in its own try/catch INSIDE the async IIFE.
       // Figma's plugin sandbox sometimes intercepts rejected Promises before they
       // reach our outer catch block, resulting in a silent success with result=undefined.
@@ -387,7 +437,7 @@ figma.ui.onmessage = async (msg: IncomingMessage): Promise<void> => {
       // Special case: if the code is itself an async IIFE — (async () => { ... })() —
       // our wrapper must use `return await` to capture its result. Without it, the IIFE
       // runs fire-and-forget and the outer function returns undefined.
-      const codeBody = msg.code.trim();
+      const codeBody = sanitized.trim();
       const isAsyncIIFE =
         /^\(?async(\s+function)?\s*\(/.test(codeBody) &&
         /[)]\s*;?\s*$/.test(codeBody);

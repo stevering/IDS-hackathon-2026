@@ -14,6 +14,8 @@ import type {
   BroadcastPayload,
   DirectivePayload,
   AgentDirectoryPayload,
+  GuardrailBlockedPayload,
+  AgentActivityPayload,
 } from "../types/signals.js";
 import type { AgentViewState, OrchestrationSSEEvent } from "../types/events.js";
 import type { AgentState, StartOrchestrationParams, LLMMessage, OrchestrationResult } from "../types/agents.js";
@@ -45,6 +47,10 @@ export type OrchestratorState = {
   userInputQueue: UserInputPayload[];
   /** Sub-conversation notifications (info only) */
   subConvNotifications: SubConvNotifyPayload[];
+  /** Queued guardrail blocked notifications */
+  pendingGuardrails: GuardrailBlockedPayload[];
+  /** Queued agent activity notifications */
+  pendingActivities: AgentActivityPayload[];
   /** Events to be drained by the SSE consumer */
   eventLog: OrchestrationSSEEvent[];
   /** Orchestration start time */
@@ -90,6 +96,8 @@ export function createOrchestratorState(params: StartOrchestrationParams): Orche
     pendingReports: [],
     userInputQueue: [],
     subConvNotifications: [],
+    pendingGuardrails: [],
+    pendingActivities: [],
     eventLog: [],
     startedAt: Date.now(),
     maxDurationMs: params.maxDurationMs ?? DEFAULT_MAX_DURATION_MS,
@@ -467,6 +475,53 @@ export function handleBroadcastRelay(
     fromAgentId: broadcast.fromAgentId,
     content: broadcast.content,
   });
+
+  return effects;
+}
+
+// ---------------------------------------------------------------------------
+// Process guardrail blocked notifications
+// ---------------------------------------------------------------------------
+
+export function processGuardrailBlocked(state: OrchestratorState): OrchestratorEffect[] {
+  if (state.pendingGuardrails.length === 0) return [];
+
+  const effects: OrchestratorEffect[] = [];
+  const guardrails = state.pendingGuardrails.splice(0);
+
+  for (const g of guardrails) {
+    const event: OrchestrationSSEEvent = {
+      type: "guardrail_blocked",
+      agentShortId: g.agentShortId,
+      blockedAction: g.blockedAction,
+      reason: g.reason,
+    };
+    effects.push({ type: "emit_event", event });
+    state.eventLog.push(event);
+  }
+
+  return effects;
+}
+
+// ---------------------------------------------------------------------------
+// Process agent activity notifications (passthrough to SSE)
+// ---------------------------------------------------------------------------
+
+export function processAgentActivities(state: OrchestratorState): OrchestratorEffect[] {
+  if (state.pendingActivities.length === 0) return [];
+
+  const effects: OrchestratorEffect[] = [];
+  const activities = state.pendingActivities.splice(0);
+
+  for (const a of activities) {
+    const event: OrchestrationSSEEvent = {
+      type: "agent_activity",
+      agentShortId: a.agentShortId,
+      activities: a.activities,
+    };
+    effects.push({ type: "emit_event", event });
+    state.eventLog.push(event);
+  }
 
   return effects;
 }

@@ -51,8 +51,9 @@ next-env.d.ts
 storybook-static
 
 # turbo
-.turbo/
+.turbo
 pnpm-debug.log*
 
 # electron-vite temp compiled configs
 electron.vite.config.*.mjs
+.playwright-mcp

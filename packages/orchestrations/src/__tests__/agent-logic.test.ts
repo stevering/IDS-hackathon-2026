@@ -292,7 +292,7 @@ describe("processLLMResponse", () => {
     expect(peerEffects).toHaveLength(1);
   });
 
-  it("handles figma_plugin_execute tool call", () => {
+  it("handles figma_plugin_execute tool call (pending review)", () => {
     const state = createAgentState(makeAgentId());
 
     const effects = processLLMResponse(state, "Executing", [
@@ -303,11 +303,72 @@ describe("processLLMResponse", () => {
       },
     ]);
 
+    // Code should NOT be executed yet — it's pending LLM self-review
+    const execEffects = effects.filter((e) => e.type === "execute_figma_code");
+    expect(execEffects).toHaveLength(0);
+
+    // Code should be stored as pending
+    expect(state.pendingFigmaCode).not.toBeNull();
+    expect(state.pendingFigmaCode?.code).toBe("figma.createRectangle()");
+
+    // A tool result should have been injected asking for review
+    const lastMsg = state.messageHistory[state.messageHistory.length - 1];
+    expect(lastMsg.role).toBe("tool");
+    expect(lastMsg.content).toContain("pending_review");
+  });
+
+  it("handles figma_confirm_execute after review", () => {
+    const state = createAgentState(makeAgentId());
+
+    // First: submit code for review
+    processLLMResponse(state, "Executing", [
+      {
+        id: "tc1",
+        name: "figma_plugin_execute",
+        arguments: { code: "figma.createRectangle()" },
+      },
+    ]);
+    expect(state.pendingFigmaCode).not.toBeNull();
+
+    // Then: confirm execution
+    const effects = processLLMResponse(state, "Code looks good", [
+      {
+        id: "tc2",
+        name: "figma_confirm_execute",
+        arguments: {},
+      },
+    ]);
+
     const execEffects = effects.filter((e) => e.type === "execute_figma_code");
     expect(execEffects).toHaveLength(1);
     if (execEffects[0].type === "execute_figma_code") {
       expect(execEffects[0].code).toBe("figma.createRectangle()");
     }
+    expect(state.pendingFigmaCode).toBeNull();
+  });
+
+  it("rejects figma code with known issues via linter", () => {
+    const state = createAgentState(makeAgentId());
+
+    const effects = processLLMResponse(state, "Setting fill", [
+      {
+        id: "tc1",
+        name: "figma_plugin_execute",
+        arguments: { code: "circle.fills = [{type: 'SOLID', color: {r: 0, g: 1, b: 0, a: 1}}]" },
+      },
+    ]);
+
+    // Should NOT be pending — rejected by linter
+    expect(state.pendingFigmaCode).toBeNull();
+
+    // No execution effect
+    const execEffects = effects.filter((e) => e.type === "execute_figma_code");
+    expect(execEffects).toHaveLength(0);
+
+    // Error injected into history
+    const lastMsg = state.messageHistory[state.messageHistory.length - 1];
+    expect(lastMsg.role).toBe("tool");
+    expect(lastMsg.content).toContain("codeReview");
   });
 
   it("handles start_sub_conversation tool call", () => {

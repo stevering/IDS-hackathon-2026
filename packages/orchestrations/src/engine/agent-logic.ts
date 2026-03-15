@@ -16,6 +16,7 @@ import type {
   AgentDirectoryPayload,
   AgentReportPayload,
   AgentId,
+  AgentActivity,
 } from "../types/signals.js";
 import type { LLMMessage, LLMToolCall, LLMToolDefinition, SubConversationState } from "../types/agents.js";
 
@@ -54,6 +55,10 @@ export type AgentWorkflowState = {
   completed: boolean;
   /** Step counter for LLM loop */
   stepCount: number;
+  /** Code awaiting LLM self-review before execution */
+  pendingFigmaCode: { code: string; toolCallId: string } | null;
+  /** Pending code_executed activities to include in the next batch */
+  pendingCodeResults: AgentActivity[];
 };
 
 // ---------------------------------------------------------------------------
@@ -71,6 +76,7 @@ export type AgentEffect =
   | { type: "send_sub_conv_message"; targetWorkflowIds: string[]; message: SubConvMessagePayload }
   | { type: "send_sub_conv_close"; targetWorkflowIds: string[]; close: SubConvClosePayload }
   | { type: "notify_orchestrator_sub_conv"; event: "opened" | "closed"; subConvId: string; participantIds: string[]; topic?: string; reason?: "completed" | "timeout" | "cancelled" }
+  | { type: "emit_activity"; activities: AgentActivity[] }
   | { type: "wait_for_input" }
   | { type: "complete" };
 
@@ -92,6 +98,8 @@ export function createAgentState(agent: AgentId): AgentWorkflowState {
     disconnected: false,
     completed: false,
     stepCount: 0,
+    pendingFigmaCode: null,
+    pendingCodeResults: [],
   };
 }
 
@@ -280,9 +288,52 @@ export function processLLMResponse(
   state.stepCount++;
 
   const effects: AgentEffect[] = [];
+  const activities: AgentActivity[] = [];
+
+  // Drain any pending code execution results from previous step
+  if (state.pendingCodeResults.length > 0) {
+    activities.push(...state.pendingCodeResults.splice(0));
+  }
+
+  // Emit thinking activity if there's content
+  if (content.trim()) {
+    activities.push({ action: "thinking", content });
+  }
 
   if (!toolCalls || toolCalls.length === 0) {
+    // Detect LLMs that write tool calls as text instead of invoking them.
+    // kimi-k2.5 commonly outputs '{ "tool": "signal_task_complete", ... }'
+    // as plain text. Parse it and treat it as a real tool call.
+    if (/signal_task_complete/i.test(content) && !state.completed) {
+      let summary = "Task completed.";
+      try {
+        const parsed = JSON.parse(content);
+        if (parsed.summary) summary = parsed.summary;
+      } catch {
+        const match = content.match(/["']summary["']\s*:\s*["']([^"']+)["']/);
+        if (match) summary = match[1];
+      }
+      activities.push({ action: "tool_call", toolName: "signal_task_complete", summary: `(auto-detected from text) ${summary}` });
+      if (activities.length > 0) {
+        effects.push({ type: "emit_activity", activities });
+      }
+      state.completed = true;
+      effects.push({
+        type: "report_to_orchestrator",
+        report: {
+          agentShortId: state.agent.shortId,
+          status: "completed",
+          summary,
+        },
+      });
+      effects.push({ type: "complete" });
+      return effects;
+    }
+
     // No tool calls — report in-progress and wait
+    if (activities.length > 0) {
+      effects.push({ type: "emit_activity", activities });
+    }
     effects.push({
       type: "report_to_orchestrator",
       report: {
@@ -296,8 +347,14 @@ export function processLLMResponse(
   }
 
   for (const tc of toolCalls) {
-    const toolEffects = processToolCall(state, tc);
+    const { effects: toolEffects, activities: toolActivities } = processToolCall(state, tc);
     effects.push(...toolEffects);
+    activities.push(...toolActivities);
+  }
+
+  // Emit all collected activities as a single batch
+  if (activities.length > 0) {
+    effects.push({ type: "emit_activity", activities });
   }
 
   // If not completed and under step limit, continue LLM loop
@@ -313,8 +370,8 @@ export function processLLMResponse(
       type: "report_to_orchestrator",
       report: {
         agentShortId: state.agent.shortId,
-        status: "completed",
-        summary: "Reached maximum step limit.",
+        status: "failed",
+        summary: `Agent could not complete the task within ${MAX_STEPS} steps. It may have been stuck retrying a failing operation.`,
       },
     });
     effects.push({ type: "complete" });
@@ -340,16 +397,69 @@ export function injectToolResult(
 }
 
 // ---------------------------------------------------------------------------
+// Pre-execution code review (Figma API linter)
+// ---------------------------------------------------------------------------
+
+/**
+ * Validates generated Figma Plugin API code BEFORE execution.
+ * Returns an array of issues. Empty = code is OK to execute.
+ *
+ * This is a structural gate — it catches known LLM mistakes early so
+ * the agent doesn't waste steps on code that will always fail.
+ */
+export function reviewFigmaCode(code: string): string[] {
+  const issues: string[] = [];
+
+  // Rule 1: 'a' (alpha) in color objects — Figma uses { r, g, b }, not { r, g, b, a }
+  if (/color\s*:\s*\{[^}]*\ba\s*:/i.test(code)) {
+    issues.push(
+      'Color objects in fills/strokes must use { r, g, b } — NOT { r, g, b, a }. ' +
+      'Remove the "a" key. Use paint-level "opacity" instead if needed.'
+    );
+  }
+
+  // Rule 2: figma.closePlugin() — kills the bridge
+  if (/figma\s*\.\s*closePlugin\s*\(/.test(code)) {
+    issues.push(
+      'figma.closePlugin() is forbidden — it kills the plugin bridge. Remove this call.'
+    );
+  }
+
+  // Rule 3: figma.currentPage = ... (sync setter removed in newer API)
+  if (/figma\s*\.\s*currentPage\s*=\s*/.test(code)) {
+    issues.push(
+      'figma.currentPage = ... is not allowed with dynamic-page access. ' +
+      'Use await figma.setCurrentPageAsync(page) instead.'
+    );
+  }
+
+  // Rule 4: .children = [...] (read-only property)
+  if (/\.children\s*=\s*\[/.test(code)) {
+    issues.push(
+      'node.children is read-only. You cannot assign to it. ' +
+      'Use node.appendChild(child) or node.insertChild(index, child) instead.'
+    );
+  }
+
+  return issues;
+}
+
+// ---------------------------------------------------------------------------
 // Process individual tool call
 // ---------------------------------------------------------------------------
 
-function processToolCall(state: AgentWorkflowState, tc: LLMToolCall): AgentEffect[] {
+function processToolCall(
+  state: AgentWorkflowState,
+  tc: LLMToolCall
+): { effects: AgentEffect[]; activities: AgentActivity[] } {
   const effects: AgentEffect[] = [];
+  const activities: AgentActivity[] = [];
 
   switch (tc.name) {
     case "signal_task_complete": {
       state.completed = true;
       const args = tc.arguments as { summary?: string };
+      activities.push({ action: "tool_call", toolName: tc.name, summary: args.summary ?? "Task completed." });
       effects.push({
         type: "report_to_orchestrator",
         report: {
@@ -364,6 +474,7 @@ function processToolCall(state: AgentWorkflowState, tc: LLMToolCall): AgentEffec
 
     case "send_peer_message": {
       const args = tc.arguments as { targetAgentId: string; content: string };
+      activities.push({ action: "tool_call", toolName: tc.name, summary: `→ ${args.targetAgentId}: ${args.content}` });
       const target = state.agentDirectory.get(args.targetAgentId);
       if (target?.workflowId) {
         effects.push({
@@ -380,6 +491,7 @@ function processToolCall(state: AgentWorkflowState, tc: LLMToolCall): AgentEffec
 
     case "broadcast_message": {
       const args = tc.arguments as { content: string };
+      activities.push({ action: "tool_call", toolName: tc.name, summary: args.content });
       effects.push({
         type: "send_broadcast",
         broadcast: {
@@ -392,6 +504,7 @@ function processToolCall(state: AgentWorkflowState, tc: LLMToolCall): AgentEffec
 
     case "start_sub_conversation": {
       const args = tc.arguments as { participantIds: string[]; topic: string; durationMs?: number };
+      activities.push({ action: "tool_call", toolName: tc.name, summary: `topic: ${args.topic}` });
       if (state.subConvActive === null) {
         const subConvId = `subconv-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
         const durationMs = args.durationMs ?? 120_000;
@@ -433,6 +546,7 @@ function processToolCall(state: AgentWorkflowState, tc: LLMToolCall): AgentEffec
     }
 
     case "close_sub_conversation": {
+      activities.push({ action: "tool_call", toolName: tc.name, summary: "Closing sub-conversation" });
       if (state.subConvActive) {
         const subConv = state.subConvActive;
         state.subConvActive = null;
@@ -463,17 +577,74 @@ function processToolCall(state: AgentWorkflowState, tc: LLMToolCall): AgentEffec
 
     case "figma_plugin_execute": {
       const args = tc.arguments as { code: string };
+      activities.push({ action: "tool_call", toolName: tc.name, summary: args.code });
+
+      // Phase 1: programmatic linter — instant, free
+      const codeIssues = reviewFigmaCode(args.code);
+      if (codeIssues.length > 0) {
+        activities.push({ action: "code_review_rejected", issues: codeIssues });
+        injectToolResult(
+          state,
+          tc.id,
+          JSON.stringify({
+            success: false,
+            codeReview: codeIssues,
+            error: `Code review rejected (${codeIssues.length} issue${codeIssues.length > 1 ? "s" : ""}). Fix and retry.`,
+          })
+        );
+        break;
+      }
+
+      // Phase 2: LLM self-review — store code, ask LLM to confirm
+      activities.push({ action: "code_review_passed", codeSnippet: args.code });
+      state.pendingFigmaCode = { code: args.code, toolCallId: tc.id };
+      injectToolResult(
+        state,
+        tc.id,
+        JSON.stringify({
+          status: "pending_review",
+          message:
+            "Code passed automated checks. Before execution, review it yourself:\n" +
+            "1. Does the code match exactly what the directive asked for?\n" +
+            "2. Are fills/strokes using { r, g, b } without 'a' (alpha)?\n" +
+            "3. Is the code using correct Figma Plugin API methods?\n" +
+            "4. Will the return value confirm what was done?\n\n" +
+            "If the code is correct → call figma_confirm_execute()\n" +
+            "If you spot an issue → call figma_plugin_execute() again with the fix.",
+          codeToReview: args.code,
+        })
+      );
+      break;
+    }
+
+    case "figma_confirm_execute": {
+      activities.push({ action: "tool_call", toolName: tc.name, summary: "Confirmed — executing" });
+      if (!state.pendingFigmaCode) {
+        injectToolResult(
+          state,
+          tc.id,
+          JSON.stringify({
+            success: false,
+            error: "No code pending review. Call figma_plugin_execute() first.",
+          })
+        );
+        break;
+      }
+
+      const pending = state.pendingFigmaCode;
+      state.pendingFigmaCode = null;
+
       effects.push({
         type: "execute_figma_code",
         pluginClientId: state.agent.pluginClientId ?? "",
-        userId: "", // Filled in by the engine adapter
-        code: args.code,
+        userId: "",
+        code: pending.code,
       });
       break;
     }
   }
 
-  return effects;
+  return { effects, activities };
 }
 
 // ---------------------------------------------------------------------------
@@ -546,19 +717,51 @@ function getAgentTools(state: AgentWorkflowState): LLMToolDefinition[] {
     });
   }
 
-  // Add figma_plugin_execute if agent has a plugin client
+  // Add figma tools if agent has a plugin client
   if (state.agent.pluginClientId) {
-    tools.push({
-      name: "figma_plugin_execute",
-      description: "Execute JavaScript code in the connected Figma plugin. ONE small mutation per call (max ~30 lines).",
-      parameters: {
-        type: "object",
-        properties: {
-          code: { type: "string", description: "JavaScript code to execute in the Figma Plugin API" },
+    if (state.pendingFigmaCode) {
+      // Code is pending review — only offer confirm or rewrite
+      tools.push({
+        name: "figma_confirm_execute",
+        description:
+          "Confirm and execute the code you submitted for review. " +
+          "Call this ONLY after reviewing the code shown in the previous tool result. " +
+          "If you found issues, call figma_plugin_execute() with corrected code instead.",
+        parameters: {
+          type: "object",
+          properties: {},
         },
-        required: ["code"],
-      },
-    });
+      });
+      tools.push({
+        name: "figma_plugin_execute",
+        description:
+          "Submit corrected code (replaces the pending code). " +
+          "Use this if your review found issues with the previous submission.",
+        parameters: {
+          type: "object",
+          properties: {
+            code: { type: "string", description: "Corrected JavaScript code to execute in the Figma Plugin API" },
+          },
+          required: ["code"],
+        },
+      });
+    } else {
+      // Normal mode — submit code for review
+      tools.push({
+        name: "figma_plugin_execute",
+        description:
+          "Submit JavaScript code for review then execution in the Figma plugin. " +
+          "The code will be checked before running. ONE small mutation per call (max ~30 lines). " +
+          "Fills/strokes use { r, g, b } — NO 'a' (alpha) key in color objects.",
+        parameters: {
+          type: "object",
+          properties: {
+            code: { type: "string", description: "JavaScript code to execute in the Figma Plugin API" },
+          },
+          required: ["code"],
+        },
+      });
+    }
   }
 
   return tools;

@@ -841,6 +841,9 @@ function CopyDebugButton({
     setLoading(true);
     try {
       // Build client state snapshot
+      // Include orchestration SSE events in the webapp's trace so they're available from Supabase
+      const orchEvents = temporalOrchestration?.events ?? [];
+      const orchAgents = temporalOrchestration?.agents ?? [];
       const clientState: Record<string, unknown> = {
         model,
         agentRole,
@@ -854,6 +857,12 @@ function CopyDebugButton({
             fileName: figmaContext.fileName,
             currentPage: figmaContext.currentPage,
           },
+        } : {}),
+        ...(orchEvents.length > 0 ? {
+          orchestrationEvents: orchEvents,
+          orchestrationAgents: orchAgents,
+          orchestrationWorkflowId: temporalOrchestration?.workflowId,
+          orchestrationCompletedStatus: temporalOrchestration?.completedStatus,
         } : {}),
       };
 
@@ -1932,6 +1941,9 @@ export default function Home() {
     if (autoPushFired.current) return;
     const timer = setTimeout(() => {
       autoPushFired.current = true;
+      // Include orchestration SSE events in the webapp's trace so they're available from Supabase
+      const orchEvents = isFigmaPlugin ? pluginOrch.stream.events : temporal.events;
+      const orchAgents = isFigmaPlugin ? pluginOrch.stream.agents : temporal.agents;
       pushTrace(eventLog.current, {
         model: selectedModel,
         agentRole,
@@ -1940,6 +1952,7 @@ export default function Home() {
         isFigmaPlugin,
         selectedNodeCount: selectedNode?.nodes?.length ?? 0,
         ...(figmaContext ? { figmaContext: { fileKey: figmaContext.fileKey, fileName: figmaContext.fileName } } : {}),
+        ...(orchEvents.length > 0 ? { orchestrationEvents: orchEvents, orchestrationAgents: orchAgents } : {}),
       }, {
         sourceClientId: myClientId,
         sourceShortId: myDisplayShortId,

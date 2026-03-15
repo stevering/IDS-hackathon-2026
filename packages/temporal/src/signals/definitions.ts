@@ -21,6 +21,8 @@ import type {
   PluginDisconnectedPayload,
   AgentReadyPayload,
   AgentDeclinedPayload,
+  GuardrailBlockedPayload,
+  AgentActivityPayload,
 } from "@guardian/orchestrations";
 import type { OrchestrationStatusResponse } from "@guardian/orchestrations";
 
@@ -48,6 +50,12 @@ export const agentReadySignal = defineSignal<[AgentReadyPayload]>("agentReady");
 
 /** Agent declined */
 export const agentDeclinedSignal = defineSignal<[AgentDeclinedPayload]>("agentDeclined");
+
+/** Agent guardrail was triggered (blocked dangerous code) */
+export const guardrailBlockedSignal = defineSignal<[GuardrailBlockedPayload]>("guardrailBlocked");
+
+/** Agent internal activity (thinking, tool calls, code review) for UI visibility */
+export const agentActivitySignal = defineSignal<[AgentActivityPayload]>("agentActivity");
 
 // ---------------------------------------------------------------------------
 // Agent workflow signals

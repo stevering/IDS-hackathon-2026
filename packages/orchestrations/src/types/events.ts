@@ -9,6 +9,7 @@ import type {
   AgentReportStatus,
   AgentChange,
   AgentId,
+  AgentActivity,
 } from "./signals.js";
 
 // ---------------------------------------------------------------------------
@@ -46,6 +47,8 @@ export type OrchestrationSSEEvent =
   | { type: "sub_conv_closed"; subConvId: string; reason: string }
   | { type: "user_input_received"; content: string; targetAgentId?: string }
   | { type: "timer_tick"; remainingMs: number; totalMs: number }
+  | { type: "guardrail_blocked"; agentShortId: string; blockedAction: string; reason: string }
+  | { type: "agent_activity"; agentShortId: string; activities: AgentActivity[] }
   | { type: "orchestration_completed"; status: "completed" | "cancelled" | "timed_out" }
   | { type: "error"; message: string };
 

@@ -166,6 +166,37 @@ export type SubConvNotifyPayload = {
 };
 
 // ---------------------------------------------------------------------------
+// Agent → Orchestrator guardrail notifications
+// ---------------------------------------------------------------------------
+
+export type GuardrailBlockedPayload = {
+  /** Which agent triggered the guardrail */
+  agentShortId: string;
+  /** What was blocked (e.g. "figma.closePlugin()") */
+  blockedAction: string;
+  /** Human-readable reason */
+  reason: string;
+};
+
+// ---------------------------------------------------------------------------
+// Agent activity (internal visibility)
+// ---------------------------------------------------------------------------
+
+export type AgentActivity =
+  | { action: "thinking"; content: string }
+  | { action: "tool_call"; toolName: string; summary: string }
+  | { action: "code_review_rejected"; issues: string[] }
+  | { action: "code_review_passed"; codeSnippet: string }
+  | { action: "code_executed"; success: boolean; summary: string };
+
+export type AgentActivityPayload = {
+  /** Which agent is reporting activity */
+  agentShortId: string;
+  /** Batched activities from one LLM step */
+  activities: AgentActivity[];
+};
+
+// ---------------------------------------------------------------------------
 // User input (browser → workflow)
 // ---------------------------------------------------------------------------
 

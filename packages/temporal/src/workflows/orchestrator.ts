@@ -28,6 +28,8 @@ import {
   checkCompletion,
   handleCancellation,
   handleBroadcastRelay,
+  processGuardrailBlocked,
+  processAgentActivities,
   getAgentViewStates,
   getEventsSince,
   IDLE_NUDGE_MS,
@@ -48,6 +50,8 @@ import {
   subConvNotifySignal,
   broadcastSignal,
   stopSignal,
+  guardrailBlockedSignal,
+  agentActivitySignal,
   statusQuery,
   directiveSignal,
   agentDirectorySignal,
@@ -91,6 +95,14 @@ export async function orchestratorWorkflow(
 
   setHandler(subConvNotifySignal, (notification) => {
     state.subConvNotifications.push(notification);
+  });
+
+  setHandler(guardrailBlockedSignal, (payload) => {
+    state.pendingGuardrails.push(payload);
+  });
+
+  setHandler(agentActivitySignal, (payload) => {
+    state.pendingActivities.push(payload);
   });
 
   setHandler(broadcastSignal, (broadcast) => {
@@ -186,6 +198,8 @@ export async function orchestratorWorkflow(
     const hasWork = () =>
       state.pendingReports.length > 0 ||
       state.userInputQueue.length > 0 ||
+      state.pendingGuardrails.length > 0 ||
+      state.pendingActivities.length > 0 ||
       cancelled;
 
     await condition(hasWork, IDLE_NUDGE_MS);
@@ -197,7 +211,19 @@ export async function orchestratorWorkflow(
       break;
     }
 
-    // Process reports
+    // Process agent activities first (emit-only) — must appear before reports in the timeline
+    if (state.pendingActivities.length > 0) {
+      const activityEffects = processAgentActivities(state);
+      await executeEffects(state, activityEffects, params.userId);
+    }
+
+    // Process guardrail blocked notifications (emit-only)
+    if (state.pendingGuardrails.length > 0) {
+      const guardrailEffects = processGuardrailBlocked(state);
+      await executeEffects(state, guardrailEffects, params.userId);
+    }
+
+    // Process reports (triggers LLM coordination)
     if (state.pendingReports.length > 0) {
       const reportEffects = processReports(state);
       for (const effect of reportEffects) {
