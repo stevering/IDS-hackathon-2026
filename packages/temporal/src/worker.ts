@@ -25,6 +25,18 @@ async function run() {
     namespace,
     taskQueue,
     workflowsPath: new URL("./workflows", import.meta.url).pathname,
+    // In dev, disable webpack cache so workspace dependency changes
+    // (@guardian/orchestrations) are always picked up on restart.
+    // In prod, caching is fine since the bundle is built once at deploy time.
+    ...(process.env.NODE_ENV !== "production" && {
+      bundlerOptions: {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        webpackConfigHook: (config: any) => {
+          config.cache = false;
+          return config;
+        },
+      },
+    }),
     activities: {
       callLLM,
       executeFigmaCode,
