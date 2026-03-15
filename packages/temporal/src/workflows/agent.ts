@@ -212,6 +212,8 @@ export async function agentWorkflow(input: AgentWorkflowInput): Promise<void> {
           .map((tc) => tc.id);
         let figmaToolCallIdx = 0;
 
+        const mainPendingCodeExecuted: import("@guardian/orchestrations").AgentActivity[] = [];
+
         for (const rEffect of responseEffects) {
           if (rEffect.type === "execute_figma_code") {
             const execResult = await executeFigmaCode({
@@ -221,8 +223,7 @@ export async function agentWorkflow(input: AgentWorkflowInput): Promise<void> {
               workflowId: state.orchestratorWorkflowId,
             });
 
-            // Store code_executed activity for the next processLLMResponse batch
-            state.pendingCodeResults.push({
+            mainPendingCodeExecuted.push({
               action: "code_executed" as const,
               success: execResult.success ?? false,
               summary: execResult.success
@@ -236,11 +237,20 @@ export async function agentWorkflow(input: AgentWorkflowInput): Promise<void> {
               injectToolResult(state, toolCallId, JSON.stringify(execResult));
             }
             didExecTool = true;
+          } else if (rEffect.type === "emit_activity") {
+            if (mainPendingCodeExecuted.length > 0) {
+              rEffect.activities.unshift(...mainPendingCodeExecuted.splice(0));
+            }
+            await executeEffect(state, rEffect, input.userId);
           } else if (rEffect.type === "call_llm") {
             pendingLLM = { messages: rEffect.messages, tools: rEffect.tools };
           } else {
             await executeEffect(state, rEffect, input.userId);
           }
+        }
+
+        if (mainPendingCodeExecuted.length > 0) {
+          await executeEffect(state, { type: "emit_activity", activities: mainPendingCodeExecuted }, input.userId);
         }
 
         // Continue LLM loop with correct messages (including tool results)
@@ -286,6 +296,9 @@ async function executeLLMLoop(
       .map((tc) => tc.id);
     let loopFigmaIdx = 0;
 
+    // Collect code_executed results to inject into the emit_activity effect
+    const pendingCodeExecutedActivities: import("@guardian/orchestrations").AgentActivity[] = [];
+
     for (const effect of effects) {
       if (effect.type === "execute_figma_code") {
         const execResult = await executeFigmaCode({
@@ -295,8 +308,8 @@ async function executeLLMLoop(
           workflowId: state.orchestratorWorkflowId,
         });
 
-        // Store code_executed activity for the next processLLMResponse batch
-        state.pendingCodeResults.push({
+        // Store code_executed to inject into the next emit_activity batch
+        pendingCodeExecutedActivities.push({
           action: "code_executed" as const,
           success: execResult.success ?? false,
           summary: execResult.success
@@ -312,10 +325,13 @@ async function executeLLMLoop(
 
         didExecuteTool = true;
         needsContinue = true;
+      } else if (effect.type === "emit_activity") {
+        // Inject any pending code_executed results into this batch
+        if (pendingCodeExecutedActivities.length > 0) {
+          effect.activities.unshift(...pendingCodeExecutedActivities.splice(0));
+        }
+        await executeEffect(state, effect, userId);
       } else if (effect.type === "call_llm") {
-        // Only use effect.messages if we didn't execute tools
-        // (tool results are injected AFTER effects are generated,
-        //  so effect.messages is stale when tools were executed)
         if (!didExecuteTool) {
           messages = effect.messages;
         } else {
@@ -326,6 +342,11 @@ async function executeLLMLoop(
       } else {
         await executeEffect(state, effect, userId);
       }
+    }
+
+    // If code_executed wasn't injected (no emit_activity in this batch), emit separately
+    if (pendingCodeExecutedActivities.length > 0) {
+      await executeEffect(state, { type: "emit_activity", activities: pendingCodeExecutedActivities }, userId);
     }
 
     // If tools were executed but no call_llm effect, still continue

@@ -290,11 +290,6 @@ export function processLLMResponse(
   const effects: AgentEffect[] = [];
   const activities: AgentActivity[] = [];
 
-  // Drain any pending code execution results from previous step
-  if (state.pendingCodeResults.length > 0) {
-    activities.push(...state.pendingCodeResults.splice(0));
-  }
-
   // Emit thinking activity if there's content
   if (content.trim()) {
     activities.push({ action: "thinking", content });

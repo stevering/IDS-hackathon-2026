@@ -261,16 +261,41 @@ export async function orchestratorWorkflow(
       }
     }
 
+    // Flush any activities that arrived during report processing / LLM calls
+    if (state.pendingActivities.length > 0) {
+      const midActivities = processAgentActivities(state);
+      await executeEffects(state, midActivities, params.userId);
+    }
+
     // Check completion
     const completionEffect = checkCompletion(state);
     if (completionEffect) {
       if (completionEffect.type === "complete") {
-        // Grace period before final completion
+        // Grace period — wait for trailing signals from agents
         await sleep(GRACE_PERIOD_MS);
 
         // Check again — new reports may have arrived during grace
         if (state.pendingReports.length > 0) {
           continue;
+        }
+
+        // Final drain loop: keep flushing activities/guardrails until empty.
+        // Signals can arrive during each drain, so we loop until stable.
+        let drainIterations = 0;
+        while (
+          (state.pendingActivities.length > 0 || state.pendingGuardrails.length > 0) &&
+          drainIterations++ < 5
+        ) {
+          if (state.pendingActivities.length > 0) {
+            const finalActivities = processAgentActivities(state);
+            await executeEffects(state, finalActivities, params.userId);
+          }
+          if (state.pendingGuardrails.length > 0) {
+            const finalGuardrails = processGuardrailBlocked(state);
+            await executeEffects(state, finalGuardrails, params.userId);
+          }
+          // Brief yield to let any in-flight signals land
+          await sleep(200);
         }
 
         await saveOrchestrationState({
