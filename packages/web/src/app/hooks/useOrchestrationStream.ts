@@ -167,8 +167,10 @@ export function useOrchestrationStream(workflowId: string | null) {
               break;
           }
 
-          // Append all events to the log
-          next.events = [...prev.events, data as OrchestrationSSEEvent];
+          // Append all events to the log (skip timer_tick noise)
+          if (data.type !== "timer_tick") {
+            next.events = [...prev.events, data as OrchestrationSSEEvent];
+          }
 
           return next;
         });

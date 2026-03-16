@@ -4,6 +4,7 @@ import { useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { OrchestrationSSEEvent, AgentViewState, AgentActivity } from "@guardian/orchestrations";
+import { getEventMeta, getActivityMeta, formatDirection, CATEGORY_COLORS } from "@guardian/orchestrations/event-meta";
 
 // ---------------------------------------------------------------------------
 // Props
@@ -12,111 +13,111 @@ import type { OrchestrationSSEEvent, AgentViewState, AgentActivity } from "@guar
 type Props = {
   events: OrchestrationSSEEvent[];
   agents: AgentViewState[];
-  /**
-   * When set, filter events to only show those relevant to a specific agent.
-   * Always shows: orchestration_started, orchestration_completed, error.
-   * Shows directives/reports/status only if agentShortId matches.
-   * Shows user_input_received only if targetAgentId matches.
-   * Hides orchestrator_thinking and other-agent events.
-   * When undefined: show all events (unchanged behavior for webapp).
-   */
   agentFilter?: string;
-  /** When true, bypass the event type filter and show all events (developer mode). */
   showAllEvents?: boolean;
 };
 
 // ---------------------------------------------------------------------------
-// Event type filter — skip noise events
+// Event visibility (metadata-driven)
 // ---------------------------------------------------------------------------
 
-const HIDDEN_EVENT_TYPES = new Set(["timer_tick", "connected"]);
-
-function isVisibleEvent(e: OrchestrationSSEEvent): boolean {
-  return !HIDDEN_EVENT_TYPES.has(e.type);
+function isVisibleEvent(e: OrchestrationSSEEvent, showAllEvents?: boolean): boolean {
+  if (showAllEvents) return true;
+  return getEventMeta(e).visibleInNormalMode;
 }
 
-/**
- * When agentFilter is set, only show events relevant to a specific agent.
- * Global events (started, completed, error) always pass through.
- * Agent-specific events (directives, reports, status) only pass if they
- * match the agent's shortId. Orchestrator thinking is hidden for plugins.
- */
 function matchesAgentFilter(e: OrchestrationSSEEvent, agentFilter: string): boolean {
   switch (e.type) {
-    // Always visible — global orchestration lifecycle events
     case "orchestration_started":
     case "orchestration_completed":
     case "error":
       return true;
-
-    // Agent-scoped events — show only if agent matches
     case "orchestrator_directive":
     case "agent_status_changed":
     case "agent_report":
     case "guardrail_blocked":
     case "agent_activity":
       return e.agentShortId === agentFilter;
-
-    // User input — show only if targeted at this agent (or untargeted)
     case "user_input_received":
       return !e.targetAgentId || e.targetAgentId === agentFilter;
-
-    // Peer/broadcast messages — show if this agent is sender or receiver
     case "peer_message":
       return e.fromAgentId === agentFilter || e.toAgentId === agentFilter;
     case "broadcast_message":
       return e.fromAgentId === agentFilter;
-
-    // Sub-conversations — show if agent participates
     case "sub_conv_opened":
       return e.participantIds.includes(agentFilter);
     case "sub_conv_message":
       return e.fromAgentId === agentFilter;
-
-    // Orchestrator thinking/input/brief/tool calls — hidden in filtered mode (too noisy for plugin)
     case "orchestrator_brief":
     case "orchestrator_thinking":
     case "orchestrator_tool_call":
+    case "orchestrator_tool_result":
     case "orchestrator_input":
       return false;
-
-    // Hide everything else (timer_tick, sub_conv_closed, etc.)
     default:
       return false;
   }
 }
 
 // ---------------------------------------------------------------------------
-// Collapsible thinking block (amber, matches ThinkingBlock style)
+// Unified EventBlock — collapsible block with metadata header
 // ---------------------------------------------------------------------------
 
-function OrchestratorThinking({ content }: { content: string }) {
-  const [open, setOpen] = useState(false);
+function EventBlock({
+  event,
+  agents,
+  title,
+  subject,
+  preview,
+  defaultOpen = false,
+  colorClass,
+  children,
+}: {
+  event: OrchestrationSSEEvent;
+  agents: AgentViewState[];
+  title: string;
+  subject?: string;
+  preview?: string;
+  defaultOpen?: boolean;
+  colorClass: string;
+  children: React.ReactNode;
+}) {
+  const [open, setOpen] = useState(defaultOpen);
+  const meta = getEventMeta(event);
+  const catColor = CATEGORY_COLORS[meta.category];
+  const dir = formatDirection(meta, event, agents, false);
 
   return (
-    <div className="my-1.5">
+    <div className={`mx-2 sm:mx-4 my-1 rounded-lg border ${colorClass} overflow-hidden`}
+      style={{ background: "rgba(10, 10, 10, 0.35)", backdropFilter: "blur(24px) saturate(1.4)" }}>
       <button
         onClick={() => setOpen(!open)}
-        className="flex items-center gap-2 text-xs px-3 py-1.5 rounded-md transition-colors w-full text-left overflow-hidden min-w-0 cursor-pointer bg-amber-500/10 border border-amber-500/20 text-amber-300 hover:bg-amber-500/15"
+        className="flex items-center gap-1.5 w-full text-left px-2.5 py-1.5 cursor-pointer hover:bg-white/[0.02] transition-colors min-w-0"
       >
         <svg
-          className={`h-3 w-3 shrink-0 transition-transform ${open ? "rotate-90" : ""}`}
+          className={`h-2.5 w-2.5 shrink-0 transition-transform opacity-40 ${open ? "rotate-90" : ""}`}
           viewBox="0 0 24 24"
           fill="currentColor"
         >
           <path d="M8.59 16.59L13.17 12 8.59 7.41 10 6l6 6-6 6z" />
         </svg>
-        <span className="font-medium shrink-0">Orchestrator thinking</span>
-        {!open && (
-          <span className="truncate opacity-60 min-w-0">
-            {content.slice(0, 80)}
-            {content.length > 80 ? "..." : ""}
+        <span className={`text-[7px] px-1 py-px rounded border font-medium uppercase tracking-wider shrink-0 ${catColor}`}>
+          {meta.category}
+        </span>
+        <span className="text-[8px] text-white/25 font-mono shrink-0">{dir}</span>
+        <span className="text-[10px] font-medium opacity-80 shrink-0">{title}</span>
+        {subject && (
+          <span className="text-[10px] opacity-50 shrink-0">{subject}</span>
+        )}
+        {!open && preview && (
+          <span className="text-[10px] opacity-40 truncate min-w-0">
+            {preview.slice(0, 80)}{preview.length > 80 ? "..." : ""}
           </span>
         )}
       </button>
       {open && (
-        <div className="mt-1 ml-5 px-3 py-2 rounded text-xs leading-relaxed border-l-2 border-amber-500/30 text-amber-200/70 whitespace-pre-wrap">
-          {content}
+        <div className="px-3 pb-2 pt-0.5">
+          {children}
         </div>
       )}
     </div>
@@ -124,75 +125,127 @@ function OrchestratorThinking({ content }: { content: string }) {
 }
 
 // ---------------------------------------------------------------------------
-// Individual event renderers
+// Lifecycle pill (for started, completed, status_changed)
+// ---------------------------------------------------------------------------
+
+function LifecyclePill({
+  event,
+  agents,
+  label,
+  detail,
+  colorClass,
+}: {
+  event: OrchestrationSSEEvent;
+  agents: AgentViewState[];
+  label: string;
+  detail?: string;
+  colorClass: string;
+}) {
+  const meta = getEventMeta(event);
+  const catColor = CATEGORY_COLORS[meta.category];
+
+  return (
+    <div className="flex justify-center my-1.5">
+      <div className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[11px] border ${colorClass}`}
+        style={{ background: "rgba(10, 10, 10, 0.35)", backdropFilter: "blur(24px) saturate(1.4)" }}>
+        <span className={`text-[7px] px-1 py-px rounded border font-medium uppercase tracking-wider ${catColor}`}>
+          {meta.category}
+        </span>
+        <span className="font-medium">{label}</span>
+        {detail && <span className="opacity-60">{detail}</span>}
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Render individual events
 // ---------------------------------------------------------------------------
 
 function renderEvent(event: OrchestrationSSEEvent, index: number, agents: AgentViewState[], showAllEvents?: boolean) {
   switch (event.type) {
     // ── Orchestration started ──────────────────────────────────────────
     case "orchestration_started": {
-      const agentLabels = event.agents.map(
-        (a) => `${a.shortId}${a.fileName ? ` (${a.fileName})` : ""}`
-      );
+      const agentLabels = event.agents
+        .map((a) => `${a.shortId}${a.fileName ? ` (${a.fileName})` : ""}`)
+        .join(", ");
       return (
-        <div key={index} className="flex justify-center my-2">
-          <div className="px-3 py-1.5 rounded-full bg-emerald-500/10 border border-emerald-500/15 text-[11px] text-emerald-400/70 max-w-[90%] text-center">
-            <span className="font-medium">Orchestration started</span>
-            {agentLabels.length > 0 && (
-              <span className="text-emerald-400/50 ml-1.5">
-                with {agentLabels.join(", ")}
-              </span>
-            )}
-          </div>
+        <div key={index}>
+          <LifecyclePill
+            event={event}
+            agents={agents}
+            label="Orchestration started"
+            detail={`with ${agentLabels}`}
+            colorClass="bg-emerald-500/10 border-emerald-500/15 text-emerald-400/70"
+          />
         </div>
       );
     }
 
-    // ── Orchestrator brief (System → Orchestrator LLM) ────────────────
+    // ── Orchestrator brief ─────────────────────────────────────────────
     case "orchestrator_brief":
       return (
-        <div key={index} className="mx-2 sm:mx-4 my-1.5">
-          <div className="rounded-lg border border-sky-500/20 bg-sky-500/5 px-3 py-2">
-            <div className="flex items-center gap-2 mb-1">
-              <svg
-                width="12"
-                height="12"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-                className="shrink-0 text-sky-400/70"
-              >
-                <path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z" />
-              </svg>
-              <span className="text-[10px] font-medium text-sky-400/70 uppercase tracking-wider">
-                System brief
-              </span>
-              <span className="text-[10px] text-sky-300/40">
-                &rarr; Orchestrator
-              </span>
-            </div>
+        <div key={index}>
+          <EventBlock
+            event={event}
+            agents={agents}
+            title="Briefing"
+            preview={event.content.split("\n")[0]}
+            defaultOpen={false}
+            colorClass="border-sky-500/20 bg-sky-500/5 text-sky-300"
+          >
             <div className="text-xs text-sky-200/50 leading-relaxed prose prose-invert prose-xs max-w-none">
-              <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                {event.content}
-              </ReactMarkdown>
+              <ReactMarkdown remarkPlugins={[remarkGfm]}>{event.content}</ReactMarkdown>
             </div>
-          </div>
+          </EventBlock>
         </div>
       );
 
-    // ── Orchestrator tool call ────────────────────────────────────────
+    // ── Orchestrator tool call ─────────────────────────────────────────
     case "orchestrator_tool_call": {
       const argsSummary = Object.entries(event.args)
         .map(([k, v]) => `${k}: ${typeof v === "string" ? v : JSON.stringify(v)}`)
         .join(", ");
       return (
-        <div key={index} className="mx-2 sm:mx-4 my-0.5">
-          <div className="ml-4 mr-2 flex items-start gap-1.5 text-[10px] px-2 py-1 rounded border bg-amber-500/5 border-amber-500/10 text-amber-400/60">
-            <span className="font-mono font-medium shrink-0">Orchestrator</span>
-            <span className="font-mono text-amber-300/50">{event.toolName}</span>
-            <span className="truncate opacity-50 min-w-0">{argsSummary}</span>
-          </div>
+        <div key={index}>
+          <EventBlock
+            event={event}
+            agents={agents}
+            title="Tool call"
+            subject={event.toolName}
+            preview={argsSummary}
+            defaultOpen={false}
+            colorClass="border-indigo-500/15 bg-indigo-500/5 text-indigo-300"
+          >
+            <pre className="text-[10px] text-indigo-200/50 whitespace-pre-wrap font-mono">
+              {JSON.stringify(event.args, null, 2)}
+            </pre>
+          </EventBlock>
+        </div>
+      );
+    }
+
+    // ── Orchestrator tool result ───────────────────────────────────────
+    case "orchestrator_tool_result": {
+      const isError = (event as { isError?: boolean }).isError;
+      const result = (event as { result?: string }).result ?? "";
+      const toolName = (event as { toolName?: string }).toolName ?? "";
+      return (
+        <div key={index}>
+          <EventBlock
+            event={event}
+            agents={agents}
+            title={isError ? "Tool error" : "Tool result"}
+            subject={toolName}
+            preview={result}
+            defaultOpen={false}
+            colorClass={isError
+              ? "border-red-500/15 bg-red-500/5 text-red-300"
+              : "border-violet-500/15 bg-violet-500/5 text-violet-300"
+            }
+          >
+            <div className="text-[10px] opacity-70 whitespace-pre-wrap">{result}</div>
+          </EventBlock>
         </div>
       );
     }
@@ -200,48 +253,47 @@ function renderEvent(event: OrchestrationSSEEvent, index: number, agents: AgentV
     // ── Orchestrator thinking ──────────────────────────────────────────
     case "orchestrator_thinking":
       return (
-        <div key={index} className="mx-2 sm:mx-4">
-          <OrchestratorThinking content={event.content} />
+        <div key={index}>
+          <EventBlock
+            event={event}
+            agents={agents}
+            title="Orchestrator"
+            subject="thinking"
+            preview={event.content}
+            defaultOpen={true}
+            colorClass="border-amber-500/20 bg-amber-500/5 text-amber-300"
+          >
+            <div className="text-xs text-amber-200/70 leading-relaxed whitespace-pre-wrap">
+              {event.content}
+            </div>
+          </EventBlock>
         </div>
       );
 
-    // ── Orchestrator directive ─────────────────────────────────────────
+    // ── Orchestrator directive ──────────────────────────────────────────
     case "orchestrator_directive": {
       const targetAgent = agents.find((a) => a.shortId === event.agentShortId);
+      const targetLabel = `→ ${event.agentShortId}${targetAgent?.fileName ? ` (${targetAgent.fileName})` : ""}`;
       return (
-        <div key={index} className="mx-2 sm:mx-4 my-1.5">
-          <div className="rounded-lg border border-amber-500/25 bg-amber-500/10 px-3 py-2">
-            <div className="flex items-center gap-2 mb-1">
-              <svg
-                width="12"
-                height="12"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-                className="shrink-0 text-amber-400/70"
-              >
-                <path d="M16 3h5v5M4 20L21 3M21 16v5h-5M3 4l17 17" />
-              </svg>
-              <span className="text-[10px] font-medium text-amber-400/70 uppercase tracking-wider">
-                Directive
-              </span>
-              <span className="text-[10px] text-amber-300/60">
-                &rarr; {event.agentShortId}
-                {targetAgent?.fileName ? ` (${targetAgent.fileName})` : ""}
-              </span>
-            </div>
+        <div key={index}>
+          <EventBlock
+            event={event}
+            agents={agents}
+            title="Directive"
+            subject={targetLabel}
+            preview={event.content}
+            defaultOpen={true}
+            colorClass="border-amber-500/25 bg-amber-500/10 text-amber-300"
+          >
             <div className="text-xs text-amber-200/60 leading-relaxed prose prose-invert prose-xs max-w-none">
-              <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                {event.content}
-              </ReactMarkdown>
+              <ReactMarkdown remarkPlugins={[remarkGfm]}>{event.content}</ReactMarkdown>
             </div>
-          </div>
+          </EventBlock>
         </div>
       );
     }
 
-    // ── Agent status changed ──────────────────────────────────────────
+    // ── Agent status changed ───────────────────────────────────────────
     case "agent_status_changed": {
       const statusColors: Record<string, string> = {
         active: "text-emerald-400/70 bg-emerald-500/10 border-emerald-500/15",
@@ -250,301 +302,235 @@ function renderEvent(event: OrchestrationSSEEvent, index: number, agents: AgentV
         interrupted: "text-orange-400/70 bg-orange-500/10 border-orange-500/15",
         pending: "text-white/30 bg-white/5 border-white/10",
       };
-      const colorClass =
-        statusColors[event.status] ?? statusColors.pending;
-      const statusLabel =
-        event.status === "active"
-          ? "now active"
-          : event.status === "completed"
-            ? "completed"
-            : event.status === "failed"
-              ? "failed"
-              : event.status === "interrupted"
-                ? "interrupted"
-                : event.status;
+      const colorClass = statusColors[event.status] ?? statusColors.pending;
       return (
-        <div key={index} className="flex justify-center my-1">
-          <div
-            className={`px-2.5 py-0.5 rounded-full text-[10px] border ${colorClass}`}
-          >
-            <span className="font-medium">{event.agentShortId}</span>{" "}
-            {statusLabel}
-          </div>
+        <div key={index}>
+          <LifecyclePill
+            event={event}
+            agents={agents}
+            label={event.agentShortId}
+            detail={event.status}
+            colorClass={colorClass}
+          />
         </div>
       );
     }
 
-    // ── Guardrail blocked ────────────────────────────────────────────
+    // ── Guardrail blocked ──────────────────────────────────────────────
     case "guardrail_blocked":
       return (
-        <div key={index} className="mx-2 sm:mx-4 my-1.5">
-          <div className="ml-4 mr-2 rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2">
-            <div className="flex items-center gap-2 mb-1">
-              <svg
-                width="14"
-                height="14"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-                className="shrink-0 text-red-400"
-              >
-                <path d="M12 9v4m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
-              </svg>
-              <span className="text-[10px] font-bold text-red-400 uppercase tracking-wider">
-                Guardrail
-              </span>
-              <span className="text-[10px] text-red-300/60">
-                {event.agentShortId}
-              </span>
-            </div>
+        <div key={index}>
+          <EventBlock
+            event={event}
+            agents={agents}
+            title="Guardrail"
+            subject={event.agentShortId}
+            preview={`${event.blockedAction} — ${event.reason}`}
+            defaultOpen={true}
+            colorClass="border-red-500/30 bg-red-500/10 text-red-300"
+          >
             <div className="text-xs text-red-200/70 leading-relaxed">
               <span className="font-medium text-red-300/80">{event.blockedAction}</span>
               {" — "}
               {event.reason}
             </div>
-          </div>
+          </EventBlock>
         </div>
       );
 
-    // ── Agent report ──────────────────────────────────────────────────
+    // ── Agent report ───────────────────────────────────────────────────
     case "agent_report": {
       const report = event.report;
-      const statusBadge = report?.status
-        ? report.status === "completed"
-          ? "bg-emerald-500/15 text-emerald-400"
-          : report.status === "failed"
-            ? "bg-red-500/15 text-red-400"
-            : report.status === "needs_input"
-              ? "bg-orange-500/15 text-orange-400"
-              : "bg-violet-500/15 text-violet-400"
-        : null;
-
       return (
-        <div key={index} className="mx-2 sm:mx-4 my-1.5">
-          <div className="ml-4 mr-2 rounded-lg border border-violet-500/20 bg-violet-500/5 px-3 py-2">
-            {/* Header */}
-            <div className="flex items-center gap-2 mb-1">
-              <svg
-                width="12"
-                height="12"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-                className="shrink-0 text-violet-400/70"
-              >
-                <path d="M12 2a4 4 0 014 4v1h2a2 2 0 012 2v10a2 2 0 01-2 2H6a2 2 0 01-2-2V9a2 2 0 012-2h2V6a4 4 0 014-4z" />
-                <circle cx="9" cy="13" r="1" fill="currentColor" />
-                <circle cx="15" cy="13" r="1" fill="currentColor" />
-              </svg>
-              <span className="text-[10px] font-medium text-violet-400/70">
-                Agent {event.agentShortId}
-              </span>
-              {statusBadge && (
-                <span
-                  className={`text-[9px] px-1.5 py-0.5 rounded font-medium uppercase tracking-wider ${statusBadge}`}
-                >
-                  {report!.status}
-                </span>
-              )}
-              {report?.timestamp && (
-                <span className="text-[10px] text-white/20 ml-auto">
-                  {new Date(report.timestamp).toLocaleTimeString([], {
-                    hour: "2-digit",
-                    minute: "2-digit",
-                  })}
-                </span>
-              )}
-            </div>
-
-            {/* Summary */}
+        <div key={index}>
+          <EventBlock
+            event={event}
+            agents={agents}
+            title="Report"
+            subject={`${event.agentShortId} · ${report?.status ?? "unknown"}`}
+            preview={report?.summary}
+            defaultOpen={true}
+            colorClass="border-violet-500/20 bg-violet-500/5 text-violet-300"
+          >
             {report?.summary && (
               <div className="text-xs text-white/60 leading-relaxed prose prose-invert prose-xs max-w-none">
-                <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                  {report.summary}
-                </ReactMarkdown>
+                <ReactMarkdown remarkPlugins={[remarkGfm]}>{report.summary}</ReactMarkdown>
               </div>
             )}
-
-            {/* Changes list */}
             {report?.changes && report.changes.length > 0 && (
               <details className="mt-1.5">
                 <summary className="text-[10px] text-white/30 cursor-pointer hover:text-white/50">
-                  {report.changes.length} change{report.changes.length > 1 ? "s" : ""} made
+                  {report.changes.length} change{report.changes.length > 1 ? "s" : ""}
                 </summary>
                 <ul className="mt-1 space-y-0.5 ml-3">
                   {report.changes.map((c, ci) => (
-                    <li
-                      key={ci}
-                      className="text-[10px] text-white/40 flex items-start gap-1.5"
-                    >
+                    <li key={ci} className="text-[10px] text-white/40 flex items-start gap-1.5">
                       <span className="shrink-0 mt-0.5 w-1.5 h-1.5 rounded-full bg-violet-500/30" />
                       <span>
-                        <span className="text-violet-400/50 font-medium">
-                          {c.type}
-                        </span>{" "}
-                        {c.description}
-                        {c.nodeName && (
-                          <span className="text-white/20 ml-1">
-                            ({c.nodeName})
-                          </span>
-                        )}
+                        <span className="text-violet-400/50 font-medium">{c.type}</span> {c.description}
+                        {c.nodeName && <span className="text-white/20 ml-1">({c.nodeName})</span>}
                       </span>
                     </li>
                   ))}
                 </ul>
               </details>
             )}
-          </div>
+          </EventBlock>
         </div>
       );
     }
 
-    // ── Peer message ──────────────────────────────────────────────────
+    // ── Peer message ───────────────────────────────────────────────────
     case "peer_message":
       return (
-        <div key={index} className="mx-2 sm:mx-4 my-1.5">
-          <div className="ml-4 mr-2 rounded-lg border border-violet-500/20 bg-violet-500/5 px-3 py-2">
-            <div className="flex items-center gap-2 mb-1">
-              <span className="text-[10px] font-medium text-violet-400/70">
-                {event.fromAgentId}
-              </span>
-              <span className="text-[10px] text-white/30">
-                &rarr; {event.toAgentId}
-              </span>
-            </div>
+        <div key={index}>
+          <EventBlock
+            event={event}
+            agents={agents}
+            title="Peer msg"
+            subject={`${event.fromAgentId} → ${event.toAgentId}`}
+            preview={event.content}
+            defaultOpen={true}
+            colorClass="border-violet-500/20 bg-violet-500/5 text-violet-300"
+          >
             <div className="text-xs text-white/60 leading-relaxed prose prose-invert prose-xs max-w-none">
-              <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                {event.content}
-              </ReactMarkdown>
+              <ReactMarkdown remarkPlugins={[remarkGfm]}>{event.content}</ReactMarkdown>
             </div>
-          </div>
+          </EventBlock>
         </div>
       );
 
-    // ── Broadcast message ─────────────────────────────────────────────
+    // ── Broadcast message ──────────────────────────────────────────────
     case "broadcast_message":
       return (
-        <div key={index} className="mx-2 sm:mx-4 my-1.5">
-          <div className="ml-4 mr-2 rounded-lg border border-violet-500/20 bg-violet-500/5 px-3 py-2">
-            <div className="flex items-center gap-2 mb-1">
-              <span className="text-[10px] font-medium text-violet-400/70">
-                {event.fromAgentId}
-              </span>
-              <span className="text-[10px] text-white/30">broadcast</span>
-            </div>
+        <div key={index}>
+          <EventBlock
+            event={event}
+            agents={agents}
+            title="Broadcast"
+            subject={event.fromAgentId}
+            preview={event.content}
+            defaultOpen={true}
+            colorClass="border-violet-500/20 bg-violet-500/5 text-violet-300"
+          >
             <div className="text-xs text-white/60 leading-relaxed prose prose-invert prose-xs max-w-none">
-              <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                {event.content}
-              </ReactMarkdown>
+              <ReactMarkdown remarkPlugins={[remarkGfm]}>{event.content}</ReactMarkdown>
             </div>
-          </div>
+          </EventBlock>
         </div>
       );
 
-    // ── Sub-conversation opened ───────────────────────────────────────
+    // ── Sub-conversation opened ────────────────────────────────────────
     case "sub_conv_opened":
       return (
-        <div key={index} className="flex justify-center my-1">
-          <div className="px-2.5 py-0.5 rounded-full text-[10px] border border-violet-500/15 bg-violet-500/10 text-violet-400/70">
-            Sub-conversation: <span className="font-medium">{event.topic}</span>{" "}
-            ({event.participantIds.join(", ")})
-          </div>
+        <div key={index}>
+          <LifecyclePill
+            event={event}
+            agents={agents}
+            label="Sub-conv"
+            detail={`${event.topic} (${event.participantIds.join(", ")})`}
+            colorClass="bg-violet-500/10 border-violet-500/15 text-violet-400/70"
+          />
         </div>
       );
 
-    // ── Sub-conversation message ──────────────────────────────────────
+    // ── Sub-conversation message ───────────────────────────────────────
     case "sub_conv_message":
       return (
-        <div key={index} className="mx-2 sm:mx-4 my-1">
-          <div className="ml-8 mr-2 rounded-lg border border-violet-500/15 bg-violet-500/5 px-3 py-1.5">
-            <div className="flex items-center gap-2 mb-0.5">
-              <span className="text-[10px] font-medium text-violet-400/50">
-                {event.fromAgentId}
-              </span>
-              <span className="text-[9px] text-white/20">sub-conv</span>
-            </div>
+        <div key={index}>
+          <EventBlock
+            event={event}
+            agents={agents}
+            title="Sub-conv msg"
+            subject={event.fromAgentId}
+            preview={event.content}
+            defaultOpen={true}
+            colorClass="border-violet-500/15 bg-violet-500/5 text-violet-300"
+          >
             <div className="text-xs text-white/50 leading-relaxed prose prose-invert prose-xs max-w-none">
-              <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                {event.content}
-              </ReactMarkdown>
+              <ReactMarkdown remarkPlugins={[remarkGfm]}>{event.content}</ReactMarkdown>
             </div>
-          </div>
+          </EventBlock>
         </div>
       );
 
-    // ── Sub-conversation closed ───────────────────────────────────────
+    // ── Sub-conversation closed ────────────────────────────────────────
     case "sub_conv_closed":
       return (
-        <div key={index} className="flex justify-center my-1">
-          <div className="px-2.5 py-0.5 rounded-full text-[10px] border border-white/10 bg-white/5 text-white/30">
-            Sub-conversation closed ({event.reason})
-          </div>
+        <div key={index}>
+          <LifecyclePill
+            event={event}
+            agents={agents}
+            label="Sub-conv closed"
+            detail={event.reason}
+            colorClass="bg-white/5 border-white/10 text-white/30"
+          />
         </div>
       );
 
-    // ── User input received ───────────────────────────────────────────
+    // ── User input received ────────────────────────────────────────────
     case "user_input_received":
       return (
-        <div key={index} className="flex justify-end mx-2 sm:mx-4 my-1.5">
-          <div className="max-w-[80%] rounded-lg border border-blue-500/25 bg-blue-500/15 px-3 py-2">
-            {event.targetAgentId && (
-              <div className="text-[10px] text-blue-400/50 mb-1">
-                &rarr; {event.targetAgentId}
-              </div>
-            )}
-            <div className="text-xs text-blue-200/80 leading-relaxed">
-              {event.content ?? "User input received"}
-            </div>
-          </div>
-        </div>
-      );
-
-    // ── Orchestration completed ───────────────────────────────────────
-    case "orchestration_completed": {
-      const statusStyles: Record<string, string> = {
-        completed:
-          "bg-emerald-500/10 border-emerald-500/15 text-emerald-400/70",
-        cancelled:
-          "bg-amber-500/10 border-amber-500/15 text-amber-400/70",
-        timed_out:
-          "bg-amber-500/10 border-amber-500/15 text-amber-400/70",
-      };
-      const style =
-        statusStyles[event.status] ?? statusStyles.completed;
-      const label =
-        event.status === "completed"
-          ? "Orchestration completed"
-          : event.status === "cancelled"
-            ? "Orchestration cancelled"
-            : "Orchestration timed out";
-      return (
-        <div key={index} className="flex justify-center my-2">
-          <div
-            className={`px-3 py-1.5 rounded-full text-[11px] border font-medium ${style}`}
+        <div key={index}>
+          <EventBlock
+            event={event}
+            agents={agents}
+            title="User"
+            subject={event.targetAgentId ? `→ ${event.targetAgentId}` : undefined}
+            preview={event.content}
+            defaultOpen={true}
+            colorClass="border-blue-500/25 bg-blue-500/10 text-blue-300"
           >
-            {label}
-          </div>
+            <div className="text-xs text-blue-200/80 leading-relaxed">
+              {event.content}
+            </div>
+          </EventBlock>
         </div>
       );
-    }
 
-    // ── Error ─────────────────────────────────────────────────────────
+    // ── Orchestration completed ────────────────────────────────────────
+    case "orchestration_completed":
+      return (
+        <div key={index}>
+          <LifecyclePill
+            event={event}
+            agents={agents}
+            label={
+              event.status === "completed" ? "Orchestration completed"
+                : event.status === "cancelled" ? "Orchestration cancelled"
+                  : "Orchestration timed out"
+            }
+            colorClass={
+              event.status === "completed"
+                ? "bg-emerald-500/10 border-emerald-500/15 text-emerald-400/70"
+                : "bg-amber-500/10 border-amber-500/15 text-amber-400/70"
+            }
+          />
+        </div>
+      );
+
+    // ── Error ──────────────────────────────────────────────────────────
     case "error":
       return (
-        <div key={index} className="mx-2 sm:mx-4 my-1.5">
-          <div className="px-3 py-2 rounded-lg border border-red-500/25 bg-red-500/10 text-xs text-red-300">
-            <span className="font-medium">Error:</span> {event.message}
-          </div>
+        <div key={index}>
+          <EventBlock
+            event={event}
+            agents={agents}
+            title="Error"
+            preview={event.message}
+            defaultOpen={true}
+            colorClass="border-red-500/25 bg-red-500/10 text-red-300"
+          >
+            <div className="text-xs text-red-300">{event.message}</div>
+          </EventBlock>
         </div>
       );
 
-    // ── Agent activity (internal visibility) ─────────────────────────
+    // ── Agent activity ─────────────────────────────────────────────────
     case "agent_activity":
       return (
         <div key={index} className="mx-2 sm:mx-4 my-0.5">
-          <div className="ml-6 mr-2 space-y-0.5">
+          <div className="ml-4 mr-2 space-y-0.5">
             {event.activities.map((act, ai) => (
               <AgentActivityItem key={ai} activity={act} agentShortId={event.agentShortId} />
             ))}
@@ -552,190 +538,160 @@ function renderEvent(event: OrchestrationSSEEvent, index: number, agents: AgentV
         </div>
       );
 
-    // ── Orchestrator input (Guardian → Orchestrator LLM) ─────────────
+    // ── Orchestrator input ─────────────────────────────────────────────
     case "orchestrator_input":
       return (
-        <div key={index} className="mx-2 sm:mx-4 my-0.5">
-          <div className="ml-4 mr-2 rounded border border-white/8 bg-white/[0.02] px-3 py-1.5">
-            <div className="flex items-center gap-1.5 mb-0.5">
-              <span className="text-[9px] font-medium text-white/30 uppercase tracking-wider">
-                Guardian &rarr; Orchestrator
-              </span>
-              {event.fromAgentShortId && (
-                <span className="text-[9px] text-white/20">
-                  (from {event.fromAgentShortId})
-                </span>
-              )}
-            </div>
+        <div key={index}>
+          <EventBlock
+            event={event}
+            agents={agents}
+            title="Input"
+            subject={event.fromAgentShortId ? `from ${event.fromAgentShortId}` : undefined}
+            preview={event.content}
+            defaultOpen={false}
+            colorClass="border-white/8 bg-white/[0.02] text-white/40"
+          >
             <div className="text-[10px] text-white/40 leading-relaxed whitespace-pre-wrap">
-              {event.content.length > 200 ? `${event.content.slice(0, 200)}...` : event.content}
+              {event.content}
             </div>
-          </div>
+          </EventBlock>
         </div>
       );
 
     default:
       if (!showAllEvents) return null;
       return (
-        <div key={index} className="flex items-start gap-2 mx-4 my-1 py-1 opacity-50">
-          <span className="text-[10px] font-mono text-white/30 shrink-0 mt-0.5">{event.type}</span>
-          <span className="text-[10px] font-mono text-white/20 truncate">
-            {JSON.stringify(event).slice(0, 120)}
-          </span>
+        <div key={index}>
+          <EventBlock
+            event={event}
+            agents={agents}
+            title={event.type}
+            preview={JSON.stringify(event).slice(0, 100)}
+            defaultOpen={false}
+            colorClass="border-white/5 bg-white/[0.01] text-white/30"
+          >
+            <pre className="text-[9px] text-white/20 font-mono whitespace-pre-wrap">
+              {JSON.stringify(event, null, 2)}
+            </pre>
+          </EventBlock>
         </div>
       );
   }
 }
 
 // ---------------------------------------------------------------------------
-// Agent activity item renderer
+// Agent activity item (with category pill)
 // ---------------------------------------------------------------------------
 
-function ExpandableActivity({
+function AgentActivityItem({ activity, agentShortId }: { activity: AgentActivity; agentShortId: string }) {
+  const meta = getActivityMeta(activity);
+  const catColor = CATEGORY_COLORS[meta.category];
+
+  const pill = (
+    <span className={`text-[7px] px-1 py-px rounded border font-medium uppercase tracking-wider ${catColor}`}>
+      {meta.category}
+    </span>
+  );
+
+  switch (activity.action) {
+    case "reasoning":
+      return (
+        <ActivityRow pill={pill} label={`${agentShortId} reasoning`} detail={activity.content}
+          colorClass="bg-amber-500/5 border-amber-500/10 text-amber-400/60 hover:bg-amber-500/10" />
+      );
+    case "thinking":
+      return (
+        <ActivityRow pill={pill} label={agentShortId} detail={activity.content}
+          colorClass="bg-cyan-500/5 border-cyan-500/10 text-cyan-400/60 hover:bg-cyan-500/10" />
+      );
+    case "tool_call":
+      return (
+        <ActivityRow pill={pill} label={`${agentShortId} ${activity.toolName}`} detail={activity.summary}
+          colorClass="bg-indigo-500/5 border-indigo-500/10 text-indigo-400/60 hover:bg-indigo-500/10" />
+      );
+    case "code_review_passed":
+      return (
+        <ActivityRow pill={pill} label={`${agentShortId} Linter OK`} detail={activity.codeSnippet}
+          colorClass="bg-emerald-500/5 border-emerald-500/10 text-emerald-400/60 hover:bg-emerald-500/10" />
+      );
+    case "code_review_llm_approved":
+      return (
+        <ActivityRow pill={pill} label={`${agentShortId} Review OK`} detail={activity.codeSnippet}
+          colorClass="bg-emerald-500/5 border-emerald-500/10 text-emerald-400/60 hover:bg-emerald-500/10" />
+      );
+    case "code_review_rejected":
+      return (
+        <ActivityRow pill={pill} label={`${agentShortId} Linter rejected`} detail={activity.issues.join("\n")}
+          colorClass="bg-red-500/10 border-red-500/15 text-red-400/70 hover:bg-red-500/15" />
+      );
+    case "code_review_llm_rejected":
+      return (
+        <ActivityRow pill={pill} label={`${agentShortId} Review rejected`} detail={`${activity.issues}\n\n${activity.codeSnippet}`}
+          colorClass="bg-red-500/10 border-red-500/15 text-red-400/70 hover:bg-red-500/15" />
+      );
+    case "code_executed":
+      return (
+        <ActivityRow pill={pill} label={`${agentShortId} ${activity.success ? "Executed" : "Failed"}`} detail={activity.summary}
+          colorClass={activity.success
+            ? "bg-emerald-500/5 border-emerald-500/10 text-emerald-400/60 hover:bg-emerald-500/10"
+            : "bg-red-500/5 border-red-500/10 text-red-400/60 hover:bg-red-500/10"} />
+      );
+    case "guardian_message":
+      return (
+        <ActivityRow pill={pill} label={`Guardian → ${activity.recipient}`} detail={activity.message}
+          colorClass="bg-white/[0.02] border-white/8 text-white/40 hover:bg-white/[0.04]" />
+      );
+    default:
+      return null;
+  }
+}
+
+function ActivityRow({
+  pill,
   label,
-  preview,
   detail,
   colorClass,
 }: {
+  pill: React.ReactNode;
   label: string;
-  preview: string;
   detail: string;
   colorClass: string;
 }) {
   const [open, setOpen] = useState(false);
   return (
-    <button
-      onClick={() => setOpen(!open)}
-      className={`flex items-start gap-1.5 text-[10px] px-2 py-0.5 rounded transition-colors w-full text-left cursor-pointer border ${colorClass}`}
-    >
-      <svg
-        className={`h-2.5 w-2.5 shrink-0 mt-0.5 transition-transform ${open ? "rotate-90" : ""}`}
-        viewBox="0 0 24 24"
-        fill="currentColor"
+    <div className={`rounded border ${colorClass}`}
+      style={{ background: "rgba(10, 10, 10, 0.35)", backdropFilter: "blur(24px) saturate(1.4)" }}>
+      <button
+        onClick={() => setOpen(!open)}
+        className="flex items-center gap-1.5 text-[10px] px-2 py-0.5 w-full text-left cursor-pointer hover:bg-white/[0.02] transition-colors min-w-0"
       >
-        <path d="M8.59 16.59L13.17 12 8.59 7.41 10 6l6 6-6 6z" />
-      </svg>
-      <span className="font-mono font-medium shrink-0">{label}</span>
-      {!open && <span className="truncate opacity-60 min-w-0">{preview}</span>}
+        <svg
+          className={`h-2.5 w-2.5 shrink-0 transition-transform ${open ? "rotate-90" : ""}`}
+          viewBox="0 0 24 24"
+          fill="currentColor"
+        >
+          <path d="M8.59 16.59L13.17 12 8.59 7.41 10 6l6 6-6 6z" />
+        </svg>
+        {pill}
+        <span className="font-mono font-medium shrink-0">{label}</span>
+        {!open && <span className="truncate opacity-60 min-w-0">{detail.slice(0, 80)}</span>}
+      </button>
       {open && (
-        <span className="whitespace-pre-wrap opacity-80 break-all min-w-0">{detail}</span>
+        <div className="px-2 pb-1.5 pt-0.5 text-[10px] whitespace-pre-wrap opacity-80 break-all border-t border-inherit">
+          {detail}
+        </div>
       )}
-    </button>
+    </div>
   );
-}
-
-function AgentActivityItem({ activity, agentShortId }: { activity: AgentActivity; agentShortId: string }) {
-  switch (activity.action) {
-    case "reasoning":
-      return (
-        <ExpandableActivity
-          label={`${agentShortId} reasoning`}
-          preview={activity.content}
-          detail={activity.content}
-          colorClass="bg-amber-500/5 border-amber-500/10 text-amber-400/60 hover:bg-amber-500/10"
-        />
-      );
-
-    case "thinking":
-      return (
-        <ExpandableActivity
-          label={agentShortId}
-          preview={activity.content}
-          detail={activity.content}
-          colorClass="bg-cyan-500/5 border-cyan-500/10 text-cyan-400/60 hover:bg-cyan-500/10"
-        />
-      );
-
-    case "tool_call":
-      return (
-        <ExpandableActivity
-          label={`${agentShortId} ${activity.toolName}`}
-          preview={activity.summary}
-          detail={activity.summary}
-          colorClass="bg-indigo-500/5 border-indigo-500/10 text-indigo-400/60 hover:bg-indigo-500/10"
-        />
-      );
-
-    case "code_review_passed":
-      return (
-        <ExpandableActivity
-          label={`${agentShortId} Linter OK`}
-          preview={activity.codeSnippet}
-          detail={activity.codeSnippet}
-          colorClass="bg-emerald-500/5 border-emerald-500/10 text-emerald-400/60 hover:bg-emerald-500/10"
-        />
-      );
-
-    case "code_review_llm_approved":
-      return (
-        <ExpandableActivity
-          label={`${agentShortId} Review approved`}
-          preview={activity.codeSnippet}
-          detail={activity.codeSnippet}
-          colorClass="bg-emerald-500/5 border-emerald-500/10 text-emerald-400/60 hover:bg-emerald-500/10"
-        />
-      );
-
-    case "code_review_rejected":
-      return (
-        <ExpandableActivity
-          label={`${agentShortId} Linter rejected`}
-          preview={`${activity.issues.length} issue${activity.issues.length > 1 ? "s" : ""}`}
-          detail={activity.issues.join("\n")}
-          colorClass="bg-red-500/10 border-red-500/15 text-red-400/70 hover:bg-red-500/15"
-        />
-      );
-
-    case "code_review_llm_rejected":
-      return (
-        <ExpandableActivity
-          label={`${agentShortId} Review rejected`}
-          preview={activity.issues}
-          detail={`Issues: ${activity.issues}\n\nCode:\n${activity.codeSnippet}`}
-          colorClass="bg-red-500/10 border-red-500/15 text-red-400/70 hover:bg-red-500/15"
-        />
-      );
-
-    case "code_executed":
-      return (
-        <ExpandableActivity
-          label={`${agentShortId} ${activity.success ? "Executed" : "Failed"}`}
-          preview={activity.summary}
-          detail={activity.summary}
-          colorClass={activity.success
-            ? "bg-emerald-500/5 border-emerald-500/10 text-emerald-400/60 hover:bg-emerald-500/10"
-            : "bg-red-500/5 border-red-500/10 text-red-400/60 hover:bg-red-500/10"
-          }
-        />
-      );
-
-    case "guardian_message":
-      return (
-        <ExpandableActivity
-          label={`Guardian → ${activity.recipient}`}
-          preview={activity.message}
-          detail={activity.message}
-          colorClass="bg-white/[0.02] border-white/8 text-white/40 hover:bg-white/[0.04]"
-        />
-      );
-
-    default:
-      return null;
-  }
 }
 
 // ---------------------------------------------------------------------------
 // Main component
 // ---------------------------------------------------------------------------
 
-/**
- * OrchestrationEventLog — renders a live feed of Temporal orchestration
- * events in the chat area. Filters out noise events (timer_tick, connected)
- * and auto-scrolls to the bottom when new events arrive.
- */
 export function OrchestrationEventLog({ events, agents, agentFilter, showAllEvents }: Props) {
   const visibleEvents = events.filter((e) => {
-    if (!showAllEvents && !isVisibleEvent(e)) return false;
+    if (!isVisibleEvent(e, showAllEvents)) return false;
     if (agentFilter) return matchesAgentFilter(e, agentFilter);
     return true;
   });
@@ -744,7 +700,6 @@ export function OrchestrationEventLog({ events, agents, agentFilter, showAllEven
 
   return (
     <div className="mt-2 mb-4">
-      {/* Section label */}
       <div className="flex items-center gap-2 mx-4 mb-2">
         <div className="h-px flex-1 bg-amber-500/15" />
         <span className="text-[10px] text-amber-400/50 font-medium uppercase tracking-wider shrink-0">
@@ -753,7 +708,6 @@ export function OrchestrationEventLog({ events, agents, agentFilter, showAllEven
         <div className="h-px flex-1 bg-amber-500/15" />
       </div>
 
-      {/* Event list */}
       {visibleEvents.map((event, i) => renderEvent(event, i, agents, showAllEvents))}
     </div>
   );

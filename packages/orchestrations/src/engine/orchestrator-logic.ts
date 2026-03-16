@@ -509,20 +509,23 @@ export function processOrchestratorLLMResponse(
             agentShortId: shortId,
             content: args.content,
           });
+          const successMsg = `Directive sent to #${shortId}. Agent is now working — wait for their report.`;
           state.messageHistory.push({
             role: "tool",
-            content: JSON.stringify({ success: true, message: `Directive sent to #${shortId}` }),
+            content: JSON.stringify({ success: true, message: successMsg }),
             toolCallId: tc.id,
           });
+          effects.push({ type: "emit_event", event: { type: "orchestrator_tool_result", toolName: tc.name, result: successMsg, isError: false } });
+          state.eventLog.push({ type: "orchestrator_tool_result", toolName: tc.name, result: successMsg, isError: false });
         } else {
+          const errorMsg = `Agent #${shortId} not found or has no workflow.`;
           state.messageHistory.push({
             role: "tool",
-            content: JSON.stringify({
-              success: false,
-              error: `Agent #${shortId} not found or has no workflow`,
-            }),
+            content: JSON.stringify({ success: false, error: errorMsg }),
             toolCallId: tc.id,
           });
+          effects.push({ type: "emit_event", event: { type: "orchestrator_tool_result", toolName: tc.name, result: errorMsg, isError: true } });
+          state.eventLog.push({ type: "orchestrator_tool_result", toolName: tc.name, result: errorMsg, isError: true });
         }
         break;
       }
@@ -547,17 +550,23 @@ export function processOrchestratorLLMResponse(
             agentShortId: shortId,
             status: "completed",
           });
+          const doneMsg = `Agent #${shortId} marked as done.`;
           state.messageHistory.push({
             role: "tool",
-            content: JSON.stringify({ success: true, message: `Agent #${shortId} marked as done` }),
+            content: JSON.stringify({ success: true, message: doneMsg }),
             toolCallId: tc.id,
           });
+          effects.push({ type: "emit_event", event: { type: "orchestrator_tool_result", toolName: tc.name, result: doneMsg, isError: false } });
+          state.eventLog.push({ type: "orchestrator_tool_result", toolName: tc.name, result: doneMsg, isError: false });
         } else {
+          const notFoundMsg = `Agent #${shortId} not found.`;
           state.messageHistory.push({
             role: "tool",
-            content: JSON.stringify({ success: false, error: `Agent #${shortId} not found` }),
+            content: JSON.stringify({ success: false, error: notFoundMsg }),
             toolCallId: tc.id,
           });
+          effects.push({ type: "emit_event", event: { type: "orchestrator_tool_result", toolName: tc.name, result: notFoundMsg, isError: true } });
+          state.eventLog.push({ type: "orchestrator_tool_result", toolName: tc.name, result: notFoundMsg, isError: true });
         }
         break;
       }
@@ -570,23 +579,43 @@ export function processOrchestratorLLMResponse(
           content: args.content,
           fromAgentId: "orchestrator",
         });
+        const broadcastMsg = "Broadcast sent to all active agents.";
         state.messageHistory.push({
           role: "tool",
-          content: JSON.stringify({ success: true, message: "Broadcast sent to all active agents" }),
+          content: JSON.stringify({ success: true, message: broadcastMsg }),
           toolCallId: tc.id,
         });
+        effects.push({ type: "emit_event", event: { type: "orchestrator_tool_result", toolName: tc.name, result: broadcastMsg, isError: false } });
+        state.eventLog.push({ type: "orchestrator_tool_result", toolName: tc.name, result: broadcastMsg, isError: false });
         break;
       }
 
       default: {
+        const unknownMsg = `Unknown tool: ${tc.name}`;
         state.messageHistory.push({
           role: "tool",
-          content: JSON.stringify({ success: false, error: `Unknown tool: ${tc.name}` }),
+          content: JSON.stringify({ success: false, error: unknownMsg }),
           toolCallId: tc.id,
         });
+        effects.push({ type: "emit_event", event: { type: "orchestrator_tool_result", toolName: tc.name, result: unknownMsg, isError: true } });
+        state.eventLog.push({ type: "orchestrator_tool_result", toolName: tc.name, result: unknownMsg, isError: true });
         break;
       }
     }
+  }
+
+  // If all agents are now active or done, inject a "wait" message so the LLM
+  // stops sending redundant directives and waits for agent reports instead.
+  const allAssigned = Array.from(state.agents.values()).every(
+    (a) => a.status === "active" || a.status === "completed" || a.status === "failed" || a.status === "interrupted"
+  );
+  if (allAssigned) {
+    state.messageHistory.push({
+      role: "user",
+      content:
+        "All agents have received their directives and are now working. " +
+        "Do NOT send more directives — wait for agent reports before taking any action.",
+    });
   }
 
   // Signal continuation — LLM needs to see tool results

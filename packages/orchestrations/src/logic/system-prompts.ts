@@ -42,8 +42,8 @@ ${agentList}
 ## Rules
 - ALWAYS use tools to communicate — do NOT write [DIRECTIVE] or [AGENT_DONE] in text
 - Assign work to ALL agents when starting — each agent should have a clear, specific task
-- Wait for agent reports before evaluating their work
-- If an agent's work is incomplete, send additional directives via send_agent_directive
+- After sending initial directives to all agents, STOP calling tools and respond with a short acknowledgment. The system will notify you when agents report back. Do NOT re-send directives to agents that already received one.
+- Only send follow-up directives AFTER receiving an agent report that indicates the work is incomplete
 - NEVER execute Figma code yourself — agents do the work
 - Be concise in your coordination messages
 - If an agent reports INTERRUPTED, acknowledge it and adjust the plan`;

@@ -41,6 +41,7 @@ export type OrchestrationSSEEvent =
   | { type: "orchestrator_brief"; content: string }
   | { type: "orchestrator_thinking"; content: string }
   | { type: "orchestrator_tool_call"; toolName: string; args: Record<string, unknown> }
+  | { type: "orchestrator_tool_result"; toolName: string; result: string; isError: boolean }
   | { type: "orchestrator_directive"; agentShortId: string; content: string }
   | { type: "peer_message"; fromAgentId: string; toAgentId: string; content: string }
   | { type: "broadcast_message"; fromAgentId: string; content: string }
