@@ -2781,6 +2781,18 @@ export default function Home() {
       </div>
 
       <div className="flex-1 flex flex-col min-w-0 relative">
+        {/* Local background copy for backdrop-filter in header/input (stacking context isolation) */}
+        <div className="absolute inset-0 overflow-hidden pointer-events-none z-0">
+          <div className="wave-bg-layer wave-bg-1" />
+          <div className="wave-bg-layer wave-bg-2" />
+          <div className="wave-bg-layer wave-bg-3" />
+          <div className="wave-bg-noise" />
+          <div className="aurora aurora-1" />
+          <div className="aurora aurora-2" />
+          <div className="aurora aurora-3" />
+          <div className="aurora aurora-4" />
+          <div className="aurora aurora-5" />
+        </div>
         <header className="absolute top-0 left-0 right-0 z-20 flex flex-col" style={{ background: "rgba(10,10,10,0.3)", backdropFilter: "blur(6px) saturate(1.3)", WebkitBackdropFilter: "blur(6px) saturate(1.3)", boxShadow: "0 4px 24px rgba(0,0,0,0.5), 0 1px 0 rgba(255,255,255,0.06) inset" }}>
           <div className="flex items-center justify-between px-3 sm:px-4 py-3 border-b border-white/30">
           <div className="flex items-center gap-2 sm:gap-3 min-w-0">

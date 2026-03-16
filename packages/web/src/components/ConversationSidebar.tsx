@@ -254,17 +254,39 @@ export function ConversationSidebar({
 
   return (
     <div className="flex flex-col h-full w-full sm:w-72 glass-sidebar shrink-0">
-      {/* Header */}
-      <div className="flex items-center justify-between px-3 py-3 border-b border-white/10">
-        <span className="text-xs font-semibold text-white/60 uppercase tracking-wider">
-          {tab === "conversations" ? "Conversations" : "Settings"}
-        </span>
+      {/* Header with tabs + collapse button */}
+      <div className="flex items-center border-b border-white/10 shrink-0">
+        <button
+          onClick={() => setTab("conversations")}
+          className={`flex-1 flex items-center justify-center gap-1.5 py-3 text-xs transition-colors cursor-pointer ${
+            tab === "conversations" ? "text-white/80 bg-white/5" : "text-white/40 hover:text-white/60"
+          }`}
+        >
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z" />
+          </svg>
+          <span className="hidden sm:inline">Chats</span>
+        </button>
+        <div className="w-px h-4 bg-white/10" />
+        <button
+          onClick={() => setTab("settings")}
+          className={`flex-1 flex items-center justify-center gap-1.5 py-3 text-xs transition-colors cursor-pointer ${
+            tab === "settings" ? "text-white/80 bg-white/5" : "text-white/40 hover:text-white/60"
+          }`}
+        >
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z" />
+            <circle cx="12" cy="12" r="3" />
+          </svg>
+          <span className="hidden sm:inline">Settings</span>
+        </button>
+        <div className="w-px h-4 bg-white/10" />
         <button
           onClick={onToggleCollapse}
-          className="p-1 rounded-md hover:bg-white/10 text-white/40 hover:text-white/80 transition-colors cursor-pointer"
+          className="px-2.5 py-3 text-white/40 hover:text-white/80 transition-colors cursor-pointer"
           title="Collapse sidebar"
         >
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
             <path d="M11 19l-7-7 7-7" />
             <path d="M18 5v14" />
           </svg>
@@ -277,34 +299,6 @@ export function ConversationSidebar({
           {settingsContent}
         </div>
       )}
-
-      {/* Tab bar */}
-      <div className="flex items-center border-t border-white/10 shrink-0">
-        <button
-          onClick={() => setTab("conversations")}
-          className={`flex-1 flex items-center justify-center gap-1.5 py-2.5 text-xs transition-colors cursor-pointer ${
-            tab === "conversations" ? "text-white/80 bg-white/5" : "text-white/40 hover:text-white/60"
-          }`}
-        >
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-            <path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z" />
-          </svg>
-          <span className="hidden sm:inline">Chats</span>
-        </button>
-        <div className="w-px h-4 bg-white/10" />
-        <button
-          onClick={() => setTab("settings")}
-          className={`flex-1 flex items-center justify-center gap-1.5 py-2.5 text-xs transition-colors cursor-pointer ${
-            tab === "settings" ? "text-white/80 bg-white/5" : "text-white/40 hover:text-white/60"
-          }`}
-        >
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-            <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z" />
-            <circle cx="12" cy="12" r="3" />
-          </svg>
-          <span className="hidden sm:inline">Settings</span>
-        </button>
-      </div>
     </div>
   );
 }
