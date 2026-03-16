@@ -64,12 +64,20 @@ The project uses an architecture based on the **Model Context Protocol (MCP)** t
 The repository is structured as a **pnpm monorepo** managed with [Turborepo](https://turbo.build/):
 
 ```
-/                              ← workspace root
+/                              ← workspace root (pnpm + Turborepo)
 ├── packages/
-│   ├── web/                   ← Next.js 16 app  (@guardian/web)
-│   ├── mcp/                   ← MCP server       (@guardian/mcp-server)
-│   └── design-system-sample/  ← Storybook        (@guardian/design-system-sample)
-├── assets/, docs/, tools/     ← static assets & documentation
+│   ├── web/                   ← Next.js 16 app (@guardian/web)
+│   ├── mcp/                   ← MCP server (@guardian/mcp-server)
+│   ├── orchestrations/        ← Pure engine logic (@guardian/orchestrations)
+│   ├── temporal/              ← Temporal.io adapter (@guardian/temporal)
+│   ├── figma-plugin/          ← Figma plugin (@guardian/figma-plugin)
+│   ├── figma-desktop-plugin/  ← Figma desktop plugin (@guardian/figma-desktop-plugin)
+│   ├── figma-widget/          ← Figma widget (@guardian/figma-widget)
+│   ├── bridge/                ← Shared bridge types (@guardian/bridge)
+│   ├── electron-overlay/      ← macOS overlay (@guardian/electron-overlay)
+│   ├── chrome-extension/      ← Chrome extension (@guardian/chrome-extension)
+│   └── design-system-sample/  ← Example design system
+├── logs/                      ← Dev logs (gitignored)
 ├── pnpm-workspace.yaml
 ├── turbo.json
 └── package.json
@@ -224,23 +232,49 @@ Be sure to enable the MCP integration in your Figma Desktop application on port 
 
 ### Getting Started
 
-First, run the development server:
+Run the full development stack with a single command:
 
 ```bash
 pnpm install
-pnpm dev          # starts both web (port 3000) and MCP server (port 3847) via Turborepo
+pnpm dev
 ```
 
-Or start each package individually:
+This starts **everything**:
+
+| Service | Port | Package |
+|---|---|---|
+| Next.js webapp | 3000 | `@guardian/web` |
+| MCP server (HTTP) | 3847 | `@guardian/mcp-server` |
+| Temporal dev server | 7233 | - |
+| Temporal worker | - | `@guardian/temporal` |
+| Figma plugin | - | `@guardian/figma-plugin` |
+| Figma desktop plugin | - | `@guardian/figma-desktop-plugin` |
+| Figma widget | - | `@guardian/figma-widget` |
+| Bridge types | - | `@guardian/bridge` |
+| Electron overlay | - | `@guardian/electron-overlay` |
+
+#### Logs
+
+All output is printed to the terminal **and** written to `logs/dev.log` (gitignored).
+
+#### Individual services
 
 ```bash
-pnpm dev:web      # Next.js only  → http://localhost:3000
-pnpm dev:mcp      # MCP server only → port 3847
+pnpm dev:web              # Next.js only
+pnpm dev:mcp              # MCP server only
+pnpm dev:temporal          # Temporal worker only
+pnpm dev:temporal-server   # Temporal dev server only
+pnpm dev:overlay           # Electron overlay only
+pnpm dev:extension         # Chrome extension (watch)
+```
+
+#### Tests
+
+```bash
+pnpm --filter @guardian/orchestrations test   # Orchestration engine tests
 ```
 
 Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
-This is for now the standalone webapp.
-You can test everything in it.
 
 ## Chat API
 

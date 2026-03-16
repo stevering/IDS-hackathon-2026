@@ -26,6 +26,7 @@ import {
   processQueues,
   processLLMResponse,
   injectToolResult,
+  recordExecResult,
   type AgentWorkflowState,
   type AgentEffect,
   buildAgentSystemPrompt,
@@ -85,6 +86,134 @@ async function notifyGuardrailIfBlocked(
   }
 }
 
+// ---------------------------------------------------------------------------
+// LLM code review (automatic, forced by the system)
+// ---------------------------------------------------------------------------
+
+const REVIEW_SYSTEM_PROMPT = `You are a Figma Plugin API code reviewer. Review the code for correctness before it runs.
+
+Check for:
+1. Correct Figma Plugin API usage (methods, properties, async patterns)
+2. Color objects must use { r, g, b } format — NO 'a' (alpha) key
+3. No figma.closePlugin() — it kills the bridge
+4. No assignment to read-only properties (.children)
+5. Must call await figma.loadFontAsync() before setting .characters or .fontName
+6. No TypeScript syntax (no "as Type" casts — this runs as plain JavaScript)
+7. FrameNode has no .backgroundColor — use .fills instead
+8. GroupNode has no .layoutMode — use figma.createFrame() for auto-layout
+
+Respond with EXACTLY one of:
+- "APPROVED" (on its own line) if the code is correct
+- "REJECTED: <reason>" (on its own line) if you find issues`;
+
+function parseReviewResponse(content: string): { approved: boolean; reason?: string } {
+  const lines = content.trim().split("\n");
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (/^APPROVED$/i.test(trimmed)) return { approved: true };
+    const match = trimmed.match(/^REJECTED:\s*(.+)$/i);
+    if (match) return { approved: false, reason: match[1] };
+  }
+  // Default to approved if the model didn't follow format (fail-open)
+  return { approved: true };
+}
+
+async function handleReviewAndExecute(
+  state: AgentWorkflowState,
+  effect: Extract<AgentEffect, { type: "review_and_execute_figma_code" }>,
+  userId: string,
+  model?: string
+): Promise<void> {
+  // Step 1: Review LLM call (same model, dedicated prompt, no tools)
+  const reviewResult = await callLLM({
+    messages: [
+      { role: "system", content: REVIEW_SYSTEM_PROMPT },
+      { role: "user", content: `Review this Figma Plugin API code:\n\n\`\`\`js\n${effect.code}\n\`\`\`` },
+    ],
+    userId,
+    model,
+    maxTokens: 512,
+  });
+
+  const review = parseReviewResponse(reviewResult.content);
+
+  if (!review.approved) {
+    // Emit rejected activity
+    await executeEffect(state, {
+      type: "emit_activity",
+      activities: [{
+        action: "code_review_llm_rejected" as const,
+        issues: review.reason ?? "Unspecified issues",
+        codeSnippet: effect.code,
+      }],
+    }, userId);
+
+    // Inject rejection as tool result
+    const rejectionResult = JSON.stringify({
+      success: false,
+      error: `Code review rejected: ${review.reason ?? "Unspecified issues"}. Fix and retry.`,
+    });
+
+    await executeEffect(state, {
+      type: "emit_activity",
+      activities: [{
+        action: "guardian_message" as const,
+        recipient: `agent ${state.agent.shortId}`,
+        message: rejectionResult,
+      }],
+    }, userId);
+
+    injectToolResult(state, effect.toolCallId, rejectionResult);
+    recordExecResult(state, false);
+    return;
+  }
+
+  // Emit approved activity
+  await executeEffect(state, {
+    type: "emit_activity",
+    activities: [{
+      action: "code_review_llm_approved" as const,
+      codeSnippet: effect.code,
+    }],
+  }, userId);
+
+  // Step 2: Execute in Figma
+  const execResult = await executeFigmaCode({
+    pluginClientId: effect.pluginClientId || state.agent.pluginClientId || "",
+    userId,
+    code: effect.code,
+    workflowId: state.orchestratorWorkflowId,
+  });
+
+  // Emit code_executed activity
+  await executeEffect(state, {
+    type: "emit_activity",
+    activities: [{
+      action: "code_executed" as const,
+      success: execResult.success ?? false,
+      summary: execResult.success
+        ? `OK${execResult.result ? `: ${String(execResult.result).slice(0, 200)}` : ""}`
+        : (execResult.error?.slice(0, 200) ?? "Execution failed"),
+    }],
+  }, userId);
+
+  await notifyGuardrailIfBlocked(execResult, state);
+
+  // Inject result as tool result
+  const execResultJson = JSON.stringify(execResult);
+  await executeEffect(state, {
+    type: "emit_activity",
+    activities: [{
+      action: "guardian_message" as const,
+      recipient: `agent ${state.agent.shortId}`,
+      message: execResultJson,
+    }],
+  }, userId);
+
+  injectToolResult(state, effect.toolCallId, execResultJson);
+  recordExecResult(state, execResult.success ?? false);
+}
+
 // Re-export for convenience within the workflow sandbox
 export type { AgentWorkflowInput } from "./types.js";
 
@@ -136,12 +265,13 @@ export async function agentWorkflow(input: AgentWorkflowInput): Promise<void> {
   // ── Wait for directory ───────────────────────────────────────────────────
   await condition(() => directoryReceived);
 
-  // ── Inject system prompt ─────────────────────────────────────────────────
+  // ── Inject system prompt (includes task context) ────────────────────────
   const peerAgents = Array.from(state.agentDirectory.values());
   const systemPrompt = buildAgentSystemPrompt(
     input.agent,
     "orchestrator",
-    peerAgents
+    peerAgents,
+    input.task
   );
   state.messageHistory.push({
     role: "system",
@@ -176,58 +306,17 @@ export async function agentWorkflow(input: AgentWorkflowInput): Promise<void> {
         const responseEffects = processLLMResponse(
           state,
           llmResult.content,
-          llmResult.toolCalls
+          llmResult.toolCalls,
+          llmResult.reasoning
         );
 
         // Execute tool effects first, then LLM continuation
         let didExecTool = false;
         let pendingLLM: { messages: typeof effect.messages; tools: typeof effect.tools } | null = null;
 
-        // Collect all figma tool call IDs in order, then match them to execute effects
-        const figmaToolNames = new Set(["figma_plugin_execute", "figma_confirm_execute"]);
-        const figmaToolCallIds = state.messageHistory
-          .flatMap((m) => m.toolCalls ?? [])
-          .filter((tc) => figmaToolNames.has(tc.name))
-          .map((tc) => tc.id);
-        let figmaToolCallIdx = 0;
-
         for (const rEffect of responseEffects) {
-          if (rEffect.type === "execute_figma_code") {
-            const execResult = await executeFigmaCode({
-              pluginClientId: rEffect.pluginClientId || input.agent.pluginClientId || "",
-              userId: input.userId,
-              code: rEffect.code,
-              workflowId: state.orchestratorWorkflowId,
-            });
-
-            // Emit code_executed as its own signal immediately
-            await executeEffect(state, {
-              type: "emit_activity",
-              activities: [{
-                action: "code_executed" as const,
-                success: execResult.success ?? false,
-                summary: execResult.success
-                  ? `OK${execResult.result ? `: ${String(execResult.result).slice(0, 200)}` : ""}`
-                  : (execResult.error?.slice(0, 200) ?? "Execution failed"),
-              }],
-            }, input.userId);
-            await notifyGuardrailIfBlocked(execResult, state);
-
-            // Emit guardian_message for the tool execution result sent back to the agent LLM
-            const execResultJson = JSON.stringify(execResult);
-            await executeEffect(state, {
-              type: "emit_activity",
-              activities: [{
-                action: "guardian_message" as const,
-                recipient: `agent ${state.agent.shortId}`,
-                message: execResultJson,
-              }],
-            }, input.userId);
-
-            const toolCallId = figmaToolCallIds[figmaToolCallIdx++];
-            if (toolCallId) {
-              injectToolResult(state, toolCallId, execResultJson);
-            }
+          if (rEffect.type === "review_and_execute_figma_code") {
+            await handleReviewAndExecute(state, rEffect, input.userId, input.model);
             didExecTool = true;
           } else if (rEffect.type === "emit_activity") {
             await executeEffect(state, rEffect, input.userId);
@@ -268,57 +357,14 @@ async function executeLLMLoop(
 
   while (maxIterations-- > 0 && !state.completed) {
     const llmResult = await callLLM({ messages, tools, userId, model });
-    const effects = processLLMResponse(state, llmResult.content, llmResult.toolCalls);
+    const effects = processLLMResponse(state, llmResult.content, llmResult.toolCalls, llmResult.reasoning);
 
     let needsContinue = false;
     let didExecuteTool = false;
 
-    // Collect figma tool call IDs for sequential matching
-    const loopFigmaNames = new Set(["figma_plugin_execute", "figma_confirm_execute"]);
-    const loopFigmaIds = state.messageHistory
-      .flatMap((m) => m.toolCalls ?? [])
-      .filter((tc) => loopFigmaNames.has(tc.name))
-      .map((tc) => tc.id);
-    let loopFigmaIdx = 0;
-
     for (const effect of effects) {
-      if (effect.type === "execute_figma_code") {
-        const execResult = await executeFigmaCode({
-          pluginClientId: effect.pluginClientId || state.agent.pluginClientId || "",
-          userId,
-          code: effect.code,
-          workflowId: state.orchestratorWorkflowId,
-        });
-
-        // Emit code_executed as its own signal immediately — guarantees visibility
-        await executeEffect(state, {
-          type: "emit_activity",
-          activities: [{
-            action: "code_executed" as const,
-            success: execResult.success ?? false,
-            summary: execResult.success
-              ? `OK${execResult.result ? `: ${String(execResult.result).slice(0, 200)}` : ""}`
-              : (execResult.error?.slice(0, 200) ?? "Execution failed"),
-          }],
-        }, userId);
-        await notifyGuardrailIfBlocked(execResult, state);
-
-        // Emit guardian_message for the tool execution result sent back to the agent LLM
-        const loopExecResultJson = JSON.stringify(execResult);
-        await executeEffect(state, {
-          type: "emit_activity",
-          activities: [{
-            action: "guardian_message" as const,
-            recipient: `agent ${state.agent.shortId}`,
-            message: loopExecResultJson,
-          }],
-        }, userId);
-
-        const toolCallId = loopFigmaIds[loopFigmaIdx++];
-        if (toolCallId) {
-          injectToolResult(state, toolCallId, loopExecResultJson);
-        }
-
+      if (effect.type === "review_and_execute_figma_code") {
+        await handleReviewAndExecute(state, effect, userId, model);
         didExecuteTool = true;
         needsContinue = true;
       } else if (effect.type === "emit_activity") {

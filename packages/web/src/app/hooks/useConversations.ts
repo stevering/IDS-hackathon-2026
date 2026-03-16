@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -54,6 +54,25 @@ export function useConversations(clientId: string, enabled = true) {
 
   const activeConversation = conversations.find((c) => c.id === activeConversationId) ?? null;
 
+  // Root conversations (no parent) — for the sidebar list
+  const rootConversations = useMemo(
+    () => conversations.filter((c) => !c.parent_id),
+    [conversations],
+  );
+
+  // Children map: parentId → sub-conversations (collabs)
+  const childrenMap = useMemo(() => {
+    const map = new Map<string, Conversation[]>();
+    for (const c of conversations) {
+      if (c.parent_id) {
+        const children = map.get(c.parent_id) ?? [];
+        children.push(c);
+        map.set(c.parent_id, children);
+      }
+    }
+    return map;
+  }, [conversations]);
+
   const parallelConversations = conversations.filter(
     (c) =>
       (c.orchestration_id !== null || !!(c.metadata as Record<string, unknown>)?.workflowId) &&
@@ -65,12 +84,9 @@ export function useConversations(clientId: string, enabled = true) {
   const loadConversations = useCallback(async () => {
     setLoading(true);
     try {
-      // Filter by clientId so each browser window only sees its own conversations
-      // (plus shared ones with null client_id)
-      const url = clientIdRef.current
-        ? `/api/conversations?client_id=${encodeURIComponent(clientIdRef.current)}`
-        : "/api/conversations";
-      const res = await fetch(url);
+      // Load all conversations for this user (no client_id filter).
+      // Client badge + filter dropdown in the sidebar handle per-client views.
+      const res = await fetch("/api/conversations");
       if (!res.ok) {
         console.warn("[Conversations] GET /api/conversations failed:", res.status, await res.text().catch(() => ""));
         return;
@@ -182,8 +198,9 @@ export function useConversations(clientId: string, enabled = true) {
     }): Promise<Conversation | null> => {
       const conv = await createConversationInternal(opts);
       const isOrchConv = opts?.orchestrationId || opts?.metadata?.workflowId;
-      if (conv && !isOrchConv) {
-        // Auto-switch to new standalone conversations
+      const isSubConv = !!opts?.parentId;
+      if (conv && !isOrchConv && !isSubConv) {
+        // Auto-switch to new standalone conversations (not sub-conversations)
         setActiveConversationId(conv.id);
         // Mark as active on server so F5 restores the right conversation
         fetch(`/api/conversations/${conv.id}`, {
@@ -267,7 +284,9 @@ export function useConversations(clientId: string, enabled = true) {
   }, [createConversationInternal]);
 
   return {
-    conversations,
+    conversations: rootConversations,
+    allConversations: conversations,
+    childrenMap,
     activeConversation,
     activeConversationId,
     parallelConversations,

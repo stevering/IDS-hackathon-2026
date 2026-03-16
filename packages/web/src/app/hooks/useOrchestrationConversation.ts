@@ -17,6 +17,7 @@ type UseOrchestrationConversationParams = {
   /** Create a new conversation */
   createConversation: (opts?: {
     title?: string;
+    parentId?: string;
     orchestrationId?: string;
     metadata?: Record<string, unknown>;
   }) => Promise<Conversation | null>;
@@ -35,6 +36,8 @@ type UseOrchestrationConversationReturn = {
   switchBackToChat: () => void;
   /** Whether an orchestration conversation exists (active or completed) */
   hasActiveOrchestration: boolean;
+  /** Whether the active conversation is the parent or sub-conv of the orchestration */
+  isRelatedToOrchestration: boolean;
   /** Dismiss the orchestration (clear state, e.g. after user acknowledges completion) */
   dismiss: () => void;
 };
@@ -116,15 +119,20 @@ export function useOrchestrationConversation({
     previousConvIdRef.current = activeConversationId;
 
     (async () => {
-      // Don't pass orchestrationId (UUID column) — use metadata instead
+      console.log("[OrchConv] Creating sub-conversation for workflowId:", workflowId, "parentId:", activeConversationId);
+      // Link as sub-conversation of the current chat via parentId
       const conv = await createConversation({
         title: "Orchestration",
+        parentId: activeConversationId ?? undefined,
         metadata: { workflowId },
       });
       if (conv) {
+        console.log("[OrchConv] Created sub-conversation:", conv.id, "parent:", conv.parent_id);
         setOrchestrationConvId(conv.id);
         // Auto-switch to the orchestration conversation
         switchConversation(conv.id);
+      } else {
+        console.warn("[OrchConv] Failed to create sub-conversation");
       }
       creatingRef.current = false;
     })();
@@ -143,11 +151,14 @@ export function useOrchestrationConversation({
   }, [effectiveOrchConvId, activeConversationId, switchConversation]);
 
   const switchBackToChat = useCallback(() => {
-    const target = previousConvIdRef.current;
+    // Use parent_id of the active orchestration conversation (most reliable)
+    const orchConv = existingOrchConv ?? conversations.find(c => c.id === effectiveOrchConvId);
+    const parentTarget = orchConv?.parent_id;
+    const target = parentTarget ?? previousConvIdRef.current;
     if (target) {
       switchConversation(target);
     }
-  }, [switchConversation]);
+  }, [switchConversation, existingOrchConv, conversations, effectiveOrchConvId]);
 
   const dismiss = useCallback(() => {
     setOrchestrationConvId(null);
@@ -156,12 +167,21 @@ export function useOrchestrationConversation({
     processedWorkflowIds.current.clear();
   }, []);
 
+  // Is the current conversation related to this orchestration? (parent or sub-conv)
+  const orchConvObj = existingOrchConv ?? conversations.find(c => c.id === effectiveOrchConvId);
+  const parentConvId = orchConvObj?.parent_id ?? null;
+  const isRelatedToOrchestration = effectiveOrchConvId !== null && (
+    activeConversationId === effectiveOrchConvId ||  // viewing the sub-conv
+    activeConversationId === parentConvId            // viewing the parent conv
+  );
+
   return {
     isInOrchestrationConversation,
     orchestrationConversationId: effectiveOrchConvId,
     switchToOrchestration,
     switchBackToChat,
     hasActiveOrchestration: effectiveOrchConvId !== null,
+    isRelatedToOrchestration,
     dismiss,
   };
 }

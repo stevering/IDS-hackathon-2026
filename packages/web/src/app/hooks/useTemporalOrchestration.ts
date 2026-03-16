@@ -9,7 +9,7 @@
 
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useRef } from "react";
 import { useOrchestrationStream } from "./useOrchestrationStream";
 import type { AgentId } from "@guardian/orchestrations";
 
@@ -18,7 +18,7 @@ import type { AgentId } from "@guardian/orchestrations";
 // ---------------------------------------------------------------------------
 
 type TemporalOrchestrationState = {
-  /** Active workflow ID (null when idle) */
+  /** Active workflow ID set by startOrchestration (null when idle) */
   workflowId: string | null;
   /** Whether we're starting an orchestration */
   starting: boolean;
@@ -30,15 +30,29 @@ type TemporalOrchestrationState = {
 // Hook
 // ---------------------------------------------------------------------------
 
-export function useTemporalOrchestration() {
+/**
+ * @param externalWorkflowId — optional workflowId derived from the active
+ *   conversation's metadata. When set, the stream connects to this workflow
+ *   even if no orchestration was started in this session (e.g. page reload,
+ *   sidebar navigation). The internal workflowId from startOrchestration
+ *   takes priority when set.
+ */
+export function useTemporalOrchestration(externalWorkflowId?: string | null) {
   const [state, setState] = useState<TemporalOrchestrationState>({
     workflowId: null,
     starting: false,
     error: null,
   });
 
-  // SSE stream consumer
-  const stream = useOrchestrationStream(state.workflowId);
+  // Effective workflowId: internal (from startOrchestration) wins, else external
+  const effectiveWorkflowId = state.workflowId ?? externalWorkflowId ?? null;
+
+  // SSE stream consumer — driven by effectiveWorkflowId
+  const stream = useOrchestrationStream(effectiveWorkflowId);
+
+  // Keep a ref for callbacks that need the current effectiveWorkflowId
+  const effectiveWfIdRef = useRef(effectiveWorkflowId);
+  effectiveWfIdRef.current = effectiveWorkflowId;
 
   // ── Start orchestration ────────────────────────────────────────────────
   const startOrchestration = useCallback(
@@ -78,10 +92,11 @@ export function useTemporalOrchestration() {
   // ── Send user input ────────────────────────────────────────────────────
   const sendUserInput = useCallback(
     async (content: string, targetAgentId?: string) => {
-      if (!state.workflowId) return;
+      const wfId = effectiveWfIdRef.current;
+      if (!wfId) return;
 
       try {
-        await fetch(`/api/orchestration/${state.workflowId}/signal`, {
+        await fetch(`/api/orchestration/${wfId}/signal`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -93,15 +108,16 @@ export function useTemporalOrchestration() {
         console.error("[useTemporalOrchestration] sendUserInput failed:", err);
       }
     },
-    [state.workflowId]
+    []
   );
 
   // ── Stop orchestration ─────────────────────────────────────────────────
   const stopOrchestration = useCallback(async () => {
-    if (!state.workflowId) return;
+    const wfId = effectiveWfIdRef.current;
+    if (!wfId) return;
 
     try {
-      await fetch(`/api/orchestration/${state.workflowId}/signal`, {
+      await fetch(`/api/orchestration/${wfId}/signal`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ signal: "stop" }),
@@ -109,7 +125,7 @@ export function useTemporalOrchestration() {
     } catch (err) {
       console.error("[useTemporalOrchestration] stop failed:", err);
     }
-  }, [state.workflowId]);
+  }, []);
 
   // ── Reset (after completion) ───────────────────────────────────────────
   const reset = useCallback(() => {
@@ -119,10 +135,10 @@ export function useTemporalOrchestration() {
 
   return {
     // State
-    workflowId: state.workflowId,
+    workflowId: effectiveWorkflowId,
     starting: state.starting,
     error: state.error,
-    isActive: state.workflowId !== null && !stream.completedStatus,
+    isActive: effectiveWorkflowId !== null && !stream.completedStatus,
 
     // Stream data
     agents: stream.agents,

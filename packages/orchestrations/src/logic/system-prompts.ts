@@ -16,16 +16,17 @@ export function buildOrchestratorSystemPrompt(
   agents: AgentId[]
 ): string {
   const agentList = agents
-    .map((a) => `- #${a.shortId} (${a.label}${a.fileName ? `, file: ${a.fileName}` : ""}, type: ${a.type})`)
+    .map((a) => `- ${a.shortId} (${a.label}${a.fileName ? `, file: ${a.fileName}` : ""}, type: ${a.type})`)
     .join("\n");
 
   return `You are the orchestrator of a multi-agent collaboration session.
 
 Your job is to:
-1. Break down the task into agent-specific directives
-2. Coordinate agent work by evaluating their reports
-3. Mark agents as done when their work is satisfactory
-4. Provide a final summary when all agents are done
+1. Assign specific work to each agent using the send_agent_directive tool
+2. Coordinate agent work by evaluating their progress reports
+3. Send follow-up directives if agents need guidance or corrections
+4. Mark agents as done using the mark_agent_done tool when their work is satisfactory
+5. Provide a final summary when all agents are done
 
 ## Task
 ${task}
@@ -33,21 +34,16 @@ ${task}
 ## Available agents
 ${agentList}
 
-## Communication format
-
-To assign work to agents, use this format:
-[DIRECTIVE:#agentShortId]
-The specific task for this agent...
-[/DIRECTIVE]
-
-To mark an agent as done:
-[AGENT_DONE:#agentShortId]
+## Tools
+- send_agent_directive: Assign a specific task to one agent. Be precise about what the agent should do.
+- mark_agent_done: Mark an agent as done when its work is satisfactory.
+- broadcast_to_agents: Send a message to all active agents.
 
 ## Rules
+- ALWAYS use tools to communicate — do NOT write [DIRECTIVE] or [AGENT_DONE] in text
+- Assign work to ALL agents when starting — each agent should have a clear, specific task
 - Wait for agent reports before evaluating their work
-- If an agent's work is incomplete, send them additional directives
-- Mark each agent done individually with [AGENT_DONE:#shortId]
-- Once all agents are marked done, write a final summary
+- If an agent's work is incomplete, send additional directives via send_agent_directive
 - NEVER execute Figma code yourself — agents do the work
 - Be concise in your coordination messages
 - If an agent reports INTERRUPTED, acknowledge it and adjust the plan`;
@@ -60,11 +56,12 @@ To mark an agent as done:
 export function buildAgentSystemPrompt(
   agent: AgentId,
   orchestratorShortId: string,
-  peerAgents: AgentId[]
+  peerAgents: AgentId[],
+  task?: string
 ): string {
   const peerList = peerAgents
     .filter((a) => a.shortId !== agent.shortId)
-    .map((a) => `- #${a.shortId} (${a.label})`)
+    .map((a) => `- ${a.shortId} (${a.label})`)
     .join("\n");
 
   const figmaSection = agent.pluginClientId
@@ -72,8 +69,17 @@ export function buildAgentSystemPrompt(
 ## Figma execution
 You have access to a Figma plugin via figma_plugin_execute.
 - Execute ONE small mutation per call (max ~30 lines of code)
-- Always verify your changes after execution
-- If execution fails, diagnose and retry`
+- Code is automatically reviewed before execution
+- If execution fails, diagnose the error and retry with corrected code
+- Always verify your changes after execution`
+    : "";
+
+  const taskSection = task
+    ? `
+## Collaboration task
+${task}
+
+The orchestrator will send you a specific directive for your part of this task. Wait for it.`
     : "";
 
   return `You are agent #${agent.shortId} in a multi-agent collaboration.
@@ -89,6 +95,7 @@ ${agent.fileName ? `You are working on file: ${agent.fileName}` : ""}
 
 ## Peer agents
 ${peerList || "(none)"}
+${taskSection}
 
 ## Communication tools
 - signal_task_complete: Call this when your assigned task is DONE

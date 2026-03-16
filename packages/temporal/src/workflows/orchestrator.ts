@@ -20,10 +20,10 @@ import {
   createOrchestratorState,
   generateStartEffects,
   generateDirectoryEffects,
-  generatePlanningCall,
-  processPlanningResponse,
+  generateBriefAndFirstCall,
+  processOrchestratorLLMResponse,
+  getOrchestratorTools,
   processReports,
-  processCoordinationResponse,
   processUserInput,
   checkCompletion,
   handleCancellation,
@@ -42,6 +42,7 @@ import type {
   StartOrchestrationParams,
   OrchestrationResult,
   AgentId,
+  LLMToolDefinition,
 } from "@guardian/orchestrations";
 
 import {
@@ -179,17 +180,24 @@ export async function orchestratorWorkflow(
     }
   }
 
-  // ── Phase 3: LLM planning ───────────────────────────────────────────────
-  const planningCall = generatePlanningCall(state);
-  if (planningCall.type === "call_llm") {
-    const llmResult = await callLLM({
-      messages: planningCall.messages,
-      userId: params.userId,
-      model: params.model,
-    });
+  // ── Phase 3: System brief + orchestrator tool-based planning ────────────
+  //
+  // 1. System injects context into orchestrator history (deterministic)
+  // 2. Agents already have task context in their system prompt (deterministic)
+  // 3. Orchestrator LLM is called with tools — it decides directives itself
+  //
+  const briefEffects = generateBriefAndFirstCall(state);
+  const briefNonLLM = briefEffects.filter((e) => e.type !== "call_llm");
+  const briefLLM = briefEffects.find((e) => e.type === "call_llm");
+  await executeEffects(state, briefNonLLM, params.userId);
 
-    const directiveEffects = processPlanningResponse(state, llmResult.content);
-    await executeEffects(state, directiveEffects, params.userId);
+  if (briefLLM && briefLLM.type === "call_llm") {
+    await executeOrchestratorLLMLoop(
+      state,
+      briefLLM.messages,
+      briefLLM.tools ?? getOrchestratorTools(state),
+      params
+    );
   }
 
   // ── Phase 4: Coordination loop ──────────────────────────────────────────
@@ -223,21 +231,20 @@ export async function orchestratorWorkflow(
       await executeEffects(state, guardrailEffects, params.userId);
     }
 
-    // Process reports (triggers LLM coordination)
+    // Process reports (triggers orchestrator LLM with tools)
     if (state.pendingReports.length > 0) {
       const reportEffects = processReports(state);
       for (const effect of reportEffects) {
         if (effect.type === "call_llm") {
-          const llmResult = await callLLM({
-            messages: effect.messages,
-            userId: params.userId,
-          });
-
-          const coordEffects = processCoordinationResponse(state, llmResult.content);
-          await executeEffects(state, coordEffects, params.userId);
+          await executeOrchestratorLLMLoop(
+            state,
+            effect.messages,
+            effect.tools ?? getOrchestratorTools(state),
+            params
+          );
         }
       }
-      // Re-emit non-LLM effects
+      // Execute non-LLM effects (emit_event, etc.)
       await executeEffects(
         state,
         reportEffects.filter((e) => e.type !== "call_llm"),
@@ -250,13 +257,12 @@ export async function orchestratorWorkflow(
       const inputEffects = processUserInput(state);
       for (const effect of inputEffects) {
         if (effect.type === "call_llm") {
-          const llmResult = await callLLM({
-            messages: effect.messages,
-            userId: params.userId,
-          });
-
-          const coordEffects = processCoordinationResponse(state, llmResult.content);
-          await executeEffects(state, coordEffects, params.userId);
+          await executeOrchestratorLLMLoop(
+            state,
+            effect.messages,
+            effect.tools ?? getOrchestratorTools(state),
+            params
+          );
         }
       }
     }
@@ -349,6 +355,50 @@ export async function orchestratorWorkflow(
   });
 
   return result;
+}
+
+// ---------------------------------------------------------------------------
+// Orchestrator LLM tool-call loop
+// ---------------------------------------------------------------------------
+
+async function executeOrchestratorLLMLoop(
+  state: OrchestratorState,
+  messages: Parameters<typeof callLLM>[0]["messages"],
+  tools: LLMToolDefinition[],
+  params: { userId: string; model?: string }
+): Promise<void> {
+  let currentMessages = messages;
+  let currentTools = tools;
+  let maxIterations = 10;
+
+  while (maxIterations-- > 0) {
+    const llmResult = await callLLM({
+      messages: currentMessages,
+      tools: currentTools,
+      userId: params.userId,
+      model: params.model,
+    });
+
+    const effects = processOrchestratorLLMResponse(
+      state,
+      llmResult.content,
+      llmResult.toolCalls,
+      llmResult.reasoning
+    );
+
+    // Separate continuation call_llm from other effects
+    const nonLLM = effects.filter((e) => e.type !== "call_llm");
+    const continuation = effects.find((e) => e.type === "call_llm");
+
+    await executeEffects(state, nonLLM, params.userId);
+
+    if (continuation && continuation.type === "call_llm") {
+      currentMessages = continuation.messages;
+      currentTools = continuation.tools ?? currentTools;
+    } else {
+      break;
+    }
+  }
 }
 
 // ---------------------------------------------------------------------------

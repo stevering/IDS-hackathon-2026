@@ -17,6 +17,8 @@ export async function GET() {
     defaultModel: row?.default_model ?? null,
     approvalMode: row?.approval_mode ?? "trust",
     guardEnabled: row?.guard_enabled ?? true,
+    developerMode: row?.developer_mode ?? false,
+    devShowAllEvents: row?.dev_show_all_events ?? false,
   });
 }
 
@@ -31,14 +33,16 @@ export async function PATCH(req: Request) {
     return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
   }
 
-  const { autoAccept, defaultModel, approvalMode, guardEnabled } = body;
+  const { autoAccept, defaultModel, approvalMode, guardEnabled, developerMode, devShowAllEvents } = body;
 
   // At least one field must be provided
   if (
     typeof autoAccept === "undefined" &&
     typeof defaultModel === "undefined" &&
     typeof approvalMode === "undefined" &&
-    typeof guardEnabled === "undefined"
+    typeof guardEnabled === "undefined" &&
+    typeof developerMode === "undefined" &&
+    typeof devShowAllEvents === "undefined"
   ) {
     return NextResponse.json(
       { error: "At least one setting is required" },
@@ -59,6 +63,12 @@ export async function PATCH(req: Request) {
   if (typeof guardEnabled !== "undefined" && typeof guardEnabled !== "boolean") {
     return NextResponse.json({ error: "guardEnabled must be a boolean" }, { status: 400 });
   }
+  if (typeof developerMode !== "undefined" && typeof developerMode !== "boolean") {
+    return NextResponse.json({ error: "developerMode must be a boolean" }, { status: 400 });
+  }
+  if (typeof devShowAllEvents !== "undefined" && typeof devShowAllEvents !== "boolean") {
+    return NextResponse.json({ error: "devShowAllEvents must be a boolean" }, { status: 400 });
+  }
 
   // Build RPC params — only pass what was provided
   const params: Record<string, unknown> = {};
@@ -66,10 +76,12 @@ export async function PATCH(req: Request) {
   if (typeof defaultModel !== "undefined") params.p_default_model = defaultModel;
   if (typeof approvalMode !== "undefined") params.p_approval_mode = approvalMode;
   if (typeof guardEnabled !== "undefined") params.p_guard_enabled = guardEnabled;
+  if (typeof developerMode !== "undefined") params.p_developer_mode = developerMode;
+  if (typeof devShowAllEvents !== "undefined") params.p_dev_show_all_events = devShowAllEvents;
 
   const { error } = await supabase.rpc("update_settings", params);
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
-  return NextResponse.json({ ok: true, autoAccept, defaultModel, approvalMode, guardEnabled });
+  return NextResponse.json({ ok: true, autoAccept, defaultModel, approvalMode, guardEnabled, developerMode, devShowAllEvents });
 }

@@ -1,9 +1,12 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import type { PresenceClient } from "@/types/presence";
 
-function timeAgo(ts: number): string {
-  const seconds = Math.floor((Date.now() - ts) / 1000);
+// ── Helpers ─────────────────────────────────────────────────────────────────
+
+function timeAgo(iso: string): string {
+  const seconds = Math.floor((Date.now() - new Date(iso).getTime()) / 1000);
   if (seconds < 60) return "just now";
   const minutes = Math.floor(seconds / 60);
   if (minutes < 60) return `${minutes}m ago`;
@@ -12,32 +15,106 @@ function timeAgo(ts: number): string {
   return `${Math.floor(hours / 24)}d ago`;
 }
 
-function typeIcon(type: PresenceClient["type"]): string {
+function typeIcon(type: string): string {
   switch (type) {
     case "figma-plugin": return "F";
     case "webapp": return "W";
     case "overlay": return "O";
+    default: return "?";
   }
 }
 
-function typeLabel(type: PresenceClient["type"]): string {
+function typeLabel(type: string): string {
   switch (type) {
     case "figma-plugin": return "Figma Plugin";
     case "webapp": return "Webapp";
     case "overlay": return "Overlay";
+    default: return type;
   }
 }
 
+// ── Types ───────────────────────────────────────────────────────────────────
+
+type DbClient = {
+  id: string;
+  client_id: string;
+  client_type: string;
+  short_id: string;
+  label: string | null;
+  file_key: string | null;
+  last_seen_at: string;
+  created_at: string;
+  agent_role: string;
+};
+
+type MergedClient = {
+  clientId: string;
+  shortId: string;
+  type: string;
+  label: string;
+  fileKey?: string;
+  lastSeen: string;
+  createdAt: string;
+  online: boolean;
+  agentRole: string;
+  mcpInfo?: PresenceClient["mcpInfo"];
+  figmaContext?: PresenceClient["figmaContext"];
+};
+
+// ── Props ───────────────────────────────────────────────────────────────────
+
 type Props = {
-  clients: PresenceClient[];
+  clients: PresenceClient[];  // Realtime presence (online clients)
   loading?: boolean;
 };
 
-export function ConnectedClients({ clients, loading }: Props) {
-  if (loading) {
+// ── Component ───────────────────────────────────────────────────────────────
+
+export function ConnectedClients({ clients: presenceClients, loading }: Props) {
+  const [dbClients, setDbClients] = useState<DbClient[]>([]);
+  const [dbLoading, setDbLoading] = useState(true);
+
+  // Fetch all registered clients from DB
+  useEffect(() => {
+    fetch("/api/clients")
+      .then((res) => res.json())
+      .then(({ clients }) => setDbClients(clients ?? []))
+      .catch(() => {})
+      .finally(() => setDbLoading(false));
+  }, []);
+
+  // Merge DB clients with Realtime presence
+  const onlineSet = new Set(presenceClients.map((c) => c.clientId));
+
+  const merged: MergedClient[] = dbClients.map((db) => {
+    const rt = presenceClients.find((p) => p.clientId === db.client_id);
+    return {
+      clientId: db.client_id,
+      shortId: rt?.shortId ?? db.short_id,
+      type: db.client_type,
+      label: rt?.label ?? db.label ?? db.client_type,
+      fileKey: rt?.fileKey ?? db.file_key ?? undefined,
+      lastSeen: db.last_seen_at,
+      createdAt: db.created_at,
+      online: onlineSet.has(db.client_id),
+      agentRole: rt?.agentRole ?? db.agent_role,
+      mcpInfo: rt?.mcpInfo,
+      figmaContext: rt?.figmaContext,
+    };
+  });
+
+  // Sort: online first, then by last seen
+  merged.sort((a, b) => {
+    if (a.online !== b.online) return a.online ? -1 : 1;
+    return new Date(b.lastSeen).getTime() - new Date(a.lastSeen).getTime();
+  });
+
+  const isLoading = loading || dbLoading;
+
+  if (isLoading) {
     return (
       <section className="mb-8 p-4 rounded-xl bg-white/[0.04] border border-white/[0.08]">
-        <h2 className="text-sm font-medium mb-3">Connected Clients</h2>
+        <h2 className="text-sm font-medium mb-3">Clients</h2>
         <div className="space-y-2">
           {[1, 2].map((i) => (
             <div key={i} className="h-16 rounded-xl bg-white/[0.03] animate-pulse" />
@@ -47,34 +124,44 @@ export function ConnectedClients({ clients, loading }: Props) {
     );
   }
 
+  const onlineCount = merged.filter((c) => c.online).length;
+
   return (
     <section className="mb-8 p-4 rounded-xl bg-white/[0.04] border border-white/[0.08]">
       <h2 className="text-sm font-medium mb-3">
-        Connected Clients
-        {clients.length > 0 && (
-          <span className="ml-2 text-xs text-white/40">{clients.length}</span>
-        )}
+        Clients
+        <span className="ml-2 text-xs text-white/40">
+          {onlineCount} online / {merged.length} registered
+        </span>
       </h2>
 
-      {clients.length === 0 ? (
-        <p className="text-xs text-white/30">No clients connected</p>
+      {merged.length === 0 ? (
+        <p className="text-xs text-white/30">No clients registered</p>
       ) : (
         <div className="space-y-2">
-          {clients.map((client) => (
+          {merged.map((client) => (
             <div
-              key={client.presenceRef}
-              className="px-4 py-3 rounded-xl bg-white/[0.04] border border-white/[0.06]"
+              key={client.clientId}
+              className={`px-4 py-3 rounded-xl border ${
+                client.online
+                  ? "bg-white/[0.04] border-white/[0.06]"
+                  : "bg-white/[0.02] border-white/[0.04] opacity-60"
+              }`}
             >
               <div className="flex items-center gap-3">
                 {/* Type badge */}
-                <div className="w-7 h-7 rounded-md bg-white/[0.08] flex items-center justify-center text-xs font-mono text-white/60 shrink-0">
+                <div className={`w-7 h-7 rounded-md flex items-center justify-center text-xs font-mono shrink-0 ${
+                  client.online ? "bg-white/[0.08] text-white/60" : "bg-white/[0.04] text-white/30"
+                }`}>
                   {typeIcon(client.type)}
                 </div>
 
                 {/* Main info */}
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2">
-                    <div className="w-2 h-2 rounded-full bg-emerald-400 shrink-0" />
+                    <div className={`w-2 h-2 rounded-full shrink-0 ${
+                      client.online ? "bg-emerald-400" : "bg-white/20"
+                    }`} />
                     <span className="text-sm font-medium truncate">
                       {typeLabel(client.type)}
                     </span>
@@ -84,7 +171,12 @@ export function ConnectedClients({ clients, loading }: Props) {
                   </div>
                   <div className="text-xs text-white/40 mt-0.5 truncate">
                     {client.label}
-                    {client.fileKey && (
+                    {client.figmaContext?.fileName && (
+                      <span className="ml-2 text-white/25">
+                        {client.figmaContext.fileName}
+                      </span>
+                    )}
+                    {!client.figmaContext?.fileName && client.fileKey && (
                       <span className="ml-2 text-white/25">
                         File: {client.fileKey.slice(0, 8)}...
                       </span>
@@ -92,14 +184,23 @@ export function ConnectedClients({ clients, loading }: Props) {
                   </div>
                 </div>
 
-                {/* Connected time */}
-                <span className="text-xs text-white/25 shrink-0">
-                  {timeAgo(client.connectedAt)}
-                </span>
+                {/* Status */}
+                <div className="text-right shrink-0">
+                  <span className={`text-[10px] px-1.5 py-0.5 rounded ${
+                    client.online
+                      ? "bg-emerald-500/15 text-emerald-400"
+                      : "bg-white/5 text-white/30"
+                  }`}>
+                    {client.online ? "online" : "offline"}
+                  </span>
+                  <div className="text-[10px] text-white/20 mt-0.5">
+                    {timeAgo(client.lastSeen)}
+                  </div>
+                </div>
               </div>
 
-              {/* MCP sub-info */}
-              {client.mcpInfo && (
+              {/* MCP sub-info (only for online clients) */}
+              {client.online && client.mcpInfo && (
                 <div className="ml-10 mt-2 space-y-1">
                   {client.mcpInfo.figma && (
                     <div className="flex items-center gap-2 text-xs text-white/35">

@@ -20,6 +20,8 @@ import type {
 import type { AgentViewState, OrchestrationSSEEvent } from "../types/events.js";
 import type { AgentState, StartOrchestrationParams, LLMMessage, OrchestrationResult } from "../types/agents.js";
 import { parseDirectives, parseAgentDoneMarkers } from "../logic/directive-parser.js";
+import { buildOrchestratorSystemPrompt } from "../logic/system-prompts.js";
+import type { LLMToolDefinition, LLMToolCall } from "../types/agents.js";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -69,7 +71,7 @@ export type OrchestratorEffect =
   | { type: "start_agent"; agent: AgentId; task: string; context?: Record<string, unknown> }
   | { type: "send_directory"; agentWorkflowId: string; directory: AgentDirectoryPayload }
   | { type: "send_directive"; agentWorkflowId: string; directive: DirectivePayload }
-  | { type: "call_llm"; messages: LLMMessage[] }
+  | { type: "call_llm"; messages: LLMMessage[]; tools?: LLMToolDefinition[] }
   | { type: "broadcast_to_agents"; excludeShortIds: string[]; content: string; fromAgentId: string }
   | { type: "save_state"; state: OrchestratorState }
   | { type: "cancel_agent"; agentWorkflowId: string }
@@ -158,7 +160,7 @@ export function generateDirectoryEffects(state: OrchestratorState, orchestratorW
 
 export function generatePlanningCall(state: OrchestratorState): OrchestratorEffect {
   const agentList = Array.from(state.agents.values())
-    .map((a) => `- #${a.agent.shortId} (${a.agent.label}${a.agent.fileName ? `, file: ${a.agent.fileName}` : ""})`)
+    .map((a) => `- ${a.agent.shortId} (${a.agent.label}${a.agent.fileName ? `, file: ${a.agent.fileName}` : ""})`)
     .join("\n");
 
   const planningMessage: LLMMessage = {
@@ -226,6 +228,373 @@ export function processPlanningResponse(
       content: directive.content,
     });
   }
+
+  return effects;
+}
+
+// ---------------------------------------------------------------------------
+// Orchestrator tools (structured directive sending)
+// ---------------------------------------------------------------------------
+
+export function getOrchestratorTools(state: OrchestratorState): LLMToolDefinition[] {
+  const agentIds = Array.from(state.agents.keys());
+  return [
+    {
+      name: "send_agent_directive",
+      description:
+        "Send a specific directive/task to one agent. " +
+        `Available agents: ${agentIds.join(", ")}`,
+      parameters: {
+        type: "object",
+        properties: {
+          agentShortId: {
+            type: "string",
+            description: "Short ID of the target agent",
+          },
+          content: {
+            type: "string",
+            description: "The specific task/directive for this agent",
+          },
+          expectedResult: {
+            type: "string",
+            description: "What the agent should achieve (optional)",
+          },
+        },
+        required: ["agentShortId", "content"],
+      },
+    },
+    {
+      name: "mark_agent_done",
+      description: "Mark an agent as done when its work is satisfactory.",
+      parameters: {
+        type: "object",
+        properties: {
+          agentShortId: {
+            type: "string",
+            description: "Short ID of the agent to mark as done",
+          },
+        },
+        required: ["agentShortId"],
+      },
+    },
+    {
+      name: "broadcast_to_agents",
+      description: "Send a message to all active agents.",
+      parameters: {
+        type: "object",
+        properties: {
+          content: {
+            type: "string",
+            description: "Message content",
+          },
+        },
+        required: ["content"],
+      },
+    },
+  ];
+}
+
+// ---------------------------------------------------------------------------
+// Phase 3 (new): System brief + first orchestrator LLM call with tools
+// ---------------------------------------------------------------------------
+
+/**
+ * Injects deterministic context into the orchestrator's message history
+ * and returns a call_llm effect with tools so the orchestrator can
+ * assign directives via structured tool calls.
+ *
+ * No synthetic assistant message — the LLM responds itself.
+ */
+export function generateBriefAndFirstCall(state: OrchestratorState): OrchestratorEffect[] {
+  const agents = Array.from(state.agents.values()).map((a) => a.agent);
+  const effects: OrchestratorEffect[] = [];
+
+  // 1. System prompt
+  state.messageHistory.push({
+    role: "system",
+    content: buildOrchestratorSystemPrompt(state.task, agents),
+  });
+
+  // 2. Synthetic user brief
+  const agentList = agents
+    .map(
+      (a) =>
+        `- ${a.shortId} (${a.label}${a.fileName ? `, file: ${a.fileName}` : ""}, type: ${a.type})`
+    )
+    .join("\n");
+
+  const briefContent =
+    `New orchestration started.\n\n` +
+    `## Task\n${state.task}\n\n` +
+    `## Connected agents\n${agentList}\n\n` +
+    `All agents are connected and have been briefed on the overall task. ` +
+    `Use the send_agent_directive tool to assign specific work to each agent now.`;
+
+  state.messageHistory.push({
+    role: "user",
+    content: briefContent,
+  });
+
+  // 3. Emit brief event so the UI shows the system kickoff
+  effects.push({
+    type: "emit_event",
+    event: { type: "orchestrator_brief", content: briefContent },
+  });
+  state.eventLog.push({ type: "orchestrator_brief", content: briefContent });
+
+  // 4. Return call_llm with tools
+  effects.push({
+    type: "call_llm",
+    messages: [...state.messageHistory],
+    tools: getOrchestratorTools(state),
+  });
+
+  return effects;
+}
+
+// ---------------------------------------------------------------------------
+// Process orchestrator LLM response (tool calls + text fallback)
+// ---------------------------------------------------------------------------
+
+/**
+ * Handles the orchestrator LLM response — both tool-call and text modes.
+ *
+ * - Tool calls: send directives, mark done, broadcast — inject results, signal continuation.
+ * - Text only: fall back to AGENT_DONE markers + broadcast (existing behavior).
+ */
+export function processOrchestratorLLMResponse(
+  state: OrchestratorState,
+  content: string,
+  toolCalls?: LLMToolCall[],
+  reasoning?: string
+): OrchestratorEffect[] {
+  state.messageHistory.push({ role: "assistant", content, toolCalls });
+
+  const effects: OrchestratorEffect[] = [];
+
+  // Log reasoning (model internal thinking, e.g. kimi-k2.5)
+  if (reasoning?.trim()) {
+    effects.push({
+      type: "emit_event",
+      event: { type: "orchestrator_thinking", content: reasoning },
+    });
+    state.eventLog.push({ type: "orchestrator_thinking", content: reasoning });
+  }
+
+  // Log text content (the model's visible response)
+  if (content.trim()) {
+    effects.push({
+      type: "emit_event",
+      event: { type: "orchestrator_thinking", content },
+    });
+    state.eventLog.push({ type: "orchestrator_thinking", content });
+  }
+
+  // ── Text-only response (no tool calls) — legacy fallback ──────────────
+  if (!toolCalls || toolCalls.length === 0) {
+    // Try to parse [DIRECTIVE] blocks (backward compat with models that use text)
+    const directives = parseDirectives(content);
+    for (const directive of directives) {
+      const shortId = directive.agentShortId.replace(/^#/, "");
+      const agentState = state.agents.get(shortId);
+      if (!agentState?.agent.workflowId) continue;
+
+      agentState.status = "active";
+      const payload: DirectivePayload = {
+        directiveId: `dir-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+        content: directive.content,
+        context: state.context,
+        expectedResult: directive.expectedResult,
+      };
+      effects.push({
+        type: "send_directive",
+        agentWorkflowId: agentState.agent.workflowId,
+        directive: payload,
+      });
+      effects.push({
+        type: "emit_event",
+        event: {
+          type: "orchestrator_directive",
+          agentShortId: shortId,
+          content: directive.content,
+        },
+      });
+      state.eventLog.push({
+        type: "orchestrator_directive",
+        agentShortId: shortId,
+        content: directive.content,
+      });
+    }
+
+    // Parse [AGENT_DONE] markers
+    const doneMarkers = parseAgentDoneMarkers(content);
+    for (const shortId of doneMarkers) {
+      const agentState = state.agents.get(shortId);
+      if (agentState && agentState.status !== "completed") {
+        agentState.status = "completed";
+        effects.push({
+          type: "emit_event",
+          event: { type: "agent_status_changed", agentShortId: shortId, status: "completed" },
+        });
+        state.eventLog.push({
+          type: "agent_status_changed",
+          agentShortId: shortId,
+          status: "completed",
+        });
+      }
+    }
+
+    // Broadcast to active agents (if no directives were parsed)
+    if (directives.length === 0) {
+      const activeAgents = Array.from(state.agents.values()).filter(
+        (a) => a.status === "active"
+      );
+      if (activeAgents.length > 0) {
+        effects.push({
+          type: "broadcast_to_agents",
+          excludeShortIds: doneMarkers,
+          content,
+          fromAgentId: "orchestrator",
+        });
+      }
+    }
+
+    return effects;
+  }
+
+  // ── Tool calls ────────────────────────────────────────────────────────
+  for (const tc of toolCalls) {
+    // Emit tool call event for UI visibility
+    const toolCallEvent = {
+      type: "orchestrator_tool_call" as const,
+      toolName: tc.name,
+      args: tc.arguments,
+    };
+    effects.push({ type: "emit_event", event: toolCallEvent });
+    state.eventLog.push(toolCallEvent);
+
+    switch (tc.name) {
+      case "send_agent_directive": {
+        const args = tc.arguments as {
+          agentShortId: string;
+          content: string;
+          expectedResult?: string;
+        };
+        const shortId = args.agentShortId.replace(/^#/, "");
+        const agentState = state.agents.get(shortId);
+
+        if (agentState?.agent.workflowId) {
+          agentState.status = "active";
+          const payload: DirectivePayload = {
+            directiveId: `dir-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+            content: args.content,
+            context: state.context,
+            expectedResult: args.expectedResult,
+          };
+          effects.push({
+            type: "send_directive",
+            agentWorkflowId: agentState.agent.workflowId,
+            directive: payload,
+          });
+          effects.push({
+            type: "emit_event",
+            event: {
+              type: "orchestrator_directive",
+              agentShortId: shortId,
+              content: args.content,
+            },
+          });
+          state.eventLog.push({
+            type: "orchestrator_directive",
+            agentShortId: shortId,
+            content: args.content,
+          });
+          state.messageHistory.push({
+            role: "tool",
+            content: JSON.stringify({ success: true, message: `Directive sent to #${shortId}` }),
+            toolCallId: tc.id,
+          });
+        } else {
+          state.messageHistory.push({
+            role: "tool",
+            content: JSON.stringify({
+              success: false,
+              error: `Agent #${shortId} not found or has no workflow`,
+            }),
+            toolCallId: tc.id,
+          });
+        }
+        break;
+      }
+
+      case "mark_agent_done": {
+        const args = tc.arguments as { agentShortId: string };
+        const shortId = args.agentShortId.replace(/^#/, "");
+        const agentState = state.agents.get(shortId);
+
+        if (agentState) {
+          agentState.status = "completed";
+          effects.push({
+            type: "emit_event",
+            event: {
+              type: "agent_status_changed",
+              agentShortId: shortId,
+              status: "completed",
+            },
+          });
+          state.eventLog.push({
+            type: "agent_status_changed",
+            agentShortId: shortId,
+            status: "completed",
+          });
+          state.messageHistory.push({
+            role: "tool",
+            content: JSON.stringify({ success: true, message: `Agent #${shortId} marked as done` }),
+            toolCallId: tc.id,
+          });
+        } else {
+          state.messageHistory.push({
+            role: "tool",
+            content: JSON.stringify({ success: false, error: `Agent #${shortId} not found` }),
+            toolCallId: tc.id,
+          });
+        }
+        break;
+      }
+
+      case "broadcast_to_agents": {
+        const args = tc.arguments as { content: string };
+        effects.push({
+          type: "broadcast_to_agents",
+          excludeShortIds: [],
+          content: args.content,
+          fromAgentId: "orchestrator",
+        });
+        state.messageHistory.push({
+          role: "tool",
+          content: JSON.stringify({ success: true, message: "Broadcast sent to all active agents" }),
+          toolCallId: tc.id,
+        });
+        break;
+      }
+
+      default: {
+        state.messageHistory.push({
+          role: "tool",
+          content: JSON.stringify({ success: false, error: `Unknown tool: ${tc.name}` }),
+          toolCallId: tc.id,
+        });
+        break;
+      }
+    }
+  }
+
+  // Signal continuation — LLM needs to see tool results
+  effects.push({
+    type: "call_llm",
+    messages: [...state.messageHistory],
+    tools: getOrchestratorTools(state),
+  });
 
   return effects;
 }
@@ -307,10 +676,11 @@ export function processReports(state: OrchestratorState): OrchestratorEffect[] {
     });
   }
 
-  // Ask LLM to evaluate reports
+  // Ask LLM to evaluate reports (with tools for follow-up directives)
   effects.push({
     type: "call_llm",
     messages: [...state.messageHistory],
+    tools: getOrchestratorTools(state),
   });
 
   return effects;
@@ -399,10 +769,11 @@ export function processUserInput(state: OrchestratorState): OrchestratorEffect[]
     });
   }
 
-  // Let LLM process user input
+  // Let LLM process user input (with tools for directives)
   effects.push({
     type: "call_llm",
     messages: [...state.messageHistory],
+    tools: getOrchestratorTools(state),
   });
 
   return effects;

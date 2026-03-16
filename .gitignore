@@ -57,3 +57,6 @@ pnpm-debug.log*
 # electron-vite temp compiled configs
 electron.vite.config.*.mjs
 .playwright-mcp
+
+# dev logs
+logs/

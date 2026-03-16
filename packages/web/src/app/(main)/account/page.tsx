@@ -79,6 +79,11 @@ export default function AccountPage() {
   const [guardEnabled, setGuardEnabled] = useState(true);
   const [savingOrchSettings, setSavingOrchSettings] = useState(false);
 
+  // Developer settings
+  const [developerMode, setDeveloperMode] = useState(false);
+  const [devShowAllEvents, setDevShowAllEvents] = useState(false);
+  const [savingDevSettings, setSavingDevSettings] = useState(false);
+
   const handleDropdownClose = useCallback(() => {
     setDropdownOpen(false);
     setSearch("");
@@ -133,6 +138,8 @@ export default function AccountPage() {
         setDefaultModel(settingsData.defaultModel ?? null);
         if (settingsData.approvalMode) setApprovalMode(settingsData.approvalMode);
         if (typeof settingsData.guardEnabled === "boolean") setGuardEnabled(settingsData.guardEnabled);
+        if (typeof settingsData.developerMode === "boolean") setDeveloperMode(settingsData.developerMode);
+        if (typeof settingsData.devShowAllEvents === "boolean") setDevShowAllEvents(settingsData.devShowAllEvents);
       }
 
       // Build dynamic provider list from Gateway catalog
@@ -702,6 +709,85 @@ export default function AccountPage() {
             />
           </button>
         </div>
+      </section>
+
+      {/* Developer settings */}
+      <section className="mb-8 p-4 rounded-xl bg-white/[0.06] border border-white/[0.15] backdrop-blur-md">
+        <h2 className="text-sm font-medium mb-1">Developers</h2>
+        <p className="text-xs text-white/40 mb-4">
+          Advanced options for debugging and development.
+        </p>
+
+        {/* Main developer mode toggle */}
+        <div className="flex items-center justify-between gap-3 p-3 rounded-lg border border-white/10 bg-white/[0.03]">
+          <div>
+            <div className="text-sm font-medium">Developer mode</div>
+            <p className="text-[11px] text-white/40 mt-0.5">
+              Enable advanced developer options below.
+            </p>
+          </div>
+          <button
+            onClick={async () => {
+              const next = !developerMode;
+              setDeveloperMode(next);
+              setSavingDevSettings(true);
+              await fetch("/api/user/settings", {
+                method: "PATCH",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ developerMode: next }),
+              }).catch(() => {});
+              setSavingDevSettings(false);
+            }}
+            disabled={savingDevSettings}
+            className={`relative shrink-0 w-10 h-5 rounded-full transition-colors cursor-pointer ${
+              developerMode ? "bg-violet-600" : "bg-white/20"
+            }`}
+          >
+            <span
+              className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
+                developerMode ? "translate-x-5" : ""
+              }`}
+            />
+          </button>
+        </div>
+
+        {/* Sub-options — only visible when developer mode is on */}
+        {developerMode && (
+          <div className="mt-3 ml-3 pl-3 border-l border-white/10 space-y-3">
+            {/* Display all events */}
+            <div className="flex items-center justify-between gap-3 p-3 rounded-lg border border-white/10 bg-white/[0.03]">
+              <div>
+                <div className="text-sm font-medium">Display all events</div>
+                <p className="text-[11px] text-white/40 mt-0.5">
+                  Display all events in chats and orchestrations, including noise events normally hidden.
+                </p>
+              </div>
+              <button
+                onClick={async () => {
+                  const next = !devShowAllEvents;
+                  setDevShowAllEvents(next);
+                  setSavingDevSettings(true);
+                  await fetch("/api/user/settings", {
+                    method: "PATCH",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ devShowAllEvents: next }),
+                  }).catch(() => {});
+                  setSavingDevSettings(false);
+                }}
+                disabled={savingDevSettings}
+                className={`relative shrink-0 w-10 h-5 rounded-full transition-colors cursor-pointer ${
+                  devShowAllEvents ? "bg-violet-600" : "bg-white/20"
+                }`}
+              >
+                <span
+                  className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
+                    devShowAllEvents ? "translate-x-5" : ""
+                  }`}
+                />
+              </button>
+            </div>
+          </div>
+        )}
       </section>
 
       {/* Connected Clients */}

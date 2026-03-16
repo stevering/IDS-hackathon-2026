@@ -44,7 +44,21 @@ export default function RootLayout({
         style={{ background: "#0a0a0a" }}
       >
         <ThemeSync />
-        {children}
+        {/* Single global animated background — all pages render on top */}
+        <div className="fixed inset-0 overflow-hidden pointer-events-none z-0">
+          <div className="wave-bg-layer wave-bg-1" />
+          <div className="wave-bg-layer wave-bg-2" />
+          <div className="wave-bg-layer wave-bg-3" />
+          <div className="wave-bg-noise" />
+          <div className="aurora aurora-1" />
+          <div className="aurora aurora-2" />
+          <div className="aurora aurora-3" />
+          <div className="aurora aurora-4" />
+          <div className="aurora aurora-5" />
+        </div>
+        <div className="relative z-10">
+          {children}
+        </div>
         <SpeedInsights />
       </body>
     </html>

@@ -1187,6 +1187,8 @@ export default function Home() {
   // ── Conversation persistence ────────────────────────────────────────
   const {
     conversations,
+    allConversations,
+    childrenMap,
     activeConversation,
     activeConversationId,
     parallelConversations,
@@ -1199,15 +1201,23 @@ export default function Home() {
     ensureConversation,
   } = useConversations(myClientId, !!myClientId);
 
+  // ── Derive workflowId from active conversation metadata ──
+  // When navigating to an orchestration conversation (sidebar click, F5 restore),
+  // extract the workflowId so the SSE stream can connect without needing
+  // startOrchestration() to have been called in this session.
+  const activeConvMeta = allConversations.find((c) => c.id === activeConversationId)?.metadata as Record<string, unknown> | undefined;
+  const activeConvWorkflowId = isFigmaPlugin ? null : (activeConvMeta?.workflowId as string) ?? null;
+
   // ── Collaborative Agents orchestration ──────────────────────────────
-  // Orchestration runs on Temporal (backend workflows + SSE)
-  const temporal = useTemporalOrchestration();
+  // Orchestration runs on Temporal (backend workflows + SSE).
+  // Pass activeConvWorkflowId so the stream connects even on page reload.
+  const temporal = useTemporalOrchestration(activeConvWorkflowId);
 
   // ── Orchestration conversation (webapp-initiated) ──────────────────
   const orchConv = useOrchestrationConversation({
     workflowId: temporal.workflowId,
     activeConversationId,
-    conversations,
+    conversations: allConversations,
     createConversation,
     switchConversation,
   });
@@ -1226,6 +1236,8 @@ export default function Home() {
   // ── Trust/Brave approval state ────────────────────────────────────
   const [approvalMode, setApprovalMode] = useState<"trust" | "brave">("trust");
   const [guardEnabled, setGuardEnabled] = useState(true);
+  const [developerMode, setDeveloperMode] = useState(false);
+  const [devShowAllEvents, setDevShowAllEvents] = useState(false);
   const [pendingApproval, setPendingApproval] = useState<{
     code: string;
     agentLabel?: string;
@@ -1246,6 +1258,8 @@ export default function Home() {
       .then((data) => {
         if (data?.approvalMode) setApprovalMode(data.approvalMode);
         if (typeof data?.guardEnabled === "boolean") setGuardEnabled(data.guardEnabled);
+        if (typeof data?.developerMode === "boolean") setDeveloperMode(data.developerMode);
+        if (typeof data?.devShowAllEvents === "boolean") setDevShowAllEvents(data.devShowAllEvents);
       })
       .catch(() => {});
   }, []);
@@ -1572,6 +1586,7 @@ export default function Home() {
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const orchScrollContainerRef = useRef<HTMLDivElement>(null);
   const shouldAutoScroll = useRef(true);
+  const shouldAutoScrollOrch = useRef(true);
 
   // Whether we should show the orchestration panel (combined for webapp + plugin)
   const showOrchPanel = (!isFigmaPlugin && orchConv.isInOrchestrationConversation)
@@ -2423,6 +2438,25 @@ export default function Home() {
     }
   }, [messages]);
 
+  // Orchestration panel scroll — same logic as chat panel
+  const orchEvents = isFigmaPlugin ? pluginOrch.stream.events : temporal.events;
+
+  const handleOrchScroll = () => {
+    const el = orchScrollContainerRef.current;
+    if (!el) return;
+    const threshold = 40;
+    shouldAutoScrollOrch.current = el.scrollHeight - el.scrollTop - el.clientHeight < threshold;
+  };
+
+  useEffect(() => {
+    if (shouldAutoScrollOrch.current) {
+      const el = orchScrollContainerRef.current;
+      if (el) {
+        el.scrollTop = el.scrollHeight;
+      }
+    }
+  }, [orchEvents]);
+
   useEffect(() => {
     if (!isLoading) {
       inputRef.current?.focus();
@@ -2433,6 +2467,7 @@ export default function Home() {
     e.preventDefault();
     if (!input.trim() || isLoading) return;
     shouldAutoScroll.current = true;
+    shouldAutoScrollOrch.current = true;
 
     // If in an orchestration conversation and orchestration is active,
     // send as user input to the orchestrator instead of as a chat message
@@ -2740,24 +2775,33 @@ export default function Home() {
       </>
     );
 
+    const hasBannerPad = (!isFigmaPlugin && orchConv.isRelatedToOrchestration)
+      || (isFigmaPlugin && pluginOrch.hasOrchestration);
+    const headerPaddingClass = (() => {
+      const base = agentRole !== "idle" && mcpConnectionStatus !== "idle"
+        ? "pt-[7rem]"
+        : agentRole !== "idle"
+        ? "pt-[5.5rem]"
+        : mcpConnectionStatus !== "idle"
+        ? "pt-[5rem]"
+        : "pt-16";
+      const withBanner = agentRole !== "idle" && mcpConnectionStatus !== "idle"
+        ? "pt-[9rem]"
+        : agentRole !== "idle"
+        ? "pt-[7.5rem]"
+        : mcpConnectionStatus !== "idle"
+        ? "pt-[7rem]"
+        : "pt-[5.5rem]";
+      return hasBannerPad ? withBanner : base;
+    })();
+
     return (
     <div className="relative flex h-screen text-white overflow-hidden">
-      {/* Background layers — behind everything (sidebar + chat) */}
-      <div className="absolute inset-0 overflow-hidden pointer-events-none z-0">
-        <div className="wave-bg-layer wave-bg-1" />
-        <div className="wave-bg-layer wave-bg-2" />
-        <div className="wave-bg-layer wave-bg-3" />
-        <div className="wave-bg-noise" />
-        <div className="aurora aurora-1" />
-        <div className="aurora aurora-2" />
-        <div className="aurora aurora-3" />
-        <div className="aurora aurora-4" />
-        <div className="aurora aurora-5" />
-      </div>
-      {/* Mobile backdrop */}
+      {/* Background provided by root layout — no local copy needed */}
+      {/* Mobile backdrop — dim only, blur comes from the sidebar's own glass-sidebar */}
       {sidebarOpen && (
         <div
-          className="fixed inset-0 bg-black/50 z-40 md:hidden"
+          className="fixed inset-0 z-40 md:hidden bg-black/30"
           onClick={() => setSidebarOpen(false)}
         />
       )}
@@ -2766,7 +2810,7 @@ export default function Home() {
         sidebarOpen
           ? "fixed top-0 left-0 z-50 w-full sm:w-72 h-full translate-x-0"
           : "fixed top-0 left-0 z-50 w-full sm:w-72 h-full -translate-x-full"
-      } ${sidebarCollapsed ? "md:w-12" : "md:w-72"} md:relative md:top-auto md:left-auto md:z-auto md:h-full md:translate-x-0 transition-all duration-200`}>
+      } ${sidebarCollapsed ? "md:w-12" : "md:w-72"} md:relative md:top-auto md:left-auto md:z-auto md:h-full md:translate-x-0 transition-all duration-200 glass-sidebar`}>
         <ConversationSidebar
           conversations={conversations}
           activeId={activeConversationId}
@@ -2777,23 +2821,14 @@ export default function Home() {
           collapsed={sidebarCollapsed}
           onToggleCollapse={toggleSidebar}
           settingsContent={settingsContent}
+          childrenMap={childrenMap}
+          activeWorkflowId={temporal.isActive ? temporal.workflowId : null}
         />
       </div>
 
       <div className="flex-1 flex flex-col min-w-0 relative">
-        {/* Local background copy for backdrop-filter in header/input (stacking context isolation) */}
-        <div className="absolute inset-0 overflow-hidden pointer-events-none z-0">
-          <div className="wave-bg-layer wave-bg-1" />
-          <div className="wave-bg-layer wave-bg-2" />
-          <div className="wave-bg-layer wave-bg-3" />
-          <div className="wave-bg-noise" />
-          <div className="aurora aurora-1" />
-          <div className="aurora aurora-2" />
-          <div className="aurora aurora-3" />
-          <div className="aurora aurora-4" />
-          <div className="aurora aurora-5" />
-        </div>
-        <header className="absolute top-0 left-0 right-0 z-20 flex flex-col" style={{ background: "rgba(10,10,10,0.3)", backdropFilter: "blur(6px) saturate(1.3)", WebkitBackdropFilter: "blur(6px) saturate(1.3)", boxShadow: "0 4px 24px rgba(0,0,0,0.5), 0 1px 0 rgba(255,255,255,0.06) inset" }}>
+        {/* Background provided by root layout — backdrop-filter sees through to the fixed layer */}
+        <header className="absolute top-0 left-0 right-0 z-20 flex flex-col" style={{ background: "rgba(10,10,10,0.3)", backdropFilter: "blur(6px) saturate(1.3)", boxShadow: "0 4px 24px rgba(0,0,0,0.5), 0 1px 0 rgba(255,255,255,0.06) inset" }}>
           <div className="flex items-center justify-between px-3 sm:px-4 py-3 border-b border-white/30">
           <div className="flex items-center gap-2 sm:gap-3 min-w-0">
             <button
@@ -2884,8 +2919,8 @@ export default function Home() {
           )}
           <MCPStatusBar status={mcpConnectionStatus} />
 
-          {/* Unified orchestration banner — adapts for chat vs orchestration view */}
-          {!isFigmaPlugin && orchConv.hasActiveOrchestration && (
+          {/* Unified orchestration banner — only visible on related conversations */}
+          {!isFigmaPlugin && orchConv.isRelatedToOrchestration && (
             <OrchestrationBanner
               active={temporal.isActive || !!temporal.completedStatus}
               isInOrchestrationConversation={orchConv.isInOrchestrationConversation}
@@ -2909,35 +2944,14 @@ export default function Home() {
 
 
         {/* Slide container — overflow hidden wrapper with two scrollable panels */}
-        {/* Banner visible flag for dynamic padding */}
-        <div className={`relative flex-1 overflow-hidden ${
-          (() => {
-            const hasBanner = (!isFigmaPlugin && orchConv.hasActiveOrchestration)
-              || (isFigmaPlugin && pluginOrch.hasOrchestration);
-            const base = agentRole !== "idle" && mcpConnectionStatus !== "idle"
-              ? "pt-[7rem]"
-              : agentRole !== "idle"
-              ? "pt-[5.5rem]"
-              : mcpConnectionStatus !== "idle"
-              ? "pt-[5rem]"
-              : "pt-16";
-            const withBanner = agentRole !== "idle" && mcpConnectionStatus !== "idle"
-              ? "pt-[9rem]"
-              : agentRole !== "idle"
-              ? "pt-[7.5rem]"
-              : mcpConnectionStatus !== "idle"
-              ? "pt-[7rem]"
-              : "pt-[5.5rem]";
-            return hasBanner ? withBanner : base;
-          })()
-        }`}>
+        <div className="relative flex-1 overflow-hidden">
           <div
             className="flex h-full transition-transform duration-150 ease-in-out"
             style={{ transform: showOrchPanel ? "translateX(-100%)" : "translateX(0)" }}
           >
             {/* ── Left panel: Normal chat conversation ── */}
-            <div className="min-w-full h-full flex flex-col">
-            <div ref={scrollContainerRef} onScroll={handleScroll} className="flex-1 overflow-y-auto px-3 sm:px-4 pb-4">
+            <div className="min-w-full h-full relative">
+            <div ref={scrollContainerRef} onScroll={handleScroll} className={`absolute inset-0 overflow-y-auto px-3 sm:px-4 pb-40 ${headerPaddingClass}`}>
               {/* Chat panel content starts here */}
           {messages.length === 0 && messagesLoaded && (
             <div className="flex flex-col items-center justify-center h-full text-center px-4">
@@ -3254,6 +3268,59 @@ export default function Home() {
                             );
                           }
                           if (structSeg.kind === "orchestrate-btn") {
+                            // Determine button state: check if a collab sub-conversation exists for this conversation
+                            const childCollabs = childrenMap.get(activeConversationId ?? "") ?? [];
+                            // Active collab (temporal is running now)
+                            const activeCollab = temporal.isActive && temporal.workflowId
+                              ? childCollabs.find(c => (c.metadata as Record<string, unknown>)?.workflowId === temporal.workflowId)
+                              : null;
+                            // Most recent completed collab (if no active one)
+                            const completedCollab = !activeCollab
+                              ? childCollabs.filter(c => (c.metadata as Record<string, unknown>)?.workflowId).at(-1)
+                              : null;
+
+                            // State: in-progress
+                            if (activeCollab || (temporal.isActive && temporal.workflowId)) {
+                              return (
+                                <button
+                                  key={sj}
+                                  onClick={() => orchConv.switchToOrchestration()}
+                                  className="my-3 flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm font-medium border transition-all cursor-pointer bg-amber-500/15 border-amber-500/30 text-amber-300 hover:bg-amber-500/25 animate-pulse"
+                                >
+                                  <svg className="animate-spin h-4 w-4 shrink-0" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                                  </svg>
+                                  Collab in progress...
+                                  {temporal.timerRemainingMs != null && (
+                                    <span className="text-xs text-amber-400/50 ml-1">
+                                      {Math.round((temporal.totalDurationMs - temporal.timerRemainingMs) / 1000)}s
+                                    </span>
+                                  )}
+                                </button>
+                              );
+                            }
+
+                            // State: completed (a past collab exists for this conversation)
+                            if (completedCollab) {
+                              return (
+                                <button
+                                  key={sj}
+                                  onClick={() => {
+                                    handleSwitchConversation(completedCollab.id);
+                                  }}
+                                  className="my-3 flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm font-medium border transition-all cursor-pointer bg-emerald-500/10 border-emerald-500/25 text-emerald-300 hover:bg-emerald-500/20 hover:border-emerald-500/40"
+                                >
+                                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="shrink-0">
+                                    <path d="M20 6L9 17l-5-5" />
+                                  </svg>
+                                  Collab completed
+                                  <span className="text-xs text-emerald-400/50 ml-1">({structSeg.agents.join(", ")})</span>
+                                </button>
+                              );
+                            }
+
+                            // State: not started (default)
                             return (
                               <button
                                 key={sj}
@@ -3273,7 +3340,7 @@ export default function Home() {
                                       pluginClientId: c.clientId,
                                     }));
                                   if (targetAgents.length === 0) { console.warn("[ORCHESTRATE] No matching agents found — aborting"); return; }
-                                  const wfId = await temporal.startOrchestration({
+                                  await temporal.startOrchestration({
                                     task: lastUserText,
                                     targetAgents,
                                     model: selectedModel,
@@ -3534,7 +3601,7 @@ export default function Home() {
           <div ref={messagesEndRef} />
             </div>
             {/* ── Chat input form (inside the chat panel) ── */}
-            <div className="shrink-0 px-3 sm:px-4 pt-2 pb-[calc(0.75rem+env(safe-area-inset-bottom))]">
+            <div className="absolute bottom-0 left-0 right-0 z-10 px-3 sm:px-4 pt-2 pb-[calc(0.75rem+env(safe-area-inset-bottom))]">
               <div className="max-w-3xl mx-auto">
               {/* Approval overlay — sticky above the input form */}
               {pendingApproval && (
@@ -3563,7 +3630,7 @@ export default function Home() {
               <form
                 onSubmit={onSubmit}
                 className="relative mx-auto max-w-3xl rounded-2xl border border-white/30 overflow-visible"
-                style={{ background: "rgba(10,10,10,0.25)", backdropFilter: "blur(6px) saturate(1.3)", WebkitBackdropFilter: "blur(6px) saturate(1.3)", boxShadow: "0 8px 40px rgba(0,0,0,0.6), 0 2px 8px rgba(0,0,0,0.4), 0 1px 0 rgba(255,255,255,0.05) inset" }}
+                style={{ background: "rgba(10,10,10,0.25)", backdropFilter: "blur(6px) saturate(1.3)", boxShadow: "0 8px 40px rgba(0,0,0,0.6), 0 2px 8px rgba(0,0,0,0.4), 0 1px 0 rgba(255,255,255,0.05) inset" }}
               >
                 <textarea
                   ref={inputRef}
@@ -3739,12 +3806,13 @@ export default function Home() {
 
             {/* ── Right panel: Orchestration conversation ── */}
             <div className="min-w-full h-full flex flex-col">
-            <div ref={orchScrollContainerRef} className="flex-1 overflow-y-auto px-3 sm:px-4 pb-4">
+            <div ref={orchScrollContainerRef} onScroll={handleOrchScroll} className={`flex-1 overflow-y-auto px-3 sm:px-4 pb-4 ${headerPaddingClass}`}>
               {/* Orchestration event log — webapp side */}
               {!isFigmaPlugin && temporal.events.length > 0 && (
                 <OrchestrationEventLog
                   events={temporal.events}
                   agents={temporal.agents}
+                  showAllEvents={developerMode && devShowAllEvents}
                 />
               )}
               {/* Orchestration event log — plugin side (filtered to this agent) */}
@@ -3753,6 +3821,7 @@ export default function Home() {
                   events={pluginOrch.stream.events}
                   agents={pluginOrch.stream.agents}
                   agentFilter={myDisplayShortId}
+                  showAllEvents={developerMode && devShowAllEvents}
                 />
               )}
               {/* Welcome placeholder when no events yet */}
@@ -3838,7 +3907,7 @@ export default function Home() {
               <form
                 onSubmit={onSubmit}
                 className="relative mx-auto max-w-3xl rounded-2xl border border-white/30 overflow-visible"
-                style={{ background: "rgba(10,10,10,0.25)", backdropFilter: "blur(6px) saturate(1.3)", WebkitBackdropFilter: "blur(6px) saturate(1.3)", boxShadow: "0 8px 40px rgba(0,0,0,0.6), 0 2px 8px rgba(0,0,0,0.4), 0 1px 0 rgba(255,255,255,0.05) inset" }}
+                style={{ background: "rgba(10,10,10,0.25)", backdropFilter: "blur(6px) saturate(1.3)", boxShadow: "0 8px 40px rgba(0,0,0,0.6), 0 2px 8px rgba(0,0,0,0.4), 0 1px 0 rgba(255,255,255,0.05) inset" }}
               >
                 <textarea
                   value={input}
@@ -3881,7 +3950,7 @@ export default function Home() {
 
       {proxyModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
-          <div className="border border-white/15 rounded-lg p-5 w-full max-w-md mx-4 shadow-2xl" style={{ background: "rgba(10,10,10,0.5)", backdropFilter: "blur(20px) saturate(1.5)", WebkitBackdropFilter: "blur(20px) saturate(1.5)" }}>
+          <div className="border border-white/15 rounded-lg p-5 w-full max-w-md mx-4 shadow-2xl" style={{ background: "rgba(10,10,10,0.5)", backdropFilter: "blur(20px) saturate(1.5)", }}>
             <h3 className="text-sm font-semibold text-white mb-1">Configure Proxy</h3>
             <p className="text-xs text-white/50 mb-4">
               Choose between Proxy Online (tunnel) or Proxy Local mode

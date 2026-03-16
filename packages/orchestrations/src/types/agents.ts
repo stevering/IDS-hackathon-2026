@@ -107,6 +107,8 @@ export type LLMCallParams = {
 
 export type LLMCallResult = {
   content: string;
+  /** Model reasoning/thinking (if supported, e.g. kimi-k2.5) */
+  reasoning?: string;
   toolCalls?: LLMToolCall[];
   /** Token usage */
   usage?: {

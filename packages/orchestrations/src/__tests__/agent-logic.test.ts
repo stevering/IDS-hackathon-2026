@@ -292,7 +292,7 @@ describe("processLLMResponse", () => {
     expect(peerEffects).toHaveLength(1);
   });
 
-  it("handles figma_plugin_execute tool call (pending review)", () => {
+  it("handles figma_plugin_execute tool call (review_and_execute effect)", () => {
     const state = createAgentState(makeAgentId());
 
     const effects = processLLMResponse(state, "Executing", [
@@ -303,48 +303,17 @@ describe("processLLMResponse", () => {
       },
     ]);
 
-    // Code should NOT be executed yet — it's pending LLM self-review
-    const execEffects = effects.filter((e) => e.type === "execute_figma_code");
-    expect(execEffects).toHaveLength(0);
-
-    // Code should be stored as pending
-    expect(state.pendingFigmaCode).not.toBeNull();
-    expect(state.pendingFigmaCode?.code).toBe("figma.createRectangle()");
-
-    // A tool result should have been injected asking for review
-    const lastMsg = state.messageHistory[state.messageHistory.length - 1];
-    expect(lastMsg.role).toBe("tool");
-    expect(lastMsg.content).toContain("pending_review");
-  });
-
-  it("handles figma_confirm_execute after review", () => {
-    const state = createAgentState(makeAgentId());
-
-    // First: submit code for review
-    processLLMResponse(state, "Executing", [
-      {
-        id: "tc1",
-        name: "figma_plugin_execute",
-        arguments: { code: "figma.createRectangle()" },
-      },
-    ]);
-    expect(state.pendingFigmaCode).not.toBeNull();
-
-    // Then: confirm execution
-    const effects = processLLMResponse(state, "Code looks good", [
-      {
-        id: "tc2",
-        name: "figma_confirm_execute",
-        arguments: {},
-      },
-    ]);
-
-    const execEffects = effects.filter((e) => e.type === "execute_figma_code");
-    expect(execEffects).toHaveLength(1);
-    if (execEffects[0].type === "execute_figma_code") {
-      expect(execEffects[0].code).toBe("figma.createRectangle()");
+    // Should produce a review_and_execute_figma_code effect
+    const reviewExecEffects = effects.filter((e) => e.type === "review_and_execute_figma_code");
+    expect(reviewExecEffects).toHaveLength(1);
+    if (reviewExecEffects[0].type === "review_and_execute_figma_code") {
+      expect(reviewExecEffects[0].code).toBe("figma.createRectangle()");
+      expect(reviewExecEffects[0].toolCallId).toBe("tc1");
     }
-    expect(state.pendingFigmaCode).toBeNull();
+
+    // No tool result injected by engine (adapter handles it after review+exec)
+    const toolResults = state.messageHistory.filter((m) => m.role === "tool");
+    expect(toolResults).toHaveLength(0);
   });
 
   it("rejects figma code with known issues via linter", () => {
@@ -358,17 +327,40 @@ describe("processLLMResponse", () => {
       },
     ]);
 
-    // Should NOT be pending — rejected by linter
-    expect(state.pendingFigmaCode).toBeNull();
-
-    // No execution effect
-    const execEffects = effects.filter((e) => e.type === "execute_figma_code");
-    expect(execEffects).toHaveLength(0);
+    // No review_and_execute effect — rejected by linter
+    const reviewExecEffects = effects.filter((e) => e.type === "review_and_execute_figma_code");
+    expect(reviewExecEffects).toHaveLength(0);
 
     // Error injected into history
     const lastMsg = state.messageHistory[state.messageHistory.length - 1];
     expect(lastMsg.role).toBe("tool");
     expect(lastMsg.content).toContain("codeReview");
+  });
+
+  it("blocks signal_task_complete when failures > successes", () => {
+    const state = createAgentState(makeAgentId());
+    state.execStats = { success: 1, fail: 3 };
+
+    processLLMResponse(state, "All done", [
+      { id: "tc1", name: "signal_task_complete", arguments: { summary: "Done" } },
+    ]);
+
+    expect(state.completed).toBe(false);
+    const lastMsg = state.messageHistory[state.messageHistory.length - 1];
+    expect(lastMsg.role).toBe("tool");
+    expect(lastMsg.content).toContain("WARNING");
+  });
+
+  it("allows signal_task_complete when successes >= failures", () => {
+    const state = createAgentState(makeAgentId());
+    state.execStats = { success: 3, fail: 1 };
+
+    const effects = processLLMResponse(state, "All done", [
+      { id: "tc1", name: "signal_task_complete", arguments: { summary: "Done" } },
+    ]);
+
+    expect(state.completed).toBe(true);
+    expect(effects.some((e) => e.type === "complete")).toBe(true);
   });
 
   it("handles start_sub_conversation tool call", () => {

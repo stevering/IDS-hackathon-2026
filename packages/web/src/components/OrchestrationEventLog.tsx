@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { OrchestrationSSEEvent, AgentViewState, AgentActivity } from "@guardian/orchestrations";
@@ -21,6 +21,8 @@ type Props = {
    * When undefined: show all events (unchanged behavior for webapp).
    */
   agentFilter?: string;
+  /** When true, bypass the event type filter and show all events (developer mode). */
+  showAllEvents?: boolean;
 };
 
 // ---------------------------------------------------------------------------
@@ -71,8 +73,10 @@ function matchesAgentFilter(e: OrchestrationSSEEvent, agentFilter: string): bool
     case "sub_conv_message":
       return e.fromAgentId === agentFilter;
 
-    // Orchestrator thinking/input — hidden in filtered mode (too noisy for plugin)
+    // Orchestrator thinking/input/brief/tool calls — hidden in filtered mode (too noisy for plugin)
+    case "orchestrator_brief":
     case "orchestrator_thinking":
+    case "orchestrator_tool_call":
     case "orchestrator_input":
       return false;
 
@@ -123,7 +127,7 @@ function OrchestratorThinking({ content }: { content: string }) {
 // Individual event renderers
 // ---------------------------------------------------------------------------
 
-function renderEvent(event: OrchestrationSSEEvent, index: number, agents: AgentViewState[]) {
+function renderEvent(event: OrchestrationSSEEvent, index: number, agents: AgentViewState[], showAllEvents?: boolean) {
   switch (event.type) {
     // ── Orchestration started ──────────────────────────────────────────
     case "orchestration_started": {
@@ -139,6 +143,55 @@ function renderEvent(event: OrchestrationSSEEvent, index: number, agents: AgentV
                 with {agentLabels.join(", ")}
               </span>
             )}
+          </div>
+        </div>
+      );
+    }
+
+    // ── Orchestrator brief (System → Orchestrator LLM) ────────────────
+    case "orchestrator_brief":
+      return (
+        <div key={index} className="mx-2 sm:mx-4 my-1.5">
+          <div className="rounded-lg border border-sky-500/20 bg-sky-500/5 px-3 py-2">
+            <div className="flex items-center gap-2 mb-1">
+              <svg
+                width="12"
+                height="12"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                className="shrink-0 text-sky-400/70"
+              >
+                <path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z" />
+              </svg>
+              <span className="text-[10px] font-medium text-sky-400/70 uppercase tracking-wider">
+                System brief
+              </span>
+              <span className="text-[10px] text-sky-300/40">
+                &rarr; Orchestrator
+              </span>
+            </div>
+            <div className="text-xs text-sky-200/50 leading-relaxed prose prose-invert prose-xs max-w-none">
+              <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                {event.content}
+              </ReactMarkdown>
+            </div>
+          </div>
+        </div>
+      );
+
+    // ── Orchestrator tool call ────────────────────────────────────────
+    case "orchestrator_tool_call": {
+      const argsSummary = Object.entries(event.args)
+        .map(([k, v]) => `${k}: ${typeof v === "string" ? v : JSON.stringify(v)}`)
+        .join(", ");
+      return (
+        <div key={index} className="mx-2 sm:mx-4 my-0.5">
+          <div className="ml-4 mr-2 flex items-start gap-1.5 text-[10px] px-2 py-1 rounded border bg-amber-500/5 border-amber-500/10 text-amber-400/60">
+            <span className="font-mono font-medium shrink-0">Orchestrator</span>
+            <span className="font-mono text-amber-300/50">{event.toolName}</span>
+            <span className="truncate opacity-50 min-w-0">{argsSummary}</span>
           </div>
         </div>
       );
@@ -522,7 +575,15 @@ function renderEvent(event: OrchestrationSSEEvent, index: number, agents: AgentV
       );
 
     default:
-      return null;
+      if (!showAllEvents) return null;
+      return (
+        <div key={index} className="flex items-start gap-2 mx-4 my-1 py-1 opacity-50">
+          <span className="text-[10px] font-mono text-white/30 shrink-0 mt-0.5">{event.type}</span>
+          <span className="text-[10px] font-mono text-white/20 truncate">
+            {JSON.stringify(event).slice(0, 120)}
+          </span>
+        </div>
+      );
   }
 }
 
@@ -565,6 +626,16 @@ function ExpandableActivity({
 
 function AgentActivityItem({ activity, agentShortId }: { activity: AgentActivity; agentShortId: string }) {
   switch (activity.action) {
+    case "reasoning":
+      return (
+        <ExpandableActivity
+          label={`${agentShortId} reasoning`}
+          preview={activity.content}
+          detail={activity.content}
+          colorClass="bg-amber-500/5 border-amber-500/10 text-amber-400/60 hover:bg-amber-500/10"
+        />
+      );
+
     case "thinking":
       return (
         <ExpandableActivity
@@ -588,7 +659,17 @@ function AgentActivityItem({ activity, agentShortId }: { activity: AgentActivity
     case "code_review_passed":
       return (
         <ExpandableActivity
-          label={`${agentShortId} Linter OK | Self-review`}
+          label={`${agentShortId} Linter OK`}
+          preview={activity.codeSnippet}
+          detail={activity.codeSnippet}
+          colorClass="bg-emerald-500/5 border-emerald-500/10 text-emerald-400/60 hover:bg-emerald-500/10"
+        />
+      );
+
+    case "code_review_llm_approved":
+      return (
+        <ExpandableActivity
+          label={`${agentShortId} Review approved`}
           preview={activity.codeSnippet}
           detail={activity.codeSnippet}
           colorClass="bg-emerald-500/5 border-emerald-500/10 text-emerald-400/60 hover:bg-emerald-500/10"
@@ -601,6 +682,16 @@ function AgentActivityItem({ activity, agentShortId }: { activity: AgentActivity
           label={`${agentShortId} Linter rejected`}
           preview={`${activity.issues.length} issue${activity.issues.length > 1 ? "s" : ""}`}
           detail={activity.issues.join("\n")}
+          colorClass="bg-red-500/10 border-red-500/15 text-red-400/70 hover:bg-red-500/15"
+        />
+      );
+
+    case "code_review_llm_rejected":
+      return (
+        <ExpandableActivity
+          label={`${agentShortId} Review rejected`}
+          preview={activity.issues}
+          detail={`Issues: ${activity.issues}\n\nCode:\n${activity.codeSnippet}`}
           colorClass="bg-red-500/10 border-red-500/15 text-red-400/70 hover:bg-red-500/15"
         />
       );
@@ -642,18 +733,12 @@ function AgentActivityItem({ activity, agentShortId }: { activity: AgentActivity
  * events in the chat area. Filters out noise events (timer_tick, connected)
  * and auto-scrolls to the bottom when new events arrive.
  */
-export function OrchestrationEventLog({ events, agents, agentFilter }: Props) {
-  const endRef = useRef<HTMLDivElement>(null);
+export function OrchestrationEventLog({ events, agents, agentFilter, showAllEvents }: Props) {
   const visibleEvents = events.filter((e) => {
-    if (!isVisibleEvent(e)) return false;
+    if (!showAllEvents && !isVisibleEvent(e)) return false;
     if (agentFilter) return matchesAgentFilter(e, agentFilter);
     return true;
   });
-
-  // Auto-scroll to the latest event
-  useEffect(() => {
-    endRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
-  }, [visibleEvents.length]);
 
   if (visibleEvents.length === 0) return null;
 
@@ -669,10 +754,7 @@ export function OrchestrationEventLog({ events, agents, agentFilter }: Props) {
       </div>
 
       {/* Event list */}
-      {visibleEvents.map((event, i) => renderEvent(event, i, agents))}
-
-      {/* Scroll anchor */}
-      <div ref={endRef} />
+      {visibleEvents.map((event, i) => renderEvent(event, i, agents, showAllEvents))}
     </div>
   );
 }

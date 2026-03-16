@@ -5,6 +5,9 @@ import {
   generateDirectoryEffects,
   generatePlanningCall,
   processPlanningResponse,
+  generateBriefAndFirstCall,
+  processOrchestratorLLMResponse,
+  getOrchestratorTools,
   processReports,
   processCoordinationResponse,
   processUserInput,
@@ -365,5 +368,157 @@ describe("drainEvents (deprecated)", () => {
     const events = drainEvents(state);
     expect(events).toHaveLength(2);
     expect(state.eventLog).toHaveLength(0);
+  });
+});
+
+// =========================================================================
+// New tool-based orchestrator flow
+// =========================================================================
+
+describe("getOrchestratorTools", () => {
+  it("returns tools with agent IDs in description", () => {
+    const state = createOrchestratorState(makeParams([makeAgent("a"), makeAgent("b")]));
+    const tools = getOrchestratorTools(state);
+
+    expect(tools).toHaveLength(3);
+    const directive = tools.find((t) => t.name === "send_agent_directive");
+    expect(directive).toBeDefined();
+    expect(directive!.description).toContain("a");
+    expect(directive!.description).toContain("b");
+
+    expect(tools.find((t) => t.name === "mark_agent_done")).toBeDefined();
+    expect(tools.find((t) => t.name === "broadcast_to_agents")).toBeDefined();
+  });
+});
+
+describe("generateBriefAndFirstCall", () => {
+  it("injects system + user messages and returns call_llm with tools", () => {
+    const agents = [makeAgent("a", "wf-a"), makeAgent("b", "wf-b")];
+    const state = createOrchestratorState(makeParams(agents));
+
+    const effects = generateBriefAndFirstCall(state);
+
+    // System prompt + user brief injected into history
+    expect(state.messageHistory).toHaveLength(2);
+    expect(state.messageHistory[0].role).toBe("system");
+    expect(state.messageHistory[0].content).toContain("send_agent_directive");
+    expect(state.messageHistory[1].role).toBe("user");
+    expect(state.messageHistory[1].content).toContain("Create a design system");
+    expect(state.messageHistory[1].content).toContain("a");
+
+    // Returns call_llm with tools
+    const llmCall = effects.find((e) => e.type === "call_llm");
+    expect(llmCall).toBeDefined();
+    if (llmCall?.type === "call_llm") {
+      expect(llmCall.tools).toBeDefined();
+      expect(llmCall.tools!.length).toBeGreaterThan(0);
+    }
+  });
+});
+
+describe("processOrchestratorLLMResponse", () => {
+  it("handles send_agent_directive tool call", () => {
+    const agents = [makeAgent("a", "wf-a"), makeAgent("b", "wf-b")];
+    const state = createOrchestratorState(makeParams(agents));
+
+    const effects = processOrchestratorLLMResponse(
+      state,
+      "Assigning work to agents.",
+      [
+        {
+          id: "tc1",
+          name: "send_agent_directive",
+          arguments: { agentShortId: "#a", content: "Create buttons" },
+        },
+        {
+          id: "tc2",
+          name: "send_agent_directive",
+          arguments: { agentShortId: "b", content: "Create colors" },
+        },
+      ]
+    );
+
+    // Directives sent
+    const directives = effects.filter((e) => e.type === "send_directive");
+    expect(directives).toHaveLength(2);
+
+    // Agents marked active
+    expect(state.agents.get("a")?.status).toBe("active");
+    expect(state.agents.get("b")?.status).toBe("active");
+
+    // Tool results injected into history
+    const toolResults = state.messageHistory.filter((m) => m.role === "tool");
+    expect(toolResults).toHaveLength(2);
+    expect(toolResults[0].content).toContain("success");
+
+    // Continuation call_llm effect
+    const continuation = effects.find((e) => e.type === "call_llm");
+    expect(continuation).toBeDefined();
+
+    // Events emitted
+    const directiveEvents = state.eventLog.filter(
+      (e) => e.type === "orchestrator_directive"
+    );
+    expect(directiveEvents).toHaveLength(2);
+  });
+
+  it("handles mark_agent_done tool call", () => {
+    const state = createOrchestratorState(makeParams([makeAgent("a", "wf-a")]));
+    state.agents.get("a")!.status = "active";
+
+    processOrchestratorLLMResponse(state, "Agent done.", [
+      { id: "tc1", name: "mark_agent_done", arguments: { agentShortId: "a" } },
+    ]);
+
+    expect(state.agents.get("a")?.status).toBe("completed");
+  });
+
+  it("falls back to text [DIRECTIVE] parsing when no tool calls", () => {
+    const agents = [makeAgent("a", "wf-a")];
+    const state = createOrchestratorState(makeParams(agents));
+
+    const effects = processOrchestratorLLMResponse(
+      state,
+      "[DIRECTIVE:#a]\nCreate buttons\n[/DIRECTIVE]"
+    );
+
+    const directives = effects.filter((e) => e.type === "send_directive");
+    expect(directives).toHaveLength(1);
+    expect(state.agents.get("a")?.status).toBe("active");
+  });
+
+  it("broadcasts text when no tool calls and no directives", () => {
+    const state = createOrchestratorState(makeParams([makeAgent("a", "wf-a")]));
+    state.agents.get("a")!.status = "active";
+
+    const effects = processOrchestratorLLMResponse(
+      state,
+      "Keep up the good work!"
+    );
+
+    const broadcasts = effects.filter((e) => e.type === "broadcast_to_agents");
+    expect(broadcasts).toHaveLength(1);
+  });
+
+  it("handles unknown agent gracefully", () => {
+    const state = createOrchestratorState(makeParams([makeAgent("a", "wf-a")]));
+
+    const effects = processOrchestratorLLMResponse(state, "", [
+      {
+        id: "tc1",
+        name: "send_agent_directive",
+        arguments: { agentShortId: "unknown", content: "Do something" },
+      },
+    ]);
+
+    // No send_directive effect for unknown agent
+    const directives = effects.filter((e) => e.type === "send_directive");
+    expect(directives).toHaveLength(0);
+
+    // Error injected as tool result
+    const toolResult = state.messageHistory.find(
+      (m) => m.role === "tool" && m.toolCallId === "tc1"
+    );
+    expect(toolResult?.content).toContain("not found");
   });
 });

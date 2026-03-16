@@ -37,15 +37,25 @@ export function useFigmaExecuteChannel(
   const [userId, setUserId] = useState<string | null>(null);
   const [clients, setClients] = useState<PresenceClient[]>([]);
 
-  // Self-generated stable client ID — persists across navigations via sessionStorage
+  // Self-generated stable client ID.
+  // - Webapp (top-level): localStorage → same ID across tabs/refreshes in the same browser.
+  // - Plugin (iframe): sessionStorage → unique ID per iframe (each Figma plugin is a separate agent).
   const clientId = useRef("");
   if (clientId.current === "" && typeof window !== "undefined") {
-    const stored = sessionStorage.getItem("guardian:clientId");
+    const isIframe = window.self !== window.top;
+    const storage = isIframe ? sessionStorage : localStorage;
+    const stored = storage.getItem("guardian:clientId");
     if (stored) {
       clientId.current = stored;
     } else {
-      clientId.current = Math.random().toString(36).slice(2, 10);
-      sessionStorage.setItem("guardian:clientId", clientId.current);
+      // Migrate from sessionStorage if webapp was previously using it
+      const legacy = !isIframe ? sessionStorage.getItem("guardian:clientId") : null;
+      if (legacy) {
+        clientId.current = legacy;
+      } else {
+        clientId.current = Math.random().toString(36).slice(2, 10);
+      }
+      storage.setItem("guardian:clientId", clientId.current);
     }
   }
 

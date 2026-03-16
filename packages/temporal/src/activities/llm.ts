@@ -60,8 +60,19 @@ export async function callLLM(params: LLMCallParams): Promise<LLMCallResult> {
     tools: toolSet,
   });
 
+  // Extract reasoning if the model provides it (e.g. kimi-k2.5, grok reasoning)
+  // AI SDK returns reasoning as ReasoningOutput[] — concatenate text parts
+  const reasoningParts = result.reasoning;
+  const reasoning = reasoningParts?.length
+    ? reasoningParts
+        .filter((p: { type: string }) => p.type === "text")
+        .map((p: { type: string; text?: string }) => p.text ?? "")
+        .join("\n")
+    : undefined;
+
   return {
     content: result.text,
+    reasoning,
     toolCalls: result.toolCalls?.map((tc: { toolCallId: string; toolName: string; input?: unknown; args?: unknown }) => ({
       id: tc.toolCallId,
       name: tc.toolName,

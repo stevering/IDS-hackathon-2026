@@ -38,7 +38,9 @@ export type OrchestrationSSEEvent =
   | { type: "orchestration_started"; orchestrationId: string; agents: AgentViewState[] }
   | { type: "agent_status_changed"; agentShortId: string; status: AgentViewState["status"] }
   | { type: "agent_report"; agentShortId: string; report: AgentViewState["lastReport"] }
+  | { type: "orchestrator_brief"; content: string }
   | { type: "orchestrator_thinking"; content: string }
+  | { type: "orchestrator_tool_call"; toolName: string; args: Record<string, unknown> }
   | { type: "orchestrator_directive"; agentShortId: string; content: string }
   | { type: "peer_message"; fromAgentId: string; toAgentId: string; content: string }
   | { type: "broadcast_message"; fromAgentId: string; content: string }

@@ -4,7 +4,7 @@
   "private": true,
   "packageManager": "pnpm@10.9.0",
   "scripts": {
-    "dev": "concurrently -k -n srv,apps -c yellow,cyan \"temporal server start-dev\" \"turbo run dev --filter=@guardian/web --filter=@guardian/mcp-server --filter=@guardian/figma-plugin --filter=@guardian/figma-desktop-plugin --filter=@guardian/figma-widget --filter=@guardian/bridge --filter=@guardian/electron-overlay --filter=@guardian/temporal\"",
+    "dev": "bash scripts/dev.sh",
     "dev:apps": "turbo run dev --filter=@guardian/web --filter=@guardian/mcp-server --filter=@guardian/figma-plugin --filter=@guardian/figma-desktop-plugin --filter=@guardian/figma-widget --filter=@guardian/bridge --filter=@guardian/electron-overlay",
     "dev:figma": "turbo run dev --filter=@guardian/figma-plugin",
     "dev:web": "turbo run dev --filter=@guardian/web",
