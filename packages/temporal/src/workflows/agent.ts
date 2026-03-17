@@ -247,6 +247,9 @@ async function handleReviewAndExecute(
   userId: string,
   model?: string
 ): Promise<void> {
+  // Track execution attempts for progress awareness
+  state.codeAttemptCount = (state.codeAttemptCount ?? 0) + 1;
+
   // Step 1: Review LLM call (same model, dedicated prompt, no tools)
   const reviewResult = await callLLM({
     messages: [
@@ -520,8 +523,9 @@ return r;`;
   // Inject result as tool result — include file review verdict so the agent understands what happened
   let execResultJson: string;
   if (execResult.success) {
+    const successCount = state.execStats.success + 1; // +1 because recordExecResult hasn't been called yet
     const parts = [
-      "Execution succeeded.",
+      `Execution succeeded. (${successCount} successful execution${successCount > 1 ? "s" : ""} so far)`,
     ];
 
     parts.push("\nCode review: APPROVED");
