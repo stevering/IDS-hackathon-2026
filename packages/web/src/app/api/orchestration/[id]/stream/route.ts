@@ -24,14 +24,26 @@ export async function GET(
     return new Response("Temporal orchestration is not enabled", { status: 503 });
   }
 
-  const supabase = await createSupabaseUserClient();
-  const { data: { user } } = await supabase.auth.getUser();
+  // Resolve user identity: MCP service-key (internal) OR Supabase session (browser)
+  let userId: string;
 
-  if (!user) {
-    return new Response("Unauthorized", { status: 401 });
+  const mcpServiceKey = request.headers.get("x-mcp-service-key");
+  const mcpUserId = request.headers.get("x-mcp-user-id");
+  const expectedKey = process.env.STORAGE_SUPABASE_SERVICE_ROLE_KEY;
+
+  if (mcpServiceKey && mcpUserId && expectedKey && mcpServiceKey === expectedKey) {
+    userId = mcpUserId;
+  } else {
+    const supabase = await createSupabaseUserClient();
+    const { data: { user } } = await supabase.auth.getUser();
+
+    if (!user) {
+      return new Response("Unauthorized", { status: 401 });
+    }
+    userId = user.id;
   }
 
-  const log = createLogger("orch/stream", { u: user.id.slice(0, 8), wf: workflowId });
+  const log = createLogger("orch/stream", { u: userId.slice(0, 8), wf: workflowId });
 
   const encoder = new TextEncoder();
 

@@ -24,6 +24,9 @@ export const GUARDIAN_TOOLS_KNOWLEDGE = `
 ### Discovery Tools
 - \`get_connected_clients\` — List all connected Figma plugin instances with their file context (fileKey, fileUrl, fileName, pages, currentPage, currentUser). Lightweight presence query — no code is executed. Use this to discover which Figma files are open before running other tools.
 
+### Collaboration Tools
+- \`start_collab\` — Start a multi-agent collaborative orchestration. Call \`get_connected_clients\` first to discover available agents, then \`start_collab\` with the task and chosen agent shortIds. A Temporal orchestrator will brief all agents and assign directives automatically.
+
 ### Page Inspection Tools
 - \`list_page_children\` — List all top-level nodes on the current page (name, type, position, size). Use this instead of get_selection_context to check what exists on a page without requiring a selection.
 

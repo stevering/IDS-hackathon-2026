@@ -24,6 +24,7 @@ import { registerFigmaExecuteTool } from "./figma-execute.js"
 import { registerActionTools } from "./actions.js"
 import { registerListPageChildrenTool } from "./list-page-children.js"
 import { registerGetConnectedClientsTool } from "./get-connected-clients.js"
+import { registerStartCollabTool } from "./start-collab.js"
 import { registerLookupFigmaDocsTool } from "./lookup-figma-docs.js"
 
 export function registerAllTools(server: McpServer, userId?: string): void {
@@ -43,6 +44,9 @@ export function registerAllTools(server: McpServer, userId?: string): void {
 
   // Discovery tools (presence-only, no code execution)
   registerGetConnectedClientsTool(server, userId)
+
+  // Collaboration tools (Temporal orchestration via Guardian Cloud API)
+  registerStartCollabTool(server, userId)
 
   // Reference tools (no plugin needed)
   registerLookupFigmaDocsTool(server)

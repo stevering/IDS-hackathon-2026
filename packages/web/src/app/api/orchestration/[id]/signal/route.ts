@@ -24,11 +24,23 @@ export async function POST(
     );
   }
 
-  const supabase = await createSupabaseUserClient();
-  const { data: { user } } = await supabase.auth.getUser();
+  // Resolve user identity: MCP service-key (internal) OR Supabase session (browser)
+  let userId: string;
 
-  if (!user) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const mcpServiceKey = request.headers.get("x-mcp-service-key");
+  const mcpUserId = request.headers.get("x-mcp-user-id");
+  const expectedKey = process.env.STORAGE_SUPABASE_SERVICE_ROLE_KEY;
+
+  if (mcpServiceKey && mcpUserId && expectedKey && mcpServiceKey === expectedKey) {
+    userId = mcpUserId;
+  } else {
+    const supabase = await createSupabaseUserClient();
+    const { data: { user } } = await supabase.auth.getUser();
+
+    if (!user) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+    userId = user.id;
   }
 
   const body = await request.json();
@@ -44,7 +56,7 @@ export async function POST(
     );
   }
 
-  const log = createLogger("orch/signal", { u: user.id.slice(0, 8), wf: workflowId, signal: signalName });
+  const log = createLogger("orch/signal", { u: userId.slice(0, 8), wf: workflowId, signal: signalName });
 
   try {
     const { getTemporalClient, userInputSignal, stopSignal } = await import("@guardian/temporal/client");

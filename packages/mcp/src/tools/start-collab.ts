@@ -47,8 +47,12 @@ After discovering agents #Figma-Desktop-abc (file: Homepage) and #Figma-Desktop-
       model: z.string().optional().describe(
         "Optional AI model ID for the orchestrator LLM (defaults to platform default)"
       ),
+      conversationId: z.string().optional().describe(
+        "Optional parent conversation ID to attach this orchestration to. " +
+        "If omitted, a new conversation is created automatically."
+      ),
     },
-    async ({ task, agents, model }) => {
+    async ({ task, agents, model, conversationId }) => {
       const connectedClients = await getConnectedClients(userId)
 
       if (connectedClients.length === 0) {
@@ -116,6 +120,7 @@ After discovering agents #Figma-Desktop-abc (file: Homepage) and #Figma-Desktop-
             task,
             targetAgents,
             model,
+            conversationId,
           }),
         })
 
@@ -130,26 +135,67 @@ After discovering agents #Figma-Desktop-abc (file: Homepage) and #Figma-Desktop-
         const result = await response.json() as {
           workflowId: string
           orchestrationId: string
+          conversationId?: string
+          orchestrationConversationId?: string
         }
 
         const agentList = targetAgents.map((a) => `${a.shortId} (${a.fileName ?? "n/a"})`).join(", ")
+
+        const streamUrl = `${cloudUrl}/api/orchestration/${result.workflowId}/stream`
+        const signalUrl = `${cloudUrl}/api/orchestration/${result.workflowId}/signal`
 
         const data = {
           success: true,
           workflowId: result.workflowId,
           orchestrationId: result.orchestrationId,
+          conversationId: result.conversationId,
+          orchestrationConversationId: result.orchestrationConversationId,
           task,
           agents: targetAgents.map((a) => ({
             shortId: a.shortId,
             label: a.label,
             fileName: a.fileName,
           })),
+          monitoring: {
+            streamUrl,
+            signalUrl,
+            serviceKeyHeader: "x-mcp-service-key",
+            userIdHeader: "x-mcp-user-id",
+          },
         }
+
+        const envLoad = `export $(grep -v '^#' .env.local | grep STORAGE_SUPABASE_SERVICE_ROLE_KEY | xargs)`
+        const authHeaders = `-H "x-mcp-service-key: $STORAGE_SUPABASE_SERVICE_ROLE_KEY" -H "x-mcp-user-id: ${userId || "$USER_ID"}"`
+        const logFile = `/tmp/guardian-stream-${result.workflowId}.log`
 
         return formatToolResponse(
           `Orchestration started (workflow: ${result.workflowId}). Task: "${task}". ` +
           `Agents (${targetAgents.length}): ${agentList}. ` +
-          `The AI orchestrator will now brief all agents and assign directives.`,
+          `The AI orchestrator will now brief all agents and assign directives.\n\n` +
+          `## IMPORTANT: Follow the orchestration in real-time\n` +
+          `You MUST start the background stream immediately after receiving this response.\n\n` +
+          `### Step 1: Start background stream (run_in_background=true)\n` +
+          `\`\`\`bash\n` +
+          `${envLoad} && curl -s -N ${authHeaders} "${streamUrl}" > ${logFile} 2>&1\n` +
+          `\`\`\`\n\n` +
+          `### Step 2: Check progress (run anytime)\n` +
+          `\`\`\`bash\n` +
+          `tail -50 ${logFile}\n` +
+          `\`\`\`\n\n` +
+          `### Step 3: Search for specific events\n` +
+          `\`\`\`bash\n` +
+          `grep -E "agent_report|orchestration_completed|code_executed|VERIFIED|ISSUE" ${logFile}\n` +
+          `\`\`\`\n\n` +
+          `### Send a message to the orchestrator\n` +
+          `\`\`\`bash\n` +
+          `${envLoad} && curl -s -X POST -H "Content-Type: application/json" ${authHeaders} ` +
+          `-d '{"signal":"userInput","payload":{"content":"your message here"}}' "${signalUrl}"\n` +
+          `\`\`\`\n\n` +
+          `### Stop the orchestration\n` +
+          `\`\`\`bash\n` +
+          `${envLoad} && curl -s -X POST -H "Content-Type: application/json" ${authHeaders} ` +
+          `-d '{"signal":"stop"}' "${signalUrl}"\n` +
+          `\`\`\``,
           data,
         )
       } catch (err) {

@@ -6,6 +6,7 @@
 
 import { NextResponse } from "next/server";
 import { createClient as createSupabaseUserClient } from "@/lib/supabase/server";
+import { createServiceClient } from "@/lib/supabase/service";
 import type { StartOrchestrationParams, AgentId } from "@guardian/orchestrations";
 import { createLogger } from "@/lib/log";
 
@@ -20,20 +21,33 @@ export async function POST(request: Request) {
     );
   }
 
-  const supabase = await createSupabaseUserClient();
-  const { data: { user } } = await supabase.auth.getUser();
+  // Resolve user identity: MCP service-key (internal) OR Supabase session (browser)
+  let userId: string;
 
-  if (!user) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const mcpServiceKey = request.headers.get("x-mcp-service-key");
+  const mcpUserId = request.headers.get("x-mcp-user-id");
+  const expectedKey = process.env.STORAGE_SUPABASE_SERVICE_ROLE_KEY;
+
+  if (mcpServiceKey && mcpUserId && expectedKey && mcpServiceKey === expectedKey) {
+    userId = mcpUserId;
+  } else {
+    const supabase = await createSupabaseUserClient();
+    const { data: { user } } = await supabase.auth.getUser();
+
+    if (!user) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+    userId = user.id;
   }
 
   const body = await request.json();
-  const { task, targetAgents, model, maxDurationMs, context } = body as {
+  const { task, targetAgents, model, maxDurationMs, context, conversationId } = body as {
     task: string;
     targetAgents: AgentId[];
     model?: string;
     maxDurationMs?: number;
     context?: Record<string, unknown>;
+    conversationId?: string;
   };
 
   if (!task || !targetAgents?.length) {
@@ -43,8 +57,8 @@ export async function POST(request: Request) {
     );
   }
 
-  const workflowId = `orch-${user.id.slice(0, 8)}-${Date.now()}`;
-  const log = createLogger("orch/start", { u: user.id.slice(0, 8), wf: workflowId });
+  const workflowId = `orch-${userId.slice(0, 8)}-${Date.now()}`;
+  const log = createLogger("orch/start", { u: userId.slice(0, 8), wf: workflowId });
 
   try {
     // Dynamic import to avoid loading Temporal client when feature is disabled
@@ -54,7 +68,7 @@ export async function POST(request: Request) {
     const taskQueue = getTaskQueue();
 
     const params: StartOrchestrationParams = {
-      userId: user.id,
+      userId,
       task,
       targetAgents,
       model,
@@ -78,9 +92,79 @@ export async function POST(request: Request) {
 
     log.info("workflow started");
 
+    // ── Ensure conversation exists for UI visibility ─────────────────────
+    // If no conversationId was provided (e.g. MCP caller), create a parent
+    // conversation + sub-conversation automatically so the orchestration
+    // appears in the webapp sidebar.
+    let parentConversationId = conversationId ?? null;
+    let orchConversationId: string | null = null;
+
+    const sb = createServiceClient();
+    const agentNames = targetAgents.map((a: AgentId) => a.shortId).join(", ");
+
+    try {
+      if (!parentConversationId) {
+        // Create a parent conversation with the task as title
+        const { data: parentId, error: parentErr } = await sb
+          .from("conversations")
+          .insert({
+            user_id: userId,
+            title: task.slice(0, 100),
+            metadata: {},
+          })
+          .select("id")
+          .single();
+
+        if (parentErr) throw parentErr;
+        parentConversationId = parentId.id;
+        log.info("created parent conversation", { convId: parentConversationId });
+      }
+
+      // Add user message (the task) to the parent conversation
+      await sb.from("messages").insert({
+        conversation_id: parentConversationId,
+        role: "user",
+        content: task,
+        parts: [{ type: "text", text: task }],
+        metadata: { source: "mcp" },
+      });
+
+      // Add assistant message with the orchestrate button marker
+      const orchestrateMarker = `[ORCHESTRATE:${targetAgents.map((a: AgentId) => a.shortId).join(",")}]`;
+      const assistantText = `Starting collaborative orchestration with ${agentNames}.\n\n${orchestrateMarker}`;
+      await sb.from("messages").insert({
+        conversation_id: parentConversationId,
+        role: "assistant",
+        content: assistantText,
+        parts: [{ type: "text", text: assistantText }],
+        metadata: { source: "mcp", workflowId },
+      });
+
+      // Create the orchestration sub-conversation
+      const { data: orchConvId, error: orchErr } = await sb
+        .from("conversations")
+        .insert({
+          user_id: userId,
+          title: "Orchestration",
+          parent_id: parentConversationId,
+          metadata: { workflowId },
+        })
+        .select("id")
+        .single();
+
+      if (orchErr) throw orchErr;
+      orchConversationId = orchConvId.id;
+      log.info("created orchestration sub-conversation", { convId: orchConversationId });
+    } catch (convErr) {
+      // Conversation creation is best-effort — workflow already started
+      log.warn(`conversation setup failed (non-fatal): ${convErr}`);
+    }
+
     return NextResponse.json({
       workflowId: handle.workflowId,
       orchestrationId: workflowId,
+      conversationId: parentConversationId,
+      orchestrationConversationId: orchConversationId,
     });
   } catch (error) {
     log.error(`failed to start: ${error}`);
