@@ -92,15 +92,19 @@ async function notifyGuardrailIfBlocked(
 
 const REVIEW_SYSTEM_PROMPT = `You are a Figma Plugin API code reviewer. Review the code for correctness before it runs.
 
+CRITICAL CONTEXT: Each code execution runs in a **completely fresh JavaScript scope**. Variables from previous executions do NOT exist. The code MUST be self-contained — it must declare every variable it uses.
+
 Check for:
-1. Correct Figma Plugin API usage (methods, properties, async patterns)
-2. Color objects must use { r, g, b } format — NO 'a' (alpha) key
-3. No figma.closePlugin() — it kills the bridge
-4. No assignment to read-only properties (.children)
-5. Must call await figma.loadFontAsync() before setting .characters or .fontName
-6. No TypeScript syntax (no "as Type" casts — this runs as plain JavaScript)
-7. FrameNode has no .backgroundColor — use .fills instead
-8. GroupNode has no .layoutMode — use figma.createFrame() for auto-layout
+1. **Self-contained code**: Every variable used must be declared (const/let/var) in THIS snippet. If the code references a variable like "ellipse" or "canvas" without declaring it, REJECT it.
+2. Correct Figma Plugin API usage (methods, properties, async patterns)
+3. Color objects must use { r, g, b } format — NO 'a' (alpha) key
+4. No figma.closePlugin() — it kills the bridge
+5. No assignment to read-only properties (.children)
+6. Must call await figma.loadFontAsync() before setting .characters or .fontName
+7. No TypeScript syntax (no "as Type" casts — this runs as plain JavaScript)
+8. FrameNode has no .backgroundColor — use .fills instead
+9. GroupNode has no .layoutMode — use figma.createFrame() for auto-layout
+10. figma.currentPage has NO .width or .height — pages are infinite canvases. Use figma.viewport.center or hardcoded coordinates.
 
 Respond with EXACTLY one of:
 - "APPROVED" (on its own line) if the code is correct
@@ -134,6 +138,17 @@ async function handleReviewAndExecute(
     model,
     maxTokens: 512,
   });
+
+  // Emit the raw review response with usage inline
+  await executeEffect(state, {
+    type: "emit_activity",
+    activities: [{
+      action: "code_review_llm_response" as const,
+      response: reviewResult.content,
+      reasoning: reviewResult.reasoning,
+      usage: reviewResult.usage,
+    }],
+  }, userId);
 
   const review = parseReviewResponse(reviewResult.content);
 
@@ -177,13 +192,29 @@ async function handleReviewAndExecute(
     }],
   }, userId);
 
-  // Step 2: Execute in Figma
+  // Step 2: Snapshot BEFORE — list all node IDs on the current page
+  const clientId = effect.pluginClientId || state.agent.pluginClientId || "";
+  const snapshotCode = `return JSON.stringify(figma.currentPage.children.map(n => n.id));`;
+  let beforeIds: string[] = [];
+  try {
+    const beforeResult = await executeFigmaCode({
+      pluginClientId: clientId, userId, code: snapshotCode,
+      workflowId: state.orchestratorWorkflowId,
+    });
+    if (beforeResult.success && beforeResult.result) {
+      beforeIds = JSON.parse(String(beforeResult.result));
+    }
+  } catch { /* best-effort */ }
+
+  // Step 3: Execute the actual code in Figma
   const execResult = await executeFigmaCode({
-    pluginClientId: effect.pluginClientId || state.agent.pluginClientId || "",
+    pluginClientId: clientId,
     userId,
     code: effect.code,
     workflowId: state.orchestratorWorkflowId,
   });
+
+  let verificationSummary: string | undefined;
 
   // Emit code_executed activity
   await executeEffect(state, {
@@ -197,10 +228,74 @@ async function handleReviewAndExecute(
     }],
   }, userId);
 
+  // Step 4: Snapshot AFTER — diff to find new/changed nodes
+  if (execResult.success) {
+    try {
+      const beforeSet = JSON.stringify(beforeIds);
+      const diffCode = `const before = new Set(${beforeSet});
+const children = figma.currentPage.children;
+const added = children.filter(n => !before.has(n.id));
+const kept = children.filter(n => before.has(n.id));
+const removed = ${beforeSet}.filter(id => !children.find(n => n.id === id));
+const describe = n => ({
+  id: n.id, name: n.name, type: n.type,
+  x: Math.round(n.x), y: Math.round(n.y),
+  width: Math.round(n.width), height: Math.round(n.height),
+  fills: 'fills' in n ? n.fills : undefined,
+});
+return JSON.stringify({
+  added: added.map(describe),
+  removedCount: removed.length,
+  totalChildren: children.length,
+});`;
+      const afterResult = await executeFigmaCode({
+        pluginClientId: clientId, userId, code: diffCode,
+        workflowId: state.orchestratorWorkflowId,
+      });
+      if (afterResult.success && afterResult.result) {
+        verificationSummary = String(afterResult.result).slice(0, 2000);
+        await executeEffect(state, {
+          type: "emit_activity",
+          activities: [{
+            action: "code_verified" as const,
+            selection: verificationSummary,
+          }],
+        }, userId);
+      }
+    } catch {
+      // Verification is best-effort — don't block the agent if it fails
+    }
+  }
+
   await notifyGuardrailIfBlocked(execResult, state);
 
-  // Inject result as tool result
-  const execResultJson = JSON.stringify(execResult);
+  // Inject result as tool result — include verification diff so the agent sees what changed
+  let execResultJson: string;
+  if (execResult.success) {
+    const parts = [
+      "Execution succeeded. If your task is complete, call signal_task_complete now. Do NOT re-execute code that already succeeded.",
+    ];
+    if (verificationSummary) {
+      try {
+        const diff = JSON.parse(verificationSummary);
+        const addedCount = diff.added?.length ?? 0;
+        parts.push(`\nFigma verification: ${addedCount} node(s) added, ${diff.removedCount ?? 0} removed, ${diff.totalChildren} total children on page.`);
+        if (addedCount > 0) {
+          const descriptions = diff.added.map((n: Record<string, unknown>) => {
+            const fills = n.fills as Array<{ color?: { r: number; g: number; b: number } }> | undefined;
+            const fillStr = fills?.[0]?.color ? ` fill:rgb(${Math.round(fills[0].color.r * 255)},${Math.round(fills[0].color.g * 255)},${Math.round(fills[0].color.b * 255)})` : "";
+            return `  + ${n.type} "${n.name}" ${n.width}x${n.height}${fillStr}`;
+          });
+          parts.push(descriptions.join("\n"));
+        }
+      } catch { /* ignore parse errors */ }
+    }
+    parts.push(`---\n${JSON.stringify(execResult)}`);
+    execResultJson = parts.join("\n");
+  } else {
+    execResultJson = `Execution failed. Diagnose the error and retry with corrected code.\n---\n${JSON.stringify(execResult)}`;
+  }
+
   await executeEffect(state, {
     type: "emit_activity",
     activities: [{
@@ -302,12 +397,12 @@ export async function agentWorkflow(input: AgentWorkflowInput): Promise<void> {
           userId: input.userId,
           model: input.model,
         });
-
         const responseEffects = processLLMResponse(
           state,
           llmResult.content,
           llmResult.toolCalls,
-          llmResult.reasoning
+          llmResult.reasoning,
+          llmResult.usage
         );
 
         // Execute tool effects first, then LLM continuation
@@ -357,7 +452,7 @@ async function executeLLMLoop(
 
   while (maxIterations-- > 0 && !state.completed) {
     const llmResult = await callLLM({ messages, tools, userId, model });
-    const effects = processLLMResponse(state, llmResult.content, llmResult.toolCalls, llmResult.reasoning);
+    const effects = processLLMResponse(state, llmResult.content, llmResult.toolCalls, llmResult.reasoning, llmResult.usage);
 
     let needsContinue = false;
     let didExecuteTool = false;

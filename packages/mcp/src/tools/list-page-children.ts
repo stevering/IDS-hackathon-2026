@@ -1,6 +1,7 @@
 import { z } from "zod"
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js"
 import { executeViaSupabase } from "../lib/figma-bridge.js"
+import { formatToolResponse } from "../lib/format-response.js"
 
 export function registerListPageChildrenTool(server: McpServer, userId?: string): void {
   server.tool(
@@ -49,9 +50,21 @@ return {
       const requestId = `list-children-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
       const result = await executeViaSupabase(code, requestId, 10_000, userId, targetClientId)
 
-      return {
-        content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
+      let summary: string
+      if (!result.success) {
+        summary = `Failed to list page children: ${result.error ?? "unknown error"}.`
+      } else {
+        const first = (result.result ?? []).find((r) => r.success)
+        const pageData = first?.result as { pageName?: string; childCount?: number; truncated?: boolean } | undefined
+        if (pageData) {
+          summary = `Page "${pageData.pageName ?? "unknown"}" has ${pageData.childCount ?? 0} top-level node(s)` +
+            (pageData.truncated ? ` (truncated to ${max})` : ``) + `.`
+        } else {
+          summary = `Page children query completed but returned no data.`
+        }
       }
+
+      return formatToolResponse(summary, result)
     }
   )
 }

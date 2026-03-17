@@ -111,6 +111,36 @@ export async function GET(
             const msg = String(queryError);
             if (msg.includes("not found") || msg.includes("completed")) {
               log.info("workflow gone, treating as completed", { polls: pollCount });
+
+              // Replay persisted events from the database so the client can display
+              // the full orchestration history even after the Temporal workflow is gone
+              try {
+                const { data: persistedEvents } = await supabase
+                  .from("orchestration_events")
+                  .select("payload")
+                  .eq("workflow_id", workflowId)
+                  .order("created_at", { ascending: true });
+
+                if (persistedEvents && persistedEvents.length > 0) {
+                  // Filter out orchestration_completed to avoid duplicates
+                  // (we send our own after the replay)
+                  const replayable = persistedEvents.filter(
+                    (row) => (row.payload as { type?: string })?.type !== "orchestration_completed"
+                  );
+                  log.info(`replaying ${replayable.length} persisted events (${persistedEvents.length} total)`);
+                  for (const row of replayable) {
+                    if (closed) break;
+                    // Mark as replayed so the client skips re-persisting
+                    const payload = { ...(row.payload as Record<string, unknown>), _replayed: true };
+                    controller.enqueue(
+                      encoder.encode(`data: ${JSON.stringify(payload)}\n\n`)
+                    );
+                  }
+                }
+              } catch (replayErr) {
+                log.error(`failed to replay persisted events: ${replayErr}`);
+              }
+
               controller.enqueue(
                 encoder.encode(
                   `data: ${JSON.stringify({

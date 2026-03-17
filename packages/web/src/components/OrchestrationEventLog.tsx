@@ -258,7 +258,7 @@ function renderEvent(event: OrchestrationSSEEvent, index: number, agents: AgentV
             event={event}
             agents={agents}
             title="Orchestrator"
-            subject="thinking"
+            subject={event.usage ? `thinking  ${event.usage.totalTokens} tok` : "thinking"}
             preview={event.content}
             defaultOpen={true}
             colorClass="border-amber-500/20 bg-amber-500/5 text-amber-300"
@@ -266,6 +266,11 @@ function renderEvent(event: OrchestrationSSEEvent, index: number, agents: AgentV
             <div className="text-xs text-amber-200/70 leading-relaxed whitespace-pre-wrap">
               {event.content}
             </div>
+            {event.usage && (
+              <div className="mt-1 text-[8px] font-mono text-amber-300/40 border-t border-amber-500/10 pt-1">
+                {event.usage.totalTokens} tokens ({event.usage.promptTokens} in + {event.usage.completionTokens} out)
+              </div>
+            )}
           </EventBlock>
         </div>
       );
@@ -597,16 +602,19 @@ function AgentActivityItem({ activity, agentShortId }: { activity: AgentActivity
     case "reasoning":
       return (
         <ActivityRow pill={pill} label={`${agentShortId} reasoning`} detail={activity.content}
+          usage={activity.usage}
           colorClass="bg-amber-500/5 border-amber-500/10 text-amber-400/60 hover:bg-amber-500/10" />
       );
     case "thinking":
       return (
         <ActivityRow pill={pill} label={agentShortId} detail={activity.content}
+          usage={activity.usage}
           colorClass="bg-cyan-500/5 border-cyan-500/10 text-cyan-400/60 hover:bg-cyan-500/10" />
       );
     case "tool_call":
       return (
         <ActivityRow pill={pill} label={`${agentShortId} ${activity.toolName}`} detail={activity.summary}
+          usage={activity.usage}
           colorClass="bg-indigo-500/5 border-indigo-500/10 text-indigo-400/60 hover:bg-indigo-500/10" />
       );
     case "code_review_passed":
@@ -636,10 +644,44 @@ function AgentActivityItem({ activity, agentShortId }: { activity: AgentActivity
             ? "bg-emerald-500/5 border-emerald-500/10 text-emerald-400/60 hover:bg-emerald-500/10"
             : "bg-red-500/5 border-red-500/10 text-red-400/60 hover:bg-red-500/10"} />
       );
+    case "code_verified": {
+      let formatted: string;
+      try {
+        const parsed = JSON.parse(activity.selection);
+        const lines: string[] = [];
+        if (parsed.added?.length > 0) {
+          for (const n of parsed.added as Array<Record<string, unknown>>) {
+            let line = `+ ${n.type} "${n.name}" ${n.width}x${n.height} @(${n.x},${n.y})`;
+            if (Array.isArray(n.fills) && n.fills.length > 0) {
+              const c = (n.fills[0] as Record<string, Record<string, number>>).color;
+              if (c) line += ` fill: rgb(${Math.round(c.r * 255)},${Math.round(c.g * 255)},${Math.round(c.b * 255)})`;
+            }
+            lines.push(line);
+          }
+        }
+        if (parsed.removedCount > 0) lines.push(`- ${parsed.removedCount} node(s) removed`);
+        if (parsed.added?.length === 0 && parsed.removedCount === 0) lines.push("No changes detected");
+        lines.push(`Total: ${parsed.totalChildren} children on page`);
+        formatted = lines.join("\n");
+      } catch {
+        formatted = activity.selection;
+      }
+      return (
+        <ActivityRow pill={pill} label={`${agentShortId} Verified`} detail={formatted}
+          colorClass="bg-teal-500/5 border-teal-500/10 text-teal-400/60 hover:bg-teal-500/10" />
+      );
+    }
     case "guardian_message":
       return (
         <ActivityRow pill={pill} label={`Guardian → ${activity.recipient}`} detail={activity.message}
           colorClass="bg-white/[0.02] border-white/8 text-white/40 hover:bg-white/[0.04]" />
+      );
+    case "code_review_llm_response":
+      return (
+        <ActivityRow pill={pill} label={`${agentShortId} Review response`}
+          detail={`${activity.response}${activity.reasoning ? `\n\nReasoning: ${activity.reasoning}` : ""}`}
+          usage={activity.usage}
+          colorClass="bg-violet-500/5 border-violet-500/10 text-violet-400/60 hover:bg-violet-500/10" />
       );
     default:
       return null;
@@ -650,11 +692,13 @@ function ActivityRow({
   pill,
   label,
   detail,
+  usage,
   colorClass,
 }: {
   pill: React.ReactNode;
   label: string;
   detail: string;
+  usage?: { promptTokens: number; completionTokens: number; totalTokens: number };
   colorClass: string;
 }) {
   const [open, setOpen] = useState(false);
@@ -674,11 +718,17 @@ function ActivityRow({
         </svg>
         {pill}
         <span className="font-mono font-medium shrink-0">{label}</span>
+        {usage && <span className="shrink-0 text-[8px] font-mono opacity-50">{usage.totalTokens} tok</span>}
         {!open && <span className="truncate opacity-60 min-w-0">{detail.slice(0, 80)}</span>}
       </button>
       {open && (
         <div className="px-2 pb-1.5 pt-0.5 text-[10px] whitespace-pre-wrap opacity-80 break-all border-t border-inherit">
           {detail}
+          {usage && (
+            <div className="mt-1 text-[8px] font-mono opacity-50 border-t border-inherit pt-1">
+              {usage.totalTokens} tokens ({usage.promptTokens} in + {usage.completionTokens} out)
+            </div>
+          )}
         </div>
       )}
     </div>

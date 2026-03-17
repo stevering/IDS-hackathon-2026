@@ -1,6 +1,7 @@
 import { z } from "zod"
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js"
 import { PLAYBOOKS } from "../guardian/playbooks.js"
+import { formatToolResponse } from "../lib/format-response.js"
 
 export function registerAnalyzeDriftTool(server: McpServer): void {
   server.tool(
@@ -37,9 +38,7 @@ Do NOT use this for assessing uniqueness — use assess_snowflake.`,
 
       const steps = playbook.steps
         .filter((step) => {
-          // Skip the figma comparison step if no nodeId provided
           if (step.id === "dd-2" && !figmaNodeId) return false
-          // Skip the code file step if no currentFile provided
           if (step.id === "dd-4" && !currentFile) return false
           return true
         })
@@ -56,34 +55,31 @@ Do NOT use this for assessing uniqueness — use assess_snowflake.`,
           ),
         }))
 
-      return {
-        content: [
-          {
-            type: "text",
-            text: JSON.stringify(
-              {
-                tool: "analyze_drift",
-                component: componentName,
-                figmaNodeId: figmaNodeId ?? null,
-                confirmedDrift: confirmed
-                  ? { detectedTokens: customTokens }
-                  : null,
-                investigation_plan: {
-                  summary: confirmed
-                    ? `Drift confirmed (${Object.keys(customTokens!).length} hardcoded value(s)). Investigate scope and impact.`
-                    : playbook.summary_template.replaceAll("{componentName}", componentName),
-                  priority: playbook.priority,
-                  steps,
-                },
-                drift_signals: playbook.drift_signals,
-                interpretation_guide: playbook.interpretation_guide,
-              },
-              null,
-              2
-            ),
-          },
-        ],
+      const data = {
+        tool: "analyze_drift",
+        component: componentName,
+        figmaNodeId: figmaNodeId ?? null,
+        confirmedDrift: confirmed
+          ? { detectedTokens: customTokens }
+          : null,
+        investigation_plan: {
+          summary: confirmed
+            ? `Drift confirmed (${Object.keys(customTokens!).length} hardcoded value(s)). Investigate scope and impact.`
+            : playbook.summary_template.replaceAll("{componentName}", componentName),
+          priority: playbook.priority,
+          steps,
+        },
+        drift_signals: playbook.drift_signals,
+        interpretation_guide: playbook.interpretation_guide,
       }
+
+      const summary = confirmed
+        ? `Drift confirmed for "${componentName}": ${Object.keys(customTokens!).length} hardcoded value(s) detected (${Object.keys(customTokens!).join(", ")}). ` +
+          `${steps.length} step(s) to measure scope and impact.`
+        : `Investigation plan ready for drift analysis on "${componentName}". ` +
+          `${steps.length} step(s) to compare against the DS master and detect token overrides.`
+
+      return formatToolResponse(summary, data)
     }
   )
 }

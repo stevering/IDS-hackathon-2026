@@ -19,11 +19,11 @@ Update the color tokens to match the new brand palette.
 
     const result = parseDirectives(input);
     expect(result).toHaveLength(2);
-    expect(result[0].agentShortId).toBe("figma-1");
+    expect(result[0].agentShortId).toBe("#figma-1");
     expect(result[0].content).toBe(
       "Create a button component with primary and secondary variants."
     );
-    expect(result[1].agentShortId).toBe("figma-2");
+    expect(result[1].agentShortId).toBe("#figma-2");
     expect(result[1].content).toBe(
       "Update the color tokens to match the new brand palette."
     );
@@ -48,9 +48,9 @@ Step 3: Verify
 
     const result = parseDirectives(input);
     expect(result).toHaveLength(2);
-    expect(result[0].agentShortId).toBe("figma-1");
+    expect(result[0].agentShortId).toBe("#figma-1");
     expect(result[0].content).toBe("Create a button component");
-    expect(result[1].agentShortId).toBe("figma-2");
+    expect(result[1].agentShortId).toBe("#figma-2");
     expect(result[1].content).toBe("Update the colors");
   });
 
@@ -66,7 +66,7 @@ Do something
 
     const result = parseDirectives(input);
     expect(result).toHaveLength(1);
-    expect(result[0].agentShortId).toBe("figma-1");
+    expect(result[0].agentShortId).toBe("#figma-1");
   });
 });
 

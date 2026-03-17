@@ -2,6 +2,7 @@ import { z } from "zod"
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js"
 import { getAction, listActions, interpolate, validateParams } from "../actions/registry.js"
 import { executeViaSupabase } from "../lib/figma-bridge.js"
+import { formatToolResponse } from "../lib/format-response.js"
 
 export function registerActionTools(server: McpServer, userId?: string): void {
 
@@ -32,7 +33,7 @@ Filter by category to narrow results:
     },
     async ({ category }) => {
       const actions = await listActions(category)
-      const summary = actions.map((a) => ({
+      const actionList = actions.map((a) => ({
         name: a.name,
         description: a.description,
         category: a.category,
@@ -46,22 +47,24 @@ Filter by category to narrow results:
         })),
       }))
 
-      return {
-        content: [
-          {
-            type: "text",
-            text: JSON.stringify(
-              {
-                total: summary.length,
-                category: category ?? "all",
-                actions: summary,
-              },
-              null,
-              2
-            ),
-          },
-        ],
+      const data = {
+        total: actionList.length,
+        category: category ?? "all",
+        actions: actionList,
       }
+
+      let summary: string
+      if (actionList.length === 0) {
+        summary = `No actions found${category ? ` in category "${category}"` : ``}.`
+      } else {
+        const names = actionList.map((a) => a.name)
+        const displayNames = names.length > 10
+          ? names.slice(0, 10).join(", ") + `, ... and ${names.length - 10} more`
+          : names.join(", ")
+        summary = `Found ${actionList.length} action(s)${category ? ` in category "${category}"` : ` across all categories`}: ${displayNames}.`
+      }
+
+      return formatToolResponse(summary, data)
     }
   )
 
@@ -101,69 +104,44 @@ Built-in actions for DS compliance:
     async ({ name, params }) => {
       const action = await getAction(name)
       if (!action) {
-        return {
-          content: [
-            {
-              type: "text",
-              text: JSON.stringify(
-                {
-                  success: false,
-                  error: `Action '${name}' not found. Call list_actions to see available actions.`,
-                },
-                null,
-                2
-              ),
-            },
-          ],
-        }
+        return formatToolResponse(
+          `Action "${name}" not found. Call list_actions to see available actions.`,
+          { success: false, error: `Action '${name}' not found.` },
+        )
       }
 
       const resolvedParams = params ?? {}
       const missing = validateParams(action, resolvedParams)
       if (missing.length > 0) {
-        return {
-          content: [
-            {
-              type: "text",
-              text: JSON.stringify(
-                {
-                  success: false,
-                  error: `Missing required params for action '${name}': ${missing.join(", ")}`,
-                  action: {
-                    name: action.name,
-                    params: action.params,
-                  },
-                },
-                null,
-                2
-              ),
-            },
-          ],
-        }
+        return formatToolResponse(
+          `Action "${name}" cannot run: missing required parameter(s) ${missing.join(", ")}.`,
+          { success: false, error: `Missing required params: ${missing.join(", ")}`, action: { name: action.name, params: action.params } },
+        )
       }
 
       const interpolatedCode = interpolate(action, resolvedParams)
 
-      // Execute the interpolated code via the Supabase Realtime bridge
       const requestId = `action-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
       const result = await executeViaSupabase(interpolatedCode, requestId, 10_000, userId)
 
-      return {
-        content: [
-          {
-            type: "text",
-            text: JSON.stringify(
-              {
-                ...result,
-                action: name,
-                params_resolved: resolvedParams,
-              },
-              null,
-              2
-            ),
-          },
-        ],
+      const resultData = { ...result, action: name, params_resolved: resolvedParams }
+
+      let summary: string
+      if (!result.success) {
+        summary = `Action "${name}" failed: ${result.error ?? "execution error"}.`
+      } else {
+        const clients = result.result ?? []
+        const succeeded = clients.filter((r) => r.success).length
+        summary = `Action "${name}" executed successfully on ${succeeded} plugin(s).`
+        if (clients.length === 1 && clients[0].success && clients[0].result !== undefined) {
+          const preview = JSON.stringify(clients[0].result)
+          if (preview.length <= 200) {
+            summary += ` Result: ${preview}`
+          }
+        }
       }
+
+      return formatToolResponse(summary, resultData)
     }
   )
 }

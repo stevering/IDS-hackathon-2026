@@ -1,6 +1,7 @@
 import { z } from "zod"
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js"
 import { PLAYBOOKS } from "../guardian/playbooks.js"
+import { formatToolResponse } from "../lib/format-response.js"
 
 export function registerCheckComponentUsageTool(server: McpServer): void {
   server.tool(
@@ -31,29 +32,25 @@ Do NOT use this if the component clearly does not exist — use assess_snowflake
         ),
       }))
 
-      return {
-        content: [
-          {
-            type: "text",
-            text: JSON.stringify(
-              {
-                tool: "check_component_usage",
-                component: componentName,
-                domain: domain ?? "general",
-                investigation_plan: {
-                  summary: playbook.summary_template,
-                  priority: playbook.priority,
-                  steps,
-                },
-                drift_signals: playbook.drift_signals,
-                interpretation_guide: playbook.interpretation_guide,
-              },
-              null,
-              2
-            ),
-          },
-        ],
+      const data = {
+        tool: "check_component_usage",
+        component: componentName,
+        domain: domain ?? "general",
+        investigation_plan: {
+          summary: playbook.summary_template,
+          priority: playbook.priority,
+          steps,
+        },
+        drift_signals: playbook.drift_signals,
+        interpretation_guide: playbook.interpretation_guide,
       }
+
+      const summary =
+        `Investigation plan ready for "${componentName}" (domain: ${domain ?? "general"}, priority: ${playbook.priority}). ` +
+        `${steps.length} step(s) to verify if this component already exists in the design system. ` +
+        `Start with step "${steps[0]?.goal ?? "unknown"}".`
+
+      return formatToolResponse(summary, data)
     }
   )
 }

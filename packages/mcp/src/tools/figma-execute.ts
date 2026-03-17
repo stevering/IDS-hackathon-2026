@@ -1,6 +1,7 @@
 import { z } from "zod"
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js"
 import { executeViaSupabase } from "../lib/figma-bridge.js"
+import { formatToolResponse } from "../lib/format-response.js"
 
 export function registerFigmaExecuteTool(server: McpServer, userId?: string): void {
   server.tool(
@@ -87,14 +88,24 @@ Create a button (Frame with text label — NOT a Rectangle):
 
       const result = await executeViaSupabase(code, requestId, timeoutMs, userId, targetClientId)
 
-      return {
-        content: [
-          {
-            type: "text",
-            text: JSON.stringify(result, null, 2),
-          },
-        ],
+      let summary: string
+      if (!result.success) {
+        summary = `Figma execution failed: ${result.error ?? "unknown error"}.`
+      } else {
+        const clients = result.result ?? []
+        const succeeded = clients.filter((r) => r.success).length
+        const failed = clients.filter((r) => !r.success).length
+        summary = `Figma code executed on ${clients.length} plugin(s): ${succeeded} succeeded` +
+          (failed > 0 ? `, ${failed} failed` : ``) + `.`
+        if (clients.length === 1 && clients[0].success && clients[0].result !== undefined) {
+          const preview = JSON.stringify(clients[0].result)
+          if (preview.length <= 200) {
+            summary += ` Result: ${preview}`
+          }
+        }
       }
+
+      return formatToolResponse(summary, result)
     }
   )
 }

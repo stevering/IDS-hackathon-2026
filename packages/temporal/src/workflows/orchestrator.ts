@@ -383,7 +383,8 @@ async function executeOrchestratorLLMLoop(
       state,
       llmResult.content,
       llmResult.toolCalls,
-      llmResult.reasoning
+      llmResult.reasoning,
+      llmResult.usage
     );
 
     // Separate continuation call_llm from other effects

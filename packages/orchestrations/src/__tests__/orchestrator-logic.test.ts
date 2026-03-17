@@ -231,7 +231,9 @@ describe("checkCompletion", () => {
   it("returns complete when all agents are done", () => {
     const state = createOrchestratorState(makeParams([makeAgent("a"), makeAgent("b")]));
     state.agents.get("a")!.status = "completed";
+    state.agents.get("a")!.confirmedByAgent = true;
     state.agents.get("b")!.status = "completed";
+    state.agents.get("b")!.confirmedByAgent = true;
 
     const effect = checkCompletion(state);
     expect(effect).not.toBeNull();
@@ -241,6 +243,7 @@ describe("checkCompletion", () => {
   it("returns null when agents are still active", () => {
     const state = createOrchestratorState(makeParams([makeAgent("a"), makeAgent("b")]));
     state.agents.get("a")!.status = "completed";
+    state.agents.get("a")!.confirmedByAgent = true;
     state.agents.get("b")!.status = "active";
 
     const effect = checkCompletion(state);
@@ -259,6 +262,7 @@ describe("checkCompletion", () => {
   it("treats interrupted agents as done", () => {
     const state = createOrchestratorState(makeParams([makeAgent("a")]));
     state.agents.get("a")!.status = "interrupted";
+    state.agents.get("a")!.confirmedByAgent = true;
 
     const effect = checkCompletion(state);
     expect(effect?.type).toBe("complete");
@@ -268,6 +272,7 @@ describe("checkCompletion", () => {
     const state = createOrchestratorState(makeParams([makeAgent("a"), makeAgent("b")]));
     // Agent A has a report
     state.agents.get("a")!.status = "completed";
+    state.agents.get("a")!.confirmedByAgent = true;
     state.agents.get("a")!.lastReport = {
       status: "completed",
       summary: "Done A",
@@ -275,6 +280,7 @@ describe("checkCompletion", () => {
     };
     // Agent B was marked completed via [AGENT_DONE] but never sent a report
     state.agents.get("b")!.status = "completed";
+    state.agents.get("b")!.confirmedByAgent = true;
     state.agents.get("b")!.lastReport = undefined;
 
     const effect = checkCompletion(state);
@@ -520,5 +526,60 @@ describe("processOrchestratorLLMResponse", () => {
       (m) => m.role === "tool" && m.toolCallId === "tc1"
     );
     expect(toolResult?.content).toContain("not found");
+  });
+
+  it("resolves agent shortId with # prefix when map keys have #", () => {
+    // Production scenario: shortIds stored with # prefix
+    const state = createOrchestratorState(
+      makeParams([makeAgent("#Figma-Desktop-abc", "wf-abc")])
+    );
+
+    const effects = processOrchestratorLLMResponse(state, "", [
+      {
+        id: "tc1",
+        name: "send_agent_directive",
+        arguments: { agentShortId: "#Figma-Desktop-abc", content: "Do work" },
+      },
+    ]);
+
+    const directives = effects.filter((e) => e.type === "send_directive");
+    expect(directives).toHaveLength(1);
+    expect(state.agents.get("#Figma-Desktop-abc")?.status).toBe("active");
+  });
+
+  it("resolves agent shortId with ## prefix (LLM double-hash)", () => {
+    const state = createOrchestratorState(
+      makeParams([makeAgent("#Figma-Desktop-abc", "wf-abc")])
+    );
+
+    const effects = processOrchestratorLLMResponse(state, "", [
+      {
+        id: "tc1",
+        name: "send_agent_directive",
+        arguments: { agentShortId: "##Figma-Desktop-abc", content: "Do work" },
+      },
+    ]);
+
+    const directives = effects.filter((e) => e.type === "send_directive");
+    expect(directives).toHaveLength(1);
+    expect(state.agents.get("#Figma-Desktop-abc")?.status).toBe("active");
+  });
+
+  it("resolves agent shortId without # when map keys have #", () => {
+    const state = createOrchestratorState(
+      makeParams([makeAgent("#Figma-Desktop-abc", "wf-abc")])
+    );
+
+    const effects = processOrchestratorLLMResponse(state, "", [
+      {
+        id: "tc1",
+        name: "send_agent_directive",
+        arguments: { agentShortId: "Figma-Desktop-abc", content: "Do work" },
+      },
+    ]);
+
+    const directives = effects.filter((e) => e.type === "send_directive");
+    expect(directives).toHaveLength(1);
+    expect(state.agents.get("#Figma-Desktop-abc")?.status).toBe("active");
   });
 });

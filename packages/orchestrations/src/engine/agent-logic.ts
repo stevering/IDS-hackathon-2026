@@ -276,7 +276,8 @@ export function processLLMResponse(
   state: AgentWorkflowState,
   content: string,
   toolCalls?: LLMToolCall[],
-  reasoning?: string
+  reasoning?: string,
+  usage?: { promptTokens: number; completionTokens: number; totalTokens: number }
 ): AgentEffect[] {
   state.messageHistory.push({
     role: "assistant",
@@ -288,14 +289,19 @@ export function processLLMResponse(
   const effects: AgentEffect[] = [];
   const activities: AgentActivity[] = [];
 
+  // Attach usage to the first activity that gets emitted (reasoning > thinking > first tool_call)
+  let usageAttached = false;
+
   // Emit reasoning activity (model internal thinking, e.g. kimi-k2.5)
   if (reasoning?.trim()) {
-    activities.push({ action: "reasoning", content: reasoning });
+    activities.push({ action: "reasoning", content: reasoning, usage });
+    usageAttached = !!usage;
   }
 
   // Emit thinking activity if there's content
   if (content.trim()) {
-    activities.push({ action: "thinking", content });
+    activities.push({ action: "thinking", content, usage: !usageAttached ? usage : undefined });
+    if (!usageAttached && usage) usageAttached = true;
   }
 
   if (!toolCalls || toolCalls.length === 0) {
@@ -347,6 +353,14 @@ export function processLLMResponse(
   for (const tc of toolCalls) {
     const { effects: toolEffects, activities: toolActivities } = processToolCall(state, tc);
     effects.push(...toolEffects);
+    // Attach usage to first tool_call activity if not yet attached to reasoning/thinking
+    if (!usageAttached && usage) {
+      const firstToolCall = toolActivities.find(a => a.action === "tool_call");
+      if (firstToolCall && firstToolCall.action === "tool_call") {
+        firstToolCall.usage = usage;
+        usageAttached = true;
+      }
+    }
     activities.push(...toolActivities);
   }
 
@@ -448,6 +462,65 @@ export function reviewFigmaCode(code: string): string[] {
     issues.push(
       'node.children is read-only. You cannot assign to it. ' +
       'Use node.appendChild(child) or node.insertChild(index, child) instead.'
+    );
+  }
+
+  // Rule 5: detect partial code (undeclared variables used in member access)
+  // Each figma_plugin_execute runs in a fresh scope — variables don't persist.
+  {
+    // Collect all variable declarations
+    const declared = new Set<string>();
+    for (const m of code.matchAll(/\b(?:const|let|var)\s+(\w+)/g)) declared.add(m[1]);
+    for (const m of code.matchAll(/\bfunction\s+(\w+)/g)) declared.add(m[1]);
+    // Arrow function params: (a, b) => ... or single param: x =>
+    for (const m of code.matchAll(/\(([^)]*)\)\s*(?:=>|\{)/g)) {
+      for (const p of m[1].split(",")) {
+        const name = p.trim().split(/\s*[=:]/)[0].trim();
+        if (/^\w+$/.test(name) && name.length > 0) declared.add(name);
+      }
+    }
+    for (const m of code.matchAll(/\b(\w+)\s*=>/g)) declared.add(m[1]);
+    // for..of / for..in
+    for (const m of code.matchAll(/\bfor\s*\(\s*(?:const|let|var)\s+(\w+)/g)) declared.add(m[1]);
+
+    const KNOWN_IDENTS = new Set([
+      // Figma & browser globals
+      "figma", "console", "Math", "JSON", "Date", "Array", "Object",
+      "String", "Number", "Boolean", "Promise", "parseInt", "parseFloat",
+      "setTimeout", "clearTimeout", "setInterval", "clearInterval",
+      "Infinity", "NaN", "Error", "RegExp", "Map", "Set", "undefined",
+      "Symbol", "BigInt", "Proxy", "Reflect", "globalThis",
+      "__html__", "__uiFiles__",
+      // JS keywords that can precede `.`
+      "this", "true", "false", "null", "new", "typeof", "void",
+      "return", "throw", "await", "delete", "super",
+    ]);
+
+    // Find identifiers used as base objects in member access (foo.bar)
+    // Negative lookbehind (?<!\.) prevents matching chained properties (e.g. figma.viewport.center)
+    const undeclared = new Set<string>();
+    for (const m of code.matchAll(/(?<!\.)(?<!\w)\b([a-zA-Z_$]\w*)\s*\./g)) {
+      const name = m[1];
+      if (!declared.has(name) && !KNOWN_IDENTS.has(name)) {
+        undeclared.add(name);
+      }
+    }
+
+    if (undeclared.size > 0) {
+      issues.push(
+        `Undeclared variable(s): ${Array.from(undeclared).join(", ")}. ` +
+        "Each figma_plugin_execute call runs in a FRESH JavaScript scope — " +
+        "variables from previous calls do NOT persist. Send complete, self-contained code that declares all variables."
+      );
+    }
+  }
+
+  // Rule 6: figma.currentPage.width/height (pages have no dimensions)
+  if (/figma\s*\.\s*currentPage\s*\.\s*(?:width|height)\b/.test(code) ||
+      /\bpage\s*\.\s*(?:width|height)\b/.test(code)) {
+    issues.push(
+      "Figma pages do not have width/height (they are infinite canvases). " +
+      "Use figma.viewport.center for positioning, or hardcode coordinates."
     );
   }
 
@@ -720,8 +793,11 @@ function getAgentTools(state: AgentWorkflowState): LLMToolDefinition[] {
       name: "figma_plugin_execute",
       description:
         "Execute JavaScript code in the Figma plugin. " +
-        "Code is automatically reviewed before running. ONE small mutation per call (max ~30 lines). " +
-        "Fills/strokes use { r, g, b } — NO 'a' (alpha) key in color objects.",
+        "CRITICAL: Each call runs in a FRESH scope — variables do NOT persist between calls. " +
+        "Every call must be fully self-contained (declare all variables). " +
+        "ONE small mutation per call (max ~30 lines). " +
+        "Fills/strokes use { r, g, b } — NO 'a' (alpha) key in color objects. " +
+        "Pages have no width/height — use figma.viewport.center for positioning.",
       parameters: {
         type: "object",
         properties: {

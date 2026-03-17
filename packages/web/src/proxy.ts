@@ -34,10 +34,6 @@ function getMcpCodeUrl(request: NextRequest): string | undefined {
   const headerUrl = request.headers.get("X-MCP-Code-URL");
   const envUrl = process.env.NEXT_PUBLIC_LOCAL_MCP_CODE_URL;
 
-  console.log("[getMcpCodeUrl] headerUrl:", headerUrl);
-  console.log("[getMcpCodeUrl] envUrl:", envUrl);
-  console.log("[getMcpCodeUrl] headerUrl truthy?", !!headerUrl);
-
   const url = headerUrl || envUrl;
   if (!url) return undefined;
   // Return the full URL (with path) without the trailing slash

@@ -58,29 +58,40 @@ export function useMessagePersistence(
   const prevConvId = useRef(conversationId);
   // Track messages count to detect new user messages
   const prevMessagesCount = useRef(0);
-  // Guard against concurrent loads
-  const loadingRef = useRef(false);
   // Synchronous flag to block saves during conversation switch
   // (React state updates are batched, so `loaded` state may lag behind)
   const readyForSaves = useRef(false);
+  // AbortController for in-flight loads — prevents stale responses from polluting state
+  const abortRef = useRef<AbortController | null>(null);
 
   // ── Load messages on conversation switch ────────────────────────────────
 
   const loadMessages = useCallback(async () => {
-    if (!conversationId || loadingRef.current) return;
-    loadingRef.current = true;
+    if (!conversationId) return;
+
+    // Abort any in-flight load (e.g. from a previous conversation)
+    if (abortRef.current) {
+      abortRef.current.abort();
+    }
+    const controller = new AbortController();
+    abortRef.current = controller;
+
     readyForSaves.current = false;
     setLoaded(false);
     persistedIds.current.clear();
 
     try {
-      const res = await fetch(`/api/conversations/${conversationId}`);
+      const res = await fetch(`/api/conversations/${conversationId}`, {
+        signal: controller.signal,
+      });
+      if (controller.signal.aborted) return;
       if (!res.ok) {
         setLoaded(true);
         readyForSaves.current = true;
         return;
       }
       const { messages: dbMessages } = await res.json();
+      if (controller.signal.aborted) return;
       if (dbMessages && dbMessages.length > 0) {
         const uiMessages = (dbMessages as ConversationMessage[]).map(dbToUIMessage);
         // Mark all loaded messages as persisted
@@ -93,12 +104,14 @@ export function useMessagePersistence(
         setMessages([]);
         prevMessagesCount.current = 0;
       }
-    } catch {
+    } catch (err) {
+      if (controller.signal.aborted) return;
       // Silently fail — messages will be ephemeral
     } finally {
-      setLoaded(true);
-      readyForSaves.current = true;
-      loadingRef.current = false;
+      if (!controller.signal.aborted) {
+        setLoaded(true);
+        readyForSaves.current = true;
+      }
     }
   }, [conversationId, setMessages]);
 
@@ -118,7 +131,7 @@ export function useMessagePersistence(
 
   // Initial load
   useEffect(() => {
-    if (conversationId && !loaded && !loadingRef.current) {
+    if (conversationId && !loaded && !abortRef.current) {
       loadMessages();
     }
   }, [conversationId, loaded, loadMessages]);

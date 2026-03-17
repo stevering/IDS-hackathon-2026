@@ -1,6 +1,7 @@
 import { z } from "zod"
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js"
 import { PLAYBOOKS } from "../guardian/playbooks.js"
+import { formatToolResponse } from "../lib/format-response.js"
 
 export function registerAssessSnowflakeTool(server: McpServer): void {
   server.tool(
@@ -37,30 +38,26 @@ Key distinction:
         ),
       }))
 
-      return {
-        content: [
-          {
-            type: "text",
-            text: JSON.stringify(
-              {
-                tool: "assess_snowflake",
-                component: componentName,
-                domain: domain ?? "general",
-                codeSnippetProvided: !!codeSnippet,
-                investigation_plan: {
-                  summary: playbook.summary_template.replaceAll("{componentName}", componentName),
-                  priority: playbook.priority,
-                  steps,
-                },
-                drift_signals: playbook.drift_signals,
-                interpretation_guide: playbook.interpretation_guide,
-              },
-              null,
-              2
-            ),
-          },
-        ],
+      const data = {
+        tool: "assess_snowflake",
+        component: componentName,
+        domain: domain ?? "general",
+        codeSnippetProvided: !!codeSnippet,
+        investigation_plan: {
+          summary: playbook.summary_template.replaceAll("{componentName}", componentName),
+          priority: playbook.priority,
+          steps,
+        },
+        drift_signals: playbook.drift_signals,
+        interpretation_guide: playbook.interpretation_guide,
       }
+
+      const summary =
+        `Snowflake assessment plan ready for "${componentName}" (domain: ${domain ?? "general"}). ` +
+        `${steps.length} step(s) to determine if this is a legitimate edge case or a pattern that should be standardized.` +
+        (codeSnippet ? ` Code snippet provided for comparison.` : ``)
+
+      return formatToolResponse(summary, data)
     }
   )
 }

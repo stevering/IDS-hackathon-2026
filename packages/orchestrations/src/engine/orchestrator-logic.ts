@@ -196,8 +196,9 @@ export function processPlanningResponse(
   state.eventLog.push({ type: "orchestrator_thinking", content: llmResponse });
 
   for (const directive of directives) {
-    const agentState = state.agents.get(directive.agentShortId);
-    if (!agentState?.agent.workflowId) continue;
+    const resolved = resolveAgent(state.agents, directive.agentShortId);
+    if (!resolved || !resolved.agent.agent.workflowId) continue;
+    const { key: shortId, agent: agentState } = resolved;
 
     agentState.status = "active";
 
@@ -218,18 +219,46 @@ export function processPlanningResponse(
       type: "emit_event",
       event: {
         type: "orchestrator_directive",
-        agentShortId: directive.agentShortId,
+        agentShortId: shortId,
         content: directive.content,
       },
     });
     state.eventLog.push({
       type: "orchestrator_directive",
-      agentShortId: directive.agentShortId,
+      agentShortId: shortId,
       content: directive.content,
     });
   }
 
   return effects;
+}
+
+// ---------------------------------------------------------------------------
+// ShortId resolution helper
+// ---------------------------------------------------------------------------
+
+/**
+ * Resolve an agent by shortId regardless of whether the LLM passed it with
+ * "#", "##", or without any prefix. The map keys may or may not start with "#".
+ */
+function resolveAgent(
+  agents: Map<string, AgentState>,
+  rawShortId: string
+): { key: string; agent: AgentState } | null {
+  // Try as-is first
+  const direct = agents.get(rawShortId);
+  if (direct) return { key: rawShortId, agent: direct };
+
+  // Strip all leading # and try without
+  const stripped = rawShortId.replace(/^#+/, "");
+  const withoutHash = agents.get(stripped);
+  if (withoutHash) return { key: stripped, agent: withoutHash };
+
+  // Try with single # prefix
+  const withHash = agents.get(`#${stripped}`);
+  if (withHash) return { key: `#${stripped}`, agent: withHash };
+
+  return null;
 }
 
 // ---------------------------------------------------------------------------
@@ -326,7 +355,7 @@ export function generateBriefAndFirstCall(state: OrchestratorState): Orchestrato
   const briefContent =
     `New orchestration started.\n\n` +
     `## Task\n${state.task}\n\n` +
-    `## Connected agents\n${agentList}\n\n` +
+    `## Connected agents:\n${agentList}\n\n` +
     `All agents are connected and have been briefed on the overall task. ` +
     `Use the send_agent_directive tool to assign specific work to each agent now.`;
 
@@ -366,28 +395,28 @@ export function processOrchestratorLLMResponse(
   state: OrchestratorState,
   content: string,
   toolCalls?: LLMToolCall[],
-  reasoning?: string
+  reasoning?: string,
+  usage?: { promptTokens: number; completionTokens: number; totalTokens: number }
 ): OrchestratorEffect[] {
   state.messageHistory.push({ role: "assistant", content, toolCalls });
 
   const effects: OrchestratorEffect[] = [];
+  let usageAttached = false;
 
   // Log reasoning (model internal thinking, e.g. kimi-k2.5)
   if (reasoning?.trim()) {
-    effects.push({
-      type: "emit_event",
-      event: { type: "orchestrator_thinking", content: reasoning },
-    });
-    state.eventLog.push({ type: "orchestrator_thinking", content: reasoning });
+    const event = { type: "orchestrator_thinking" as const, content: reasoning, usage: !usageAttached ? usage : undefined };
+    if (usage) usageAttached = true;
+    effects.push({ type: "emit_event", event });
+    state.eventLog.push(event);
   }
 
   // Log text content (the model's visible response)
   if (content.trim()) {
-    effects.push({
-      type: "emit_event",
-      event: { type: "orchestrator_thinking", content },
-    });
-    state.eventLog.push({ type: "orchestrator_thinking", content });
+    const event = { type: "orchestrator_thinking" as const, content, usage: !usageAttached ? usage : undefined };
+    if (usage) usageAttached = true;
+    effects.push({ type: "emit_event", event });
+    state.eventLog.push(event);
   }
 
   // ── Text-only response (no tool calls) — legacy fallback ──────────────
@@ -395,9 +424,9 @@ export function processOrchestratorLLMResponse(
     // Try to parse [DIRECTIVE] blocks (backward compat with models that use text)
     const directives = parseDirectives(content);
     for (const directive of directives) {
-      const shortId = directive.agentShortId.replace(/^#/, "");
-      const agentState = state.agents.get(shortId);
-      if (!agentState?.agent.workflowId) continue;
+      const resolved = resolveAgent(state.agents, directive.agentShortId);
+      if (!resolved || !resolved.agent.agent.workflowId) continue;
+      const { key: shortId, agent: agentState } = resolved;
 
       agentState.status = "active";
       const payload: DirectivePayload = {
@@ -480,10 +509,10 @@ export function processOrchestratorLLMResponse(
           content: string;
           expectedResult?: string;
         };
-        const shortId = args.agentShortId.replace(/^#/, "");
-        const agentState = state.agents.get(shortId);
+        const resolved = resolveAgent(state.agents, args.agentShortId);
 
-        if (agentState?.agent.workflowId) {
+        if (resolved && resolved.agent.agent.workflowId) {
+          const { key: shortId, agent: agentState } = resolved;
           agentState.status = "active";
           const payload: DirectivePayload = {
             directiveId: `dir-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
@@ -509,7 +538,7 @@ export function processOrchestratorLLMResponse(
             agentShortId: shortId,
             content: args.content,
           });
-          const successMsg = `Directive sent to #${shortId}. Agent is now working — wait for their report.`;
+          const successMsg = `Directive sent to ${shortId}. Agent is now working — wait for their report.`;
           state.messageHistory.push({
             role: "tool",
             content: JSON.stringify({ success: true, message: successMsg }),
@@ -518,7 +547,7 @@ export function processOrchestratorLLMResponse(
           effects.push({ type: "emit_event", event: { type: "orchestrator_tool_result", toolName: tc.name, result: successMsg, isError: false } });
           state.eventLog.push({ type: "orchestrator_tool_result", toolName: tc.name, result: successMsg, isError: false });
         } else {
-          const errorMsg = `Agent #${shortId} not found or has no workflow.`;
+          const errorMsg = `Agent ${args.agentShortId} not found or has no workflow.`;
           state.messageHistory.push({
             role: "tool",
             content: JSON.stringify({ success: false, error: errorMsg }),
@@ -532,10 +561,10 @@ export function processOrchestratorLLMResponse(
 
       case "mark_agent_done": {
         const args = tc.arguments as { agentShortId: string };
-        const shortId = args.agentShortId.replace(/^#/, "");
-        const agentState = state.agents.get(shortId);
+        const resolved = resolveAgent(state.agents, args.agentShortId);
 
-        if (agentState) {
+        if (resolved) {
+          const { key: shortId, agent: agentState } = resolved;
           agentState.status = "completed";
           effects.push({
             type: "emit_event",
@@ -550,7 +579,7 @@ export function processOrchestratorLLMResponse(
             agentShortId: shortId,
             status: "completed",
           });
-          const doneMsg = `Agent #${shortId} marked as done.`;
+          const doneMsg = `Agent ${shortId} marked as done.`;
           state.messageHistory.push({
             role: "tool",
             content: JSON.stringify({ success: true, message: doneMsg }),
@@ -559,7 +588,7 @@ export function processOrchestratorLLMResponse(
           effects.push({ type: "emit_event", event: { type: "orchestrator_tool_result", toolName: tc.name, result: doneMsg, isError: false } });
           state.eventLog.push({ type: "orchestrator_tool_result", toolName: tc.name, result: doneMsg, isError: false });
         } else {
-          const notFoundMsg = `Agent #${shortId} not found.`;
+          const notFoundMsg = `Agent ${args.agentShortId} not found.`;
           state.messageHistory.push({
             role: "tool",
             content: JSON.stringify({ success: false, error: notFoundMsg }),

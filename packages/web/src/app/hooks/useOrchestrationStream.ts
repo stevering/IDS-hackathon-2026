@@ -175,8 +175,8 @@ export function useOrchestrationStream(workflowId: string | null) {
           return next;
         });
 
-        // Persist event to DB (fire-and-forget, skip noisy timer ticks)
-        if (data.type !== "timer_tick" && data.type !== "connected") {
+        // Persist event to DB (fire-and-forget, skip noisy timer ticks and replayed events)
+        if (data.type !== "timer_tick" && data.type !== "connected" && !data._replayed) {
           bufferEvent(data);
         }
       } catch {

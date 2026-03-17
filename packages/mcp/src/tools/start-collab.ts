@@ -1,6 +1,7 @@
 import { z } from "zod"
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js"
 import { getConnectedClients } from "../lib/figma-bridge.js"
+import { formatToolResponse } from "../lib/format-response.js"
 
 /**
  * MCP tool: start_collab
@@ -48,19 +49,13 @@ After discovering agents #Figma-Desktop-abc (file: Homepage) and #Figma-Desktop-
       ),
     },
     async ({ task, agents, model }) => {
-      // 1. Resolve agent shortIds to full AgentId objects via presence
       const connectedClients = await getConnectedClients(userId)
 
       if (connectedClients.length === 0) {
-        return {
-          content: [{
-            type: "text" as const,
-            text: JSON.stringify({
-              success: false,
-              error: "No Figma plugin clients connected. Make sure the Figma plugin is open with the Guardian webapp loaded.",
-            }, null, 2),
-          }],
-        }
+        return formatToolResponse(
+          `Cannot start collaboration: no Figma plugin clients connected. Make sure the Figma plugin is open with the Guardian webapp loaded.`,
+          { success: false, error: "No Figma plugin clients connected." },
+        )
       }
 
       const targetAgents: {
@@ -88,7 +83,7 @@ After discovering agents #Figma-Desktop-abc (file: Homepage) and #Figma-Desktop-
 
         targetAgents.push({
           shortId: client.shortId,
-          workflowId: "", // Temporal will assign actual workflow IDs
+          workflowId: "",
           label: client.label,
           type: "figma-plugin",
           fileName: client.figmaContext?.fileName,
@@ -100,19 +95,12 @@ After discovering agents #Figma-Desktop-abc (file: Homepage) and #Figma-Desktop-
         const available = connectedClients.map(
           (c) => `${c.shortId} (${c.figmaContext?.fileName ?? "unknown file"})`
         )
-        return {
-          content: [{
-            type: "text" as const,
-            text: JSON.stringify({
-              success: false,
-              error: `Agent(s) not found: ${missingAgents.join(", ")}`,
-              availableAgents: available,
-            }, null, 2),
-          }],
-        }
+        return formatToolResponse(
+          `Cannot start collaboration: agent(s) not found: ${missingAgents.join(", ")}. Available: ${available.join(", ")}.`,
+          { success: false, error: `Agent(s) not found: ${missingAgents.join(", ")}`, availableAgents: available },
+        )
       }
 
-      // 2. Call the Guardian Cloud orchestration start API
       const cloudUrl = process.env.GUARDIAN_CLOUD_URL || "http://localhost:3000"
       const serviceKey = process.env.STORAGE_SUPABASE_SERVICE_ROLE_KEY || ""
 
@@ -133,15 +121,10 @@ After discovering agents #Figma-Desktop-abc (file: Homepage) and #Figma-Desktop-
 
         if (!response.ok) {
           const errorBody = await response.text()
-          return {
-            content: [{
-              type: "text" as const,
-              text: JSON.stringify({
-                success: false,
-                error: `Orchestration start failed (${response.status}): ${errorBody}`,
-              }, null, 2),
-            }],
-          }
+          return formatToolResponse(
+            `Orchestration start failed (HTTP ${response.status}): ${errorBody}.`,
+            { success: false, error: `Orchestration start failed (${response.status}): ${errorBody}` },
+          )
         }
 
         const result = await response.json() as {
@@ -149,43 +132,31 @@ After discovering agents #Figma-Desktop-abc (file: Homepage) and #Figma-Desktop-
           orchestrationId: string
         }
 
-        const agentSummary = targetAgents
-          .map((a) => `- ${a.shortId} (${a.label}, file: ${a.fileName ?? "n/a"})`)
-          .join("\n")
+        const agentList = targetAgents.map((a) => `${a.shortId} (${a.fileName ?? "n/a"})`).join(", ")
 
-        return {
-          content: [{
-            type: "text" as const,
-            text: JSON.stringify({
-              success: true,
-              workflowId: result.workflowId,
-              orchestrationId: result.orchestrationId,
-              task,
-              agents: targetAgents.map((a) => ({
-                shortId: a.shortId,
-                label: a.label,
-                fileName: a.fileName,
-              })),
-              message:
-                `Orchestration started!\n\n` +
-                `## Task\n${task}\n\n` +
-                `## Agents (${targetAgents.length})\n${agentSummary}\n\n` +
-                `The AI orchestrator will now brief all agents and assign directives. ` +
-                `You can monitor progress in the Guardian webapp.`,
-            }, null, 2),
-          }],
+        const data = {
+          success: true,
+          workflowId: result.workflowId,
+          orchestrationId: result.orchestrationId,
+          task,
+          agents: targetAgents.map((a) => ({
+            shortId: a.shortId,
+            label: a.label,
+            fileName: a.fileName,
+          })),
         }
+
+        return formatToolResponse(
+          `Orchestration started (workflow: ${result.workflowId}). Task: "${task}". ` +
+          `Agents (${targetAgents.length}): ${agentList}. ` +
+          `The AI orchestrator will now brief all agents and assign directives.`,
+          data,
+        )
       } catch (err) {
-        return {
-          content: [{
-            type: "text" as const,
-            text: JSON.stringify({
-              success: false,
-              error: `Network error calling Guardian Cloud: ${err instanceof Error ? err.message : String(err)}`,
-              hint: `Make sure Guardian Cloud is running at ${cloudUrl}`,
-            }, null, 2),
-          }],
-        }
+        return formatToolResponse(
+          `Cannot reach Guardian Cloud at ${cloudUrl}: ${err instanceof Error ? err.message : String(err)}.`,
+          { success: false, error: `Network error: ${err instanceof Error ? err.message : String(err)}`, hint: `Make sure Guardian Cloud is running at ${cloudUrl}` },
+        )
       }
     }
   )

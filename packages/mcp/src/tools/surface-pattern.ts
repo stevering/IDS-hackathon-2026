@@ -1,6 +1,7 @@
 import { z } from "zod"
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js"
 import { PLAYBOOKS } from "../guardian/playbooks.js"
+import { formatToolResponse } from "../lib/format-response.js"
 
 export function registerSurfacePatternTool(server: McpServer): void {
   server.tool(
@@ -34,30 +35,29 @@ Threshold signals:
         ),
       }))
 
-      return {
-        content: [
-          {
-            type: "text",
-            text: JSON.stringify(
-              {
-                tool: "surface_pattern",
-                component: componentName,
-                estimatedInstances: estimatedInstances ?? "unknown",
-                escalationLikely: estimatedInstances !== undefined && estimatedInstances >= 3,
-                investigation_plan: {
-                  summary: playbook.summary_template,
-                  priority: playbook.priority,
-                  steps,
-                },
-                drift_signals: playbook.drift_signals,
-                interpretation_guide: playbook.interpretation_guide,
-              },
-              null,
-              2
-            ),
-          },
-        ],
+      const escalation = estimatedInstances !== undefined && estimatedInstances >= 3
+
+      const data = {
+        tool: "surface_pattern",
+        component: componentName,
+        estimatedInstances: estimatedInstances ?? "unknown",
+        escalationLikely: escalation,
+        investigation_plan: {
+          summary: playbook.summary_template,
+          priority: playbook.priority,
+          steps,
+        },
+        drift_signals: playbook.drift_signals,
+        interpretation_guide: playbook.interpretation_guide,
       }
+
+      const summary =
+        `Pattern recognition plan ready for "${componentName}"` +
+        (estimatedInstances !== undefined ? ` (~${estimatedInstances} known instance(s))` : ``) +
+        `. ${steps.length} step(s) to map all instances and assess DS inclusion readiness.` +
+        (escalation ? ` Estimated instances meet the escalation threshold (3+).` : ``)
+
+      return formatToolResponse(summary, data)
     }
   )
 }

@@ -12,6 +12,7 @@ import {
   processQueues,
   processLLMResponse,
   injectToolResult,
+  reviewFigmaCode,
 } from "../engine/agent-logic.js";
 import type { AgentId } from "../types/signals.js";
 
@@ -390,6 +391,74 @@ describe("processLLMResponse", () => {
 
     expect(state.completed).toBe(true);
     expect(effects.some((e) => e.type === "complete")).toBe(true);
+  });
+});
+
+describe("reviewFigmaCode", () => {
+  it("rejects code with alpha in color objects", () => {
+    const code = "const node = figma.createRectangle();\nnode.fills = [{type: 'SOLID', color: {r: 1, g: 0, b: 0, a: 1}}]";
+    const issues = reviewFigmaCode(code);
+    expect(issues.some(i => i.includes('"a" key'))).toBe(true);
+  });
+
+  it("rejects figma.currentPage = assignment", () => {
+    const issues = reviewFigmaCode("figma.currentPage = somePage;");
+    expect(issues.some(i => i.includes("setCurrentPageAsync"))).toBe(true);
+  });
+
+  it("rejects partial code with undeclared variables", () => {
+    const issues = reviewFigmaCode("ellipse.fills = [{type: 'SOLID', color: {r: 1, g: 0, b: 0}}];");
+    expect(issues.some(i => i.includes("Undeclared variable"))).toBe(true);
+    expect(issues.some(i => i.includes("ellipse"))).toBe(true);
+  });
+
+  it("accepts self-contained code with declared variables", () => {
+    const code = `const ellipse = figma.createEllipse();
+ellipse.resize(100, 100);
+ellipse.fills = [{type: 'SOLID', color: {r: 1, g: 0, b: 0}}];`;
+    const issues = reviewFigmaCode(code);
+    expect(issues).toHaveLength(0);
+  });
+
+  it("does not flag figma globals", () => {
+    const code = "figma.currentPage.selection = [figma.createEllipse()];";
+    const issues = reviewFigmaCode(code);
+    expect(issues).toHaveLength(0);
+  });
+
+  it("does not flag arrow function params", () => {
+    const code = `const page = figma.currentPage;
+const frame = page.children.find(child => child.type === 'FRAME');`;
+    const issues = reviewFigmaCode(code);
+    expect(issues).toHaveLength(0);
+  });
+
+  it("does not flag single-param arrow without parens", () => {
+    const code = `const page = figma.currentPage;
+const items = page.children.filter(n => n.visible);`;
+    const issues = reviewFigmaCode(code);
+    expect(issues).toHaveLength(0);
+  });
+
+  it("rejects figma.currentPage.width", () => {
+    const code = `const centerX = figma.currentPage.width / 2;`;
+    const issues = reviewFigmaCode(code);
+    expect(issues.some(i => i.includes("width") || i.includes("infinite"))).toBe(true);
+  });
+
+  it("rejects page.width when page is used for dimensions", () => {
+    const code = `const page = figma.currentPage;
+const centerX = page.width / 2;`;
+    const issues = reviewFigmaCode(code);
+    expect(issues.some(i => i.includes("infinite"))).toBe(true);
+  });
+
+  it("accepts code using figma.viewport.center", () => {
+    const code = `const center = figma.viewport.center;
+const ellipse = figma.createEllipse();
+ellipse.x = center.x - 50;`;
+    const issues = reviewFigmaCode(code);
+    expect(issues).toHaveLength(0);
   });
 });
 

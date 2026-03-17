@@ -1,5 +1,6 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js"
 import { getConnectedClients } from "../lib/figma-bridge.js"
+import { formatToolResponse } from "../lib/format-response.js"
 
 export function registerGetConnectedClientsTool(server: McpServer, userId?: string): void {
   server.tool(
@@ -18,38 +19,34 @@ Use this to discover which Figma files are currently open before running other t
       const clients = await getConnectedClients(userId)
 
       if (clients.length === 0) {
-        return {
-          content: [{
-            type: "text" as const,
-            text: JSON.stringify({
-              success: false,
-              error: "No Figma plugin clients connected. Make sure the Figma plugin is open with the Guardian webapp loaded.",
-              clients: [],
-            }, null, 2),
-          }],
-        }
+        return formatToolResponse(
+          `No Figma plugin clients connected. Make sure the Figma plugin is open with the Guardian webapp loaded.`,
+          { success: false, error: "No Figma plugin clients connected.", clients: [] },
+        )
       }
 
-      return {
-        content: [{
-          type: "text" as const,
-          text: JSON.stringify({
-            success: true,
-            clientCount: clients.length,
-            clients: clients.map((c) => ({
-              clientId: c.clientId,
-              shortId: c.shortId,
-              label: c.label,
-              fileKey: c.fileKey,
-              fileUrl: c.figmaContext?.fileUrl ?? (c.fileKey ? `https://www.figma.com/design/${c.fileKey}/` : null),
-              fileName: c.figmaContext?.fileName ?? null,
-              currentPage: c.figmaContext?.currentPage ?? null,
-              pages: c.figmaContext?.pages ?? [],
-              currentUser: c.figmaContext?.currentUser ?? null,
-            })),
-          }, null, 2),
-        }],
-      }
+      const clientList = clients.map((c) => ({
+        clientId: c.clientId,
+        shortId: c.shortId,
+        label: c.label,
+        fileKey: c.fileKey,
+        fileUrl: c.figmaContext?.fileUrl ?? (c.fileKey ? `https://www.figma.com/design/${c.fileKey}/` : null),
+        fileName: c.figmaContext?.fileName ?? null,
+        currentPage: c.figmaContext?.currentPage ?? null,
+        pages: c.figmaContext?.pages ?? [],
+        currentUser: c.figmaContext?.currentUser ?? null,
+      }))
+
+      const descriptions = clients.map((c) => {
+        const name = c.figmaContext?.fileName ?? "unknown file"
+        const page = c.figmaContext?.currentPage?.name
+        return `${c.shortId} (${name}${page ? `, page: ${page}` : ``})`
+      })
+
+      return formatToolResponse(
+        `Found ${clients.length} connected Figma plugin instance(s): ${descriptions.join(", ")}.`,
+        { success: true, clientCount: clients.length, clients: clientList },
+      )
     }
   )
 }

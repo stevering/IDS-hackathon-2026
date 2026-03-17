@@ -1,6 +1,7 @@
 import { z } from "zod"
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js"
 import { PLAYBOOKS } from "../guardian/playbooks.js"
+import { formatToolResponse } from "../lib/format-response.js"
 
 export function registerDocumentGapTool(server: McpServer): void {
   server.tool(
@@ -34,30 +35,26 @@ Escalation threshold: gap affects 2+ teams, OR fix is a simple variant addition.
         ),
       }))
 
-      return {
-        content: [
-          {
-            type: "text",
-            text: JSON.stringify(
-              {
-                tool: "document_gap",
-                component: componentName,
-                missingVariant: missingVariant ?? null,
-                domain: domain ?? "general",
-                investigation_plan: {
-                  summary: playbook.summary_template,
-                  priority: playbook.priority,
-                  steps,
-                },
-                drift_signals: playbook.drift_signals,
-                interpretation_guide: playbook.interpretation_guide,
-              },
-              null,
-              2
-            ),
-          },
-        ],
+      const data = {
+        tool: "document_gap",
+        component: componentName,
+        missingVariant: missingVariant ?? null,
+        domain: domain ?? "general",
+        investigation_plan: {
+          summary: playbook.summary_template,
+          priority: playbook.priority,
+          steps,
+        },
+        drift_signals: playbook.drift_signals,
+        interpretation_guide: playbook.interpretation_guide,
       }
+
+      const summary =
+        `Gap documentation plan ready for "${componentName}"` +
+        (missingVariant ? ` (missing: ${missingVariant})` : ``) +
+        `. ${steps.length} step(s) to build the case for a formal DS extension request.`
+
+      return formatToolResponse(summary, data)
     }
   )
 }
