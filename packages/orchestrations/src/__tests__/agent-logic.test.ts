@@ -540,4 +540,17 @@ describe("injectToolResult", () => {
     expect(state.messageHistory[0].role).toBe("tool");
     expect(state.messageHistory[0].toolCallId).toBe("tc1");
   });
+
+  it("adds tool result with images to message history", () => {
+    const state = createAgentState(makeAgentId());
+    injectToolResult(state, "tc1", '{"success": true}', ["base64img1", "base64img2"]);
+    expect(state.messageHistory).toHaveLength(1);
+    expect(state.messageHistory[0].images).toEqual(["base64img1", "base64img2"]);
+  });
+
+  it("does not set images when undefined", () => {
+    const state = createAgentState(makeAgentId());
+    injectToolResult(state, "tc1", '{"success": true}');
+    expect(state.messageHistory[0].images).toBeUndefined();
+  });
 });

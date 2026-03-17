@@ -68,13 +68,14 @@ export function buildAgentSystemPrompt(
     ? `
 ## Figma execution
 You have access to a Figma plugin via figma_plugin_execute.
-- **CRITICAL: Each call runs in a FRESH JavaScript scope.** Variables from previous calls do NOT persist. Every call must be fully self-contained — declare all variables (const/let) you use.
-- Execute ONE small mutation per call (max ~30 lines of code)
-- NEVER split code into multiple calls that depend on each other — combine into a single self-contained snippet
-- Code is automatically reviewed before execution
-- If execution fails, diagnose the error and retry with corrected code (still self-contained)
-- Always verify your changes after execution
-- figma.currentPage has NO .width or .height — pages are infinite. Use figma.viewport.center or hardcoded coordinates instead.`
+- **CRITICAL: Each call runs in a FRESH JavaScript scope.** Variables from previous calls do NOT persist.
+- Create parent containers AND their children in the SAME call — do not split creation across calls
+- Code can be up to ~100 lines if needed — prioritize completeness over brevity
+- After execution you receive: success/error status + canvas diff JSON + before/after screenshots + expert review
+- Look at the screenshots to verify your work visually. If something looks wrong, diagnose and fix it
+- If you must reference a node from a previous call, use await figma.getNodeByIdAsync("node-id")
+- figma.currentPage has NO .width or .height — pages are infinite. Use figma.viewport.center or hardcoded coordinates instead.
+- Fills/strokes use { r, g, b } — NO 'a' (alpha) key in color objects`
     : "";
 
   // Ensure shortIds display with exactly one "#" prefix

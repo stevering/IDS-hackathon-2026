@@ -416,10 +416,17 @@ return r;`;
     const parts = [
       "Execution succeeded.",
     ];
+
+    parts.push("\nCode review: APPROVED");
+
+    if (verificationSummary) {
+      parts.push(`\nCanvas diff:\n${verificationSummary}`);
+    }
+
     if (fileReviewVerdict) {
       if (fileReviewStatus === "verified") {
         parts.push(`\nFile review: VERIFIED — ${fileReviewVerdict}`);
-        parts.push("If your task is complete, call signal_task_complete now. Do NOT re-execute code that already succeeded.");
+        parts.push("If your task is complete, call signal_task_complete now.");
       } else {
         // Track consecutive issues to detect loops
         const consecutiveIssues = (state.consecutiveFileReviewIssues ?? 0) + 1;
@@ -433,11 +440,11 @@ return r;`;
             "the task is actually done, call signal_task_complete."
           );
         } else {
-          parts.push("Fix the issue and retry with different code. Do NOT resend the same code.");
+          parts.push("Look at the before/after screenshots to understand what went wrong. Fix the issue and retry with different code.");
         }
       }
     } else {
-      parts.push("If your task is complete, call signal_task_complete now. Do NOT re-execute code that already succeeded.");
+      parts.push("If your task is complete, call signal_task_complete now.");
     }
     // Reset consecutive issue counter on verified
     if (fileReviewStatus === "verified") {
@@ -449,6 +456,17 @@ return r;`;
     execResultJson = `Execution failed. Diagnose the error and retry with corrected code.\n---\n${JSON.stringify(execResult)}`;
   }
 
+  // Collect before/after screenshots to attach to the tool result
+  const toolImages: string[] = [];
+  if (beforeScreenshot) toolImages.push(beforeScreenshot);
+  if (afterScreenshot) toolImages.push(afterScreenshot);
+
+  if (toolImages.length === 2) {
+    execResultJson += "\n\n[Two screenshots attached: FIRST = BEFORE execution, SECOND = AFTER execution. Compare them visually.]";
+  } else if (toolImages.length === 1) {
+    execResultJson += "\n\n[One screenshot attached showing the canvas AFTER execution.]";
+  }
+
   await executeEffect(state, {
     type: "emit_activity",
     activities: [{
@@ -458,7 +476,7 @@ return r;`;
     }],
   }, userId);
 
-  injectToolResult(state, effect.toolCallId, execResultJson);
+  injectToolResult(state, effect.toolCallId, execResultJson, toolImages.length > 0 ? toolImages : undefined);
   recordExecResult(state, execResult.success ?? false);
 }
 

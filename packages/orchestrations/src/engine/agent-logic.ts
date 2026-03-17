@@ -402,12 +402,14 @@ export function processLLMResponse(
 export function injectToolResult(
   state: AgentWorkflowState,
   toolCallId: string,
-  result: string
+  result: string,
+  images?: string[]
 ): void {
   state.messageHistory.push({
     role: "tool",
     content: result,
     toolCallId,
+    images,
   });
 }
 
@@ -929,7 +931,9 @@ function getAgentTools(state: AgentWorkflowState): LLMToolDefinition[] {
         "Execute JavaScript code in the Figma plugin. " +
         "CRITICAL: Each call runs in a FRESH scope — variables do NOT persist between calls. " +
         "Every call must be fully self-contained (declare all variables). " +
-        "ONE small mutation per call (max ~30 lines). " +
+        "Create parent containers AND their children in the SAME call — do not split across calls. " +
+        "Code can be up to ~100 lines if needed — prioritize completeness over brevity. " +
+        "After execution you receive: success/error + canvas diff + before/after screenshots + expert review. " +
         "Fills/strokes use { r, g, b } — NO 'a' (alpha) key in color objects. " +
         "Pages have no width/height — use figma.viewport.center for positioning.",
       parameters: {

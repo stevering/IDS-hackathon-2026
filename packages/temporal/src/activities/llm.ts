@@ -42,6 +42,15 @@ export async function callLLM(params: LLMCallParams): Promise<LLMCallResult> {
       };
     }
     if (m.role === "tool") {
+      if (m.images?.length) {
+        const parts: Array<{ type: "text"; text: string } | { type: "image"; image: string }> = [
+          { type: "text", text: `[Tool result] ${m.content}` },
+        ];
+        for (const img of m.images) {
+          parts.push({ type: "image", image: img });
+        }
+        return { role: "user" as const, content: parts };
+      }
       return {
         role: "user" as const,
         content: `[Tool result] ${m.content}`,
