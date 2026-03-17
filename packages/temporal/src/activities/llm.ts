@@ -47,6 +47,19 @@ export async function callLLM(params: LLMCallParams): Promise<LLMCallResult> {
         content: `[Tool result] ${m.content}`,
       };
     }
+    // Multimodal: if the message has images, use content parts array
+    if (m.images?.length && m.role === "user") {
+      const parts: Array<{ type: "text"; text: string } | { type: "image"; image: string }> = [
+        { type: "text", text: m.content },
+      ];
+      for (const img of m.images) {
+        parts.push({ type: "image", image: img });
+      }
+      return {
+        role: "user" as const,
+        content: parts,
+      };
+    }
     return {
       role: m.role as "system" | "user" | "assistant",
       content: m.content,

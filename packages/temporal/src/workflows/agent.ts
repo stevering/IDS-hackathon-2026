@@ -223,10 +223,11 @@ async function handleReviewAndExecute(
     }],
   }, userId);
 
-  // Step 2: Snapshot BEFORE — list all node IDs on the current page
+  // Step 2: Snapshot BEFORE — list all node IDs + capture screenshot
   const clientId = effect.pluginClientId || state.agent.pluginClientId || "";
   const snapshotCode = `return JSON.stringify(figma.currentPage.children.map(n => n.id));`;
   let beforeIds: string[] = [];
+  let beforeScreenshot: string | undefined;
   try {
     const beforeResult = await executeFigmaCode({
       pluginClientId: clientId, userId, code: snapshotCode,
@@ -234,6 +235,20 @@ async function handleReviewAndExecute(
     });
     if (beforeResult.success && beforeResult.result) {
       beforeIds = JSON.parse(String(beforeResult.result));
+    }
+    // Capture screenshot only if page has content (avoid empty export)
+    if (beforeIds.length > 0) {
+      const screenshotCode = `const bytes = await figma.currentPage.exportAsync({ format: 'PNG', constraint: { type: 'SCALE', value: 0.25 } });
+let r = ''; const c = 8192;
+for (let i = 0; i < bytes.length; i += c) { r += String.fromCharCode.apply(null, bytes.slice(i, i + c)); }
+return btoa(r);`;
+      const ssResult = await executeFigmaCode({
+        pluginClientId: clientId, userId, code: screenshotCode,
+        workflowId: state.orchestratorWorkflowId,
+      });
+      if (ssResult.success && ssResult.result) {
+        beforeScreenshot = String(ssResult.result).slice(0, 500_000); // cap at ~375KB
+      }
     }
   } catch { /* best-effort */ }
 
@@ -300,15 +315,48 @@ return JSON.stringify({
 
   await notifyGuardrailIfBlocked(execResult, state);
 
-  // Step 5: File review LLM — ask an LLM to interpret the diff in natural language
+  // Step 5: Capture AFTER screenshot (best-effort)
+  let afterScreenshot: string | undefined;
+  if (execResult.success) {
+    try {
+      const screenshotCode = `const bytes = await figma.currentPage.exportAsync({ format: 'PNG', constraint: { type: 'SCALE', value: 0.25 } });
+let r = ''; const c = 8192;
+for (let i = 0; i < bytes.length; i += c) { r += String.fromCharCode.apply(null, bytes.slice(i, i + c)); }
+return btoa(r);`;
+      const ssResult = await executeFigmaCode({
+        pluginClientId: clientId, userId, code: screenshotCode,
+        workflowId: state.orchestratorWorkflowId,
+      });
+      if (ssResult.success && ssResult.result) {
+        afterScreenshot = String(ssResult.result).slice(0, 500_000);
+      }
+    } catch { /* best-effort */ }
+  }
+
+  // Step 6: File review LLM — ask an LLM to interpret the diff in natural language
   let fileReviewVerdict: string | undefined;
   let fileReviewStatus: "verified" | "issue" = "verified";
   if (execResult.success && verificationSummary) {
     try {
+      // Build images array for multimodal review (before + after screenshots)
+      const images: string[] = [];
+      if (beforeScreenshot) images.push(beforeScreenshot);
+      if (afterScreenshot) images.push(afterScreenshot);
+
+      const imageContext = images.length === 2
+        ? "\n\nTwo screenshots are attached: the FIRST is BEFORE execution, the SECOND is AFTER execution."
+        : images.length === 1
+          ? "\n\nOne screenshot is attached showing the canvas AFTER execution."
+          : "";
+
       const fileReviewResult = await callLLM({
         messages: [
           { role: "system", content: FILE_REVIEW_SYSTEM_PROMPT },
-          { role: "user", content: `Code executed:\n\`\`\`js\n${effect.code}\n\`\`\`\n\nFigma canvas diff:\n${verificationSummary}` },
+          {
+            role: "user",
+            content: `Code executed:\n\`\`\`js\n${effect.code}\n\`\`\`\n\nFigma canvas diff:\n${verificationSummary}${imageContext}`,
+            images: images.length > 0 ? images : undefined,
+          },
         ],
         userId,
         model,

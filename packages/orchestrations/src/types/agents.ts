@@ -78,6 +78,8 @@ export type OrchestrationResult = {
 export type LLMMessage = {
   role: "system" | "user" | "assistant" | "tool";
   content: string;
+  /** Optional base64-encoded images (PNG) to include in the message (multimodal) */
+  images?: string[];
   toolCallId?: string;
   toolCalls?: LLMToolCall[];
 };
