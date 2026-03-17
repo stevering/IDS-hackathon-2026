@@ -239,9 +239,13 @@ async function handleReviewAndExecute(
     // Capture screenshot only if page has content (avoid empty export)
     if (beforeIds.length > 0) {
       const screenshotCode = `const bytes = await figma.currentPage.exportAsync({ format: 'PNG', constraint: { type: 'SCALE', value: 0.25 } });
-let r = ''; const c = 8192;
-for (let i = 0; i < bytes.length; i += c) { r += String.fromCharCode.apply(null, bytes.slice(i, i + c)); }
-return btoa(r);`;
+const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+let r = '';
+for (let i = 0; i < bytes.length; i += 3) {
+  const a = bytes[i], b = bytes[i+1] || 0, c = bytes[i+2] || 0;
+  r += chars[a >> 2] + chars[((a & 3) << 4) | (b >> 4)] + (i+1 < bytes.length ? chars[((b & 15) << 2) | (c >> 6)] : '=') + (i+2 < bytes.length ? chars[c & 63] : '=');
+}
+return r;`;
       const ssResult = await executeFigmaCode({
         pluginClientId: clientId, userId, code: screenshotCode,
         workflowId: state.orchestratorWorkflowId,
@@ -320,9 +324,13 @@ return JSON.stringify({
   if (execResult.success) {
     try {
       const screenshotCode = `const bytes = await figma.currentPage.exportAsync({ format: 'PNG', constraint: { type: 'SCALE', value: 0.25 } });
-let r = ''; const c = 8192;
-for (let i = 0; i < bytes.length; i += c) { r += String.fromCharCode.apply(null, bytes.slice(i, i + c)); }
-return btoa(r);`;
+const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+let r = '';
+for (let i = 0; i < bytes.length; i += 3) {
+  const a = bytes[i], b = bytes[i+1] || 0, c = bytes[i+2] || 0;
+  r += chars[a >> 2] + chars[((a & 3) << 4) | (b >> 4)] + (i+1 < bytes.length ? chars[((b & 15) << 2) | (c >> 6)] : '=') + (i+2 < bytes.length ? chars[c & 63] : '=');
+}
+return r;`;
       const ssResult = await executeFigmaCode({
         pluginClientId: clientId, userId, code: screenshotCode,
         workflowId: state.orchestratorWorkflowId,
@@ -373,6 +381,12 @@ return btoa(r);`;
           action: "file_review_llm_response" as const,
           verdict: review.verdict,
           status: review.status,
+          code: effect.code,
+          diff: verificationSummary ?? "",
+          hasScreenshots: images.length > 0,
+          beforeScreenshot: beforeScreenshot,
+          afterScreenshot: afterScreenshot,
+          rawResponse: fileReviewResult.content,
           usage: fileReviewResult.usage,
         }],
       }, userId);

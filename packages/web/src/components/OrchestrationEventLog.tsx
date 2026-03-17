@@ -671,16 +671,35 @@ function AgentActivityItem({ activity, agentShortId }: { activity: AgentActivity
           colorClass="bg-teal-500/5 border-teal-500/10 text-teal-400/60 hover:bg-teal-500/10" />
       );
     }
-    case "file_review_llm_response":
+    case "file_review_llm_response": {
+      let diffFormatted = activity.diff;
+      try {
+        const d = JSON.parse(activity.diff);
+        const lines: string[] = [];
+        if (d.added?.length > 0) {
+          for (const n of d.added as Array<Record<string, unknown>>) {
+            let line = `+ ${n.type} "${n.name}" ${n.width}x${n.height} @(${n.x},${n.y})`;
+            if (Array.isArray(n.fills) && n.fills.length > 0) {
+              const c = (n.fills[0] as Record<string, Record<string, number>>).color;
+              if (c) line += ` fill:rgb(${Math.round(c.r * 255)},${Math.round(c.g * 255)},${Math.round(c.b * 255)})`;
+            }
+            lines.push(line);
+          }
+        }
+        if (d.removedCount > 0) lines.push(`- ${d.removedCount} node(s) removed`);
+        lines.push(`Total: ${d.totalChildren} children on page`);
+        diffFormatted = lines.join("\n");
+      } catch { /* keep raw */ }
+
       return (
-        <ActivityRow pill={pill}
-          label={`${agentShortId} File review: ${activity.status === "verified" ? "OK" : "ISSUE"}`}
-          detail={activity.verdict}
-          usage={activity.usage}
-          colorClass={activity.status === "verified"
-            ? "bg-teal-500/5 border-teal-500/10 text-teal-400/60 hover:bg-teal-500/10"
-            : "bg-orange-500/5 border-orange-500/10 text-orange-400/60 hover:bg-orange-500/10"} />
+        <FileReviewRow
+          pill={pill}
+          agentShortId={agentShortId}
+          activity={activity}
+          diffFormatted={diffFormatted}
+        />
       );
+    }
     case "guardian_message":
       return (
         <ActivityRow pill={pill} label={`Guardian → ${activity.recipient}`} detail={activity.message}
@@ -696,6 +715,91 @@ function AgentActivityItem({ activity, agentShortId }: { activity: AgentActivity
     default:
       return null;
   }
+}
+
+function FileReviewRow({
+  pill,
+  agentShortId,
+  activity,
+  diffFormatted,
+}: {
+  pill: React.ReactNode;
+  agentShortId: string;
+  activity: Extract<import("@guardian/orchestrations").AgentActivity, { action: "file_review_llm_response" }>;
+  diffFormatted: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const isOk = activity.status === "verified";
+  const colorClass = isOk
+    ? "bg-teal-500/5 border-teal-500/10 text-teal-400/60 hover:bg-teal-500/10"
+    : "bg-orange-500/5 border-orange-500/10 text-orange-400/60 hover:bg-orange-500/10";
+
+  return (
+    <div className={`rounded border ${colorClass}`}
+      style={{ background: "rgba(10, 10, 10, 0.35)", backdropFilter: "blur(24px) saturate(1.4)" }}>
+      <button
+        onClick={() => setOpen(!open)}
+        className="flex items-center gap-1.5 text-[10px] px-2 py-0.5 w-full text-left cursor-pointer hover:bg-white/[0.02] transition-colors min-w-0"
+      >
+        <svg className={`h-2.5 w-2.5 shrink-0 transition-transform ${open ? "rotate-90" : ""}`} viewBox="0 0 24 24" fill="currentColor">
+          <path d="M8.59 16.59L13.17 12 8.59 7.41 10 6l6 6-6 6z" />
+        </svg>
+        {pill}
+        <span className="font-mono font-medium shrink-0">{agentShortId} File review: {isOk ? "OK" : "ISSUE"}</span>
+        {activity.usage && <span className="shrink-0 text-[8px] font-mono opacity-50">{activity.usage.totalTokens} tok</span>}
+        {!open && <span className="truncate opacity-60 min-w-0">{activity.verdict.slice(0, 80)}</span>}
+      </button>
+      {open && (
+        <div className="px-2 pb-2 pt-1 text-[10px] border-t border-inherit space-y-2">
+          <div>
+            <div className="font-medium opacity-70 mb-0.5">{isOk ? "VERIFIED" : "ISSUE"}</div>
+            <div className="opacity-80">{activity.verdict}</div>
+          </div>
+
+          {(activity.beforeScreenshot || activity.afterScreenshot) && (
+            <div>
+              <div className="font-medium opacity-70 mb-1">Screenshots</div>
+              <div className="flex gap-2 overflow-x-auto">
+                {activity.beforeScreenshot && (
+                  <div className="shrink-0">
+                    <div className="text-[8px] opacity-50 mb-0.5">Before</div>
+                    <img src={`data:image/png;base64,${activity.beforeScreenshot}`} alt="Before" className="max-h-32 rounded border border-white/10" />
+                  </div>
+                )}
+                {activity.afterScreenshot && (
+                  <div className="shrink-0">
+                    <div className="text-[8px] opacity-50 mb-0.5">After</div>
+                    <img src={`data:image/png;base64,${activity.afterScreenshot}`} alt="After" className="max-h-32 rounded border border-white/10" />
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          <div>
+            <div className="font-medium opacity-70 mb-0.5">Code executed</div>
+            <pre className="text-[9px] opacity-60 whitespace-pre-wrap break-all bg-black/20 rounded p-1">{activity.code}</pre>
+          </div>
+
+          <div>
+            <div className="font-medium opacity-70 mb-0.5">Figma diff</div>
+            <pre className="text-[9px] opacity-60 whitespace-pre-wrap break-all bg-black/20 rounded p-1">{diffFormatted}</pre>
+          </div>
+
+          <div>
+            <div className="font-medium opacity-70 mb-0.5">Raw LLM response</div>
+            <pre className="text-[9px] opacity-60 whitespace-pre-wrap break-all bg-black/20 rounded p-1">{activity.rawResponse}</pre>
+          </div>
+
+          {activity.usage && (
+            <div className="text-[8px] font-mono opacity-40 border-t border-inherit pt-1">
+              {activity.usage.totalTokens} tokens ({activity.usage.promptTokens} in + {activity.usage.completionTokens} out)
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
 }
 
 function ActivityRow({
