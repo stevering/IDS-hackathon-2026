@@ -383,11 +383,11 @@ describe("processLLMResponse", () => {
     expect(inviteEffects).toHaveLength(1);
   });
 
-  it("completes when MAX_STEPS reached", () => {
+  it("completes when MAX_STEPS reached (safety net)", () => {
     const state = createAgentState(makeAgentId());
-    state.stepCount = 19; // One below MAX_STEPS
+    state.stepCount = 499; // One below MAX_STEPS (500)
 
-    const effects = processLLMResponse(state, "Step 20", [
+    const effects = processLLMResponse(state, "Step 500", [
       { id: "tc1", name: "send_peer_message", arguments: { targetAgentId: "x", content: "y" } },
     ]);
 

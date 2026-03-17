@@ -208,33 +208,29 @@ function recordPipelineFailure(state: AgentWorkflowState, errorMsg: string): str
   state.lastErrorSignatures.push(sig);
   if (state.lastErrorSignatures.length > 3) state.lastErrorSignatures.shift();
 
-  // Check for repeated identical error
+  // Check for repeated identical error (2 is enough to detect a loop)
   const sigs = state.lastErrorSignatures;
-  if (sigs.length >= 3 && sigs[0] === sigs[1] && sigs[1] === sigs[2]) {
+  if (sigs.length >= 2 && sigs[sigs.length - 1] === sigs[sigs.length - 2]) {
     return (
-      `You are repeating the SAME error 3 times: "${sig}". ` +
-      `This approach does not work. Remove the problematic property/method entirely and use a completely different technique.`
+      `You are repeating the SAME error: "${sig}". ` +
+      `This approach does not work. You MUST choose ONE of these options:\n` +
+      `1. Try a SIMPLER version (fewer nodes, basic structure only) — use this if the current sub-task is needed for the rest of your work\n` +
+      `2. Skip this sub-task entirely and move on — use this if it's optional\n` +
+      `3. Call signal_task_complete — only if nothing else can be done`
     );
   }
 
-  if (count >= 7) {
-    return (
-      `CRITICAL: ${count} consecutive pipeline failures. You MUST call signal_task_complete now ` +
-      `with a summary of what you achieved and what failed. Do not attempt more code execution.`
-    );
-  }
-  if (count >= 5) {
-    return (
-      `WARNING: ${count} consecutive failures. Create a MINIMAL version first — just the container ` +
-      `with basic content (1-2 children). Verify it works. Then add complexity incrementally.`
-    );
-  }
+  // Hard stop at 3 consecutive failures — force a decision
   if (count >= 3) {
     return (
-      `WARNING: ${count} consecutive failures. STOP and re-read ALL previous error messages. ` +
-      `Identify the common pattern across failures. Try a fundamentally different approach — simpler, fewer nodes.`
+      `HARD STOP: ${count} consecutive failures. You MUST choose ONE:\n` +
+      `1. Create a MINIMAL placeholder (e.g. empty frame with correct name/position) so dependent sub-tasks can reference it, then move on\n` +
+      `2. Skip and move on to the next part of your assignment\n` +
+      `3. Call signal_task_complete with a summary of what succeeded and what failed\n` +
+      `Do NOT retry the same approach again.`
     );
   }
+
   return undefined;
 }
 
@@ -244,17 +240,6 @@ function resetPipelineFailures(state: AgentWorkflowState): void {
   state.lastErrorSignatures = [];
 }
 
-/** Build a budget awareness message if the agent is running low on attempts. */
-function getBudgetMessage(state: AgentWorkflowState): string | undefined {
-  const attempts = state.codeAttemptCount ?? 0;
-  if (attempts >= 15) {
-    return `You have used ${attempts}/20 steps. Running low — call signal_task_complete with what you have achieved.`;
-  }
-  if (attempts >= 10) {
-    return `You have used ${attempts}/20 steps. Prioritize completing the most important parts of the task.`;
-  }
-  return undefined;
-}
 
 async function handleReviewAndExecute(
   state: AgentWorkflowState,
@@ -262,9 +247,6 @@ async function handleReviewAndExecute(
   userId: string,
   model?: string
 ): Promise<void> {
-  // Track code attempt count for budget awareness
-  state.codeAttemptCount = (state.codeAttemptCount ?? 0) + 1;
-
   // Step 1: Review LLM call (same model, dedicated prompt, no tools)
   const reviewResult = await callLLM({
     messages: [
@@ -311,8 +293,6 @@ async function handleReviewAndExecute(
     // Circuit breaker: escalate on consecutive failures
     const escalation = recordPipelineFailure(state, reason);
     if (escalation) parts.push(`\n${escalation}`);
-    const budgetMsg = getBudgetMessage(state);
-    if (budgetMsg) parts.push(`\n${budgetMsg}`);
 
     parts.push(`---\n${JSON.stringify({ success: false, error: reason })}`);
     const rejectionResult = parts.join("\n");
@@ -594,12 +574,8 @@ return r;`;
       parts.push("If your task is complete, call signal_task_complete now.");
     }
 
-    // Budget awareness
-    const budgetMsg = getBudgetMessage(state);
-    if (budgetMsg) parts.push(`\n${budgetMsg}`);
-
-    // Intent reminder (Phase 5 D1) — keep the original task visible after step 3+
-    if (state.taskDescription && (state.codeAttemptCount ?? 0) >= 3) {
+    // Intent reminder — keep the original task visible after a few executions
+    if (state.taskDescription && state.stepCount >= 5) {
       parts.push(`\n[Reminder] Your assigned task: "${state.taskDescription}". Ensure your code aligns with this.`);
     }
 
@@ -610,8 +586,6 @@ return r;`;
     const failParts = ["Execution failed. Diagnose the error and retry with corrected code."];
     const escalation = recordPipelineFailure(state, execResult.error ?? "unknown error");
     if (escalation) failParts.push(escalation);
-    const budgetMsg = getBudgetMessage(state);
-    if (budgetMsg) failParts.push(budgetMsg);
     failParts.push(`---\n${JSON.stringify(execResult)}`);
     execResultJson = failParts.join("\n");
   }
@@ -808,7 +782,7 @@ async function executeLLMLoop(
   userId: string,
   model?: string
 ): Promise<void> {
-  let maxIterations = 20;
+  let maxIterations = 200;
 
   while (maxIterations-- > 0 && !state.completed) {
     const llmResult = await callLLM({ messages, tools, userId, model });

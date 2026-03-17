@@ -26,7 +26,8 @@ import * as acorn from "acorn";
 // Constants
 // ---------------------------------------------------------------------------
 
-export const MAX_STEPS = 20;
+/** Safety net — not a real budget. The circuit breaker (consecutivePipelineFailures) is the real guard. */
+export const MAX_STEPS = 500;
 
 // ---------------------------------------------------------------------------
 // Agent state
