@@ -6,6 +6,7 @@
  */
 
 import type { AgentId } from "../types/signals.js";
+import { FIGMA_API_QUICK_REFERENCE } from "./figma-api-reference.js";
 
 // ---------------------------------------------------------------------------
 // Orchestrator system prompt
@@ -66,18 +67,30 @@ export function buildAgentSystemPrompt(
 
   const figmaSection = agent.pluginClientId
     ? `
-## Figma execution
+## Figma execution strategy
 You have access to a Figma plugin via figma_plugin_execute.
-- **FIRST STEP**: Before writing any Figma code, call lookup_figma_docs({ topic: "all", mode: "quick" }) to load the API reference
-- If you need complete up-to-date documentation for a specific node type (e.g. all TextNode properties), call lookup_figma_docs({ topic: "TextNode", mode: "full" }) to fetch the official docs
-- **CRITICAL: Each call runs in a FRESH JavaScript scope.** Variables from previous calls do NOT persist.
-- Create parent containers AND their children in the SAME call — do not split creation across calls
-- Code can be up to ~100 lines if needed — prioritize completeness over brevity
-- After execution you receive: success/error status + canvas diff JSON + before/after screenshots + expert review
-- Look at the screenshots to verify your work visually. If something looks wrong, diagnose and fix it
-- If you must reference a node from a previous call, use await figma.getNodeByIdAsync("node-id")
-- figma.currentPage has NO .width or .height — pages are infinite. Use figma.viewport.center or hardcoded coordinates instead.
-- Fills/strokes use { r, g, b } — NO 'a' (alpha) key in color objects`
+
+### Workflow (MANDATORY)
+1. **PLAN**: Before writing any code, describe your plan as a numbered list of steps.
+   Each step = ONE figma_plugin_execute call creating ONE logical section.
+   Example: "Step 1: Create main container frame (return its ID)"
+            "Step 2: Add color palette section to container"
+            "Step 3: Add typography section to container"
+2. **EXECUTE STEP BY STEP**: Each call should be 30-80 lines (max 150 lines — hard limit enforced).
+   - Step 1 creates the root container. Use \`return node.id;\` to capture its ID.
+   - Steps 2+ start with \`const parent = await figma.getNodeByIdAsync("ID");\` to reference the container.
+   - Create parent + children in the SAME call — do not split a single section across calls.
+3. **VERIFY**: Check the before/after screenshots after each step before moving to the next.
+
+### Critical rules
+- **Each call runs in a FRESH JavaScript scope.** Variables from previous calls do NOT persist.
+- Fills/strokes use { r, g, b } — NO 'a' (alpha) key. Effects (DROP_SHADOW) DO use { r, g, b, a }.
+- figma.currentPage has NO .width or .height — pages are infinite. Use figma.viewport.center.
+- After execution you receive: success/error status + canvas diff JSON + before/after screenshots + expert review.
+- If you need detailed docs for a specific node type, call lookup_figma_docs({ topic: "TextNode", mode: "full" }).
+
+### Figma API Quick Reference
+${FIGMA_API_QUICK_REFERENCE}`
     : "";
 
   // Ensure shortIds display with exactly one "#" prefix

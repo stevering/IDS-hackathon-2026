@@ -61,6 +61,14 @@ export type AgentWorkflowState = {
   execStats: { success: number; fail: number };
   /** Consecutive file review ISSUE count (for loop detection) */
   consecutiveFileReviewIssues?: number;
+  /** Consecutive pipeline failures across all gates (linter, reviewer, exec, file review) */
+  consecutivePipelineFailures?: number;
+  /** Last 3 error signatures for deduplication (first 100 chars of each error) */
+  lastErrorSignatures?: string[];
+  /** Total code execution attempts (for budget awareness) */
+  codeAttemptCount?: number;
+  /** Original task description from the orchestrator directive */
+  taskDescription?: string;
 };
 
 // ---------------------------------------------------------------------------
@@ -593,8 +601,48 @@ export function findUndeclaredMemberAccess(ast: acorn.Node): Set<string> {
  * This is a structural gate — it catches known LLM mistakes early so
  * the agent doesn't waste steps on code that will always fail.
  */
+/** Maximum lines per figma_plugin_execute call. Enforced by the linter. */
+export const MAX_CODE_LINES = 150;
+
+/** Known-invalid Figma properties that LLMs commonly hallucinate, with the correct alternative. */
+export const INVALID_PROPERTY_FIXES: Record<string, string> = {
+  counterAxisFixedSize: 'Set counterAxisSizingMode = "FIXED" then use .resize(width, height)',
+  mainAxisFixedSize: 'Set primaryAxisSizingMode = "FIXED" then use .resize(width, height)',
+  backgroundColor: 'Use .fills = [{ type: "SOLID", color: { r, g, b } }] instead',
+  paddingAll: "Use .paddingTop, .paddingRight, .paddingBottom, .paddingLeft individually",
+  horizontalPadding: "Use .paddingLeft and .paddingRight individually",
+  verticalPadding: "Use .paddingTop and .paddingBottom individually",
+  gap: "Use .itemSpacing for auto-layout gap",
+  flexGrow: "Use .layoutGrow instead",
+  flexDirection: 'Use .layoutMode = "VERTICAL" or "HORIZONTAL"',
+  alignItems: "Use .primaryAxisAlignItems or .counterAxisAlignItems",
+  justifyContent: "Use .primaryAxisAlignItems",
+  backgrounds: "Use .fills instead (FrameNode has no .backgrounds property)",
+};
+
 export function reviewFigmaCode(code: string): string[] {
   const issues: string[] = [];
+
+  // Rule 0a: Code length enforcement — prevent monolithic code blocks
+  {
+    const lineCount = code.split("\n").length;
+    if (lineCount > MAX_CODE_LINES) {
+      issues.push(
+        `Code is ${lineCount} lines (max ${MAX_CODE_LINES}). ` +
+        `Break this into multiple smaller figma_plugin_execute calls. ` +
+        `Create the container first, then populate sections in separate calls ` +
+        `using await figma.getNodeByIdAsync("node-id") to reference previously created nodes.`
+      );
+    }
+  }
+
+  // Rule 0b: Known-invalid Figma properties blacklist
+  for (const [prop, fix] of Object.entries(INVALID_PROPERTY_FIXES)) {
+    const regex = new RegExp(`\\.${prop}\\s*=`, "g");
+    if (regex.test(code)) {
+      issues.push(`.${prop} is NOT a valid Figma property. ${fix}.`);
+    }
+  }
 
   // Rule 1: 'a' (alpha) in color objects — Figma SOLID fills/strokes use { r, g, b }, not { r, g, b, a }.
   // BUT effects (DROP_SHADOW, INNER_SHADOW) and gradientStops DO use { r, g, b, a }.

@@ -13,6 +13,8 @@ import {
   processLLMResponse,
   injectToolResult,
   reviewFigmaCode,
+  MAX_CODE_LINES,
+  INVALID_PROPERTY_FIXES,
 } from "../engine/agent-logic.js";
 import type { AgentId } from "../types/signals.js";
 
@@ -584,6 +586,57 @@ for (const child of children) {
 handler(figma.createFrame());`;
     const issues = reviewFigmaCode(code);
     expect(issues).toHaveLength(0);
+  });
+
+  // --- Rule 0a: Code length enforcement ---
+
+  it("rejects code exceeding MAX_CODE_LINES", () => {
+    const lines = Array.from({ length: MAX_CODE_LINES + 10 }, (_, i) => `const v${i} = ${i};`);
+    const code = lines.join("\n");
+    const issues = reviewFigmaCode(code);
+    expect(issues.some(i => i.includes("lines (max"))).toBe(true);
+  });
+
+  it("accepts code within MAX_CODE_LINES", () => {
+    const lines = Array.from({ length: MAX_CODE_LINES - 1 }, (_, i) => `const v${i} = ${i};`);
+    const code = lines.join("\n");
+    const issues = reviewFigmaCode(code);
+    expect(issues.some(i => i.includes("lines (max"))).toBe(false);
+  });
+
+  // --- Rule 0b: Known-invalid properties blacklist ---
+
+  it("rejects counterAxisFixedSize with helpful suggestion", () => {
+    const code = `const frame = figma.createFrame();\nframe.counterAxisFixedSize = 120;`;
+    const issues = reviewFigmaCode(code);
+    expect(issues.some(i => i.includes(".counterAxisFixedSize") && i.includes("NOT a valid"))).toBe(true);
+    expect(issues.some(i => i.includes("resize"))).toBe(true);
+  });
+
+  it("rejects .backgroundColor with suggestion to use .fills", () => {
+    const code = `const frame = figma.createFrame();\nframe.backgroundColor = { r: 1, g: 1, b: 1 };`;
+    const issues = reviewFigmaCode(code);
+    expect(issues.some(i => i.includes(".backgroundColor") && i.includes("fills"))).toBe(true);
+  });
+
+  it("rejects .paddingAll with suggestion for individual paddings", () => {
+    const code = `const frame = figma.createFrame();\nframe.paddingAll = 20;`;
+    const issues = reviewFigmaCode(code);
+    expect(issues.some(i => i.includes(".paddingAll") && i.includes("paddingTop"))).toBe(true);
+  });
+
+  it("rejects .backgrounds with suggestion to use .fills", () => {
+    const code = `const frame = figma.createFrame();\nframe.backgrounds = [{ type: 'SOLID', color: { r: 0, g: 0, b: 0 } }];`;
+    const issues = reviewFigmaCode(code);
+    expect(issues.some(i => i.includes(".backgrounds") && i.includes("fills"))).toBe(true);
+  });
+
+  it("does not flag valid properties that look similar", () => {
+    const code = `const frame = figma.createFrame();\nframe.counterAxisSizingMode = "FIXED";\nframe.layoutGrow = 1;\nframe.itemSpacing = 16;`;
+    const issues = reviewFigmaCode(code);
+    // None of the blacklisted properties should match
+    const blacklistIssues = issues.filter(i => i.includes("NOT a valid Figma property"));
+    expect(blacklistIssues).toHaveLength(0);
   });
 });
 

@@ -120,9 +120,12 @@ ${FIGMA_API_QUICK_REFERENCE}
 
 Respond with EXACTLY one of:
 - "APPROVED" if the code is correct
-- If you find issues, respond with ALL of the following (in order):
+- If you find issues, respond with:
   1. "REJECTED: <brief reason>" on its own line
-  2. Then output the CORRECTED code in a \`\`\`js fenced block — fix ALL issues you found`;
+  2. A numbered list of EACH specific issue: what is wrong and what the correct approach is
+
+Do NOT provide corrected code. Only describe the issues and their fixes.
+The code author will fix them — your job is to identify problems, not rewrite code.`;
 
 // ---------------------------------------------------------------------------
 // File review — verifies execution result against the Figma canvas diff
@@ -133,6 +136,7 @@ const FILE_REVIEW_SYSTEM_PROMPT = `You are a Figma file reviewer. After code was
 You receive:
 1. The code that was executed
 2. A JSON diff showing what changed on the Figma page (nodes added, removed, total children count, with properties like type, name, position, size, fills)
+3. The ORIGINAL USER TASK (if available) — use this to check semantic alignment
 
 IMPORTANT about the diff:
 - The diff shows TOP-LEVEL page children only. Nested children (inside frames) are NOT listed individually.
@@ -140,11 +144,13 @@ IMPORTANT about the diff:
 - Do NOT report ISSUE just because you only see one frame added. Check the descendantCount to see if it contains the expected content.
 - A frame with descendantCount: 50 that the code intended to fill with sections, colors, text etc. is likely correct.
 
-Your job: assess whether the execution result looks correct based on what the code intended to do.
+Your job:
+1. Assess whether the execution result looks correct based on what the code intended to do.
+2. If the original user task is provided, check that the result is semantically aligned with what the user asked for (correct theme, correct components, correct style). If the code ran successfully but produces something the user didn't ask for (e.g., wrong theme, missing required elements), report it as an issue.
 
 Respond with EXACTLY one of:
-- "VERIFIED: <brief description of what was created/modified>" if the result matches what the code intended
-- "ISSUE: <brief description of the problem>" if something looks wrong (e.g. wrong color, missing node, unexpected changes)
+- "VERIFIED: <brief description of what was created/modified>" if the result matches what the code intended AND the user's task
+- "ISSUE: <brief description of the problem>" if something looks wrong (e.g. wrong color, missing node, semantic mismatch with user intent)
 
 Be concise (1 sentence max).`;
 
@@ -161,7 +167,7 @@ function parseFileReviewResponse(content: string): { status: "verified" | "issue
   return { status: "verified", verdict: content.trim().slice(0, 200) };
 }
 
-function parseReviewResponse(content: string): { approved: boolean; reason?: string; correctedCode?: string } {
+function parseReviewResponse(content: string): { approved: boolean; reason?: string } {
   const lines = content.trim().split("\n");
   let reason: string | undefined;
   for (const line of lines) {
@@ -178,11 +184,76 @@ function parseReviewResponse(content: string): { approved: boolean; reason?: str
     return { approved: true };
   }
 
-  // Extract corrected code from ```js ... ``` block
-  const codeMatch = content.match(/```(?:js|javascript)?\s*\n([\s\S]*?)```/);
-  const correctedCode = codeMatch?.[1]?.trim();
+  // Include all remaining content as the detailed reason (issue list from the reviewer)
+  const rejectedIdx = content.indexOf(reason);
+  const fullReason = rejectedIdx >= 0
+    ? content.slice(rejectedIdx).trim()
+    : reason;
 
-  return { approved: false, reason, correctedCode };
+  return { approved: false, reason: fullReason };
+}
+
+// ---------------------------------------------------------------------------
+// Circuit breaker helpers
+// ---------------------------------------------------------------------------
+
+/** Record a pipeline failure and return an optional escalation message to inject. */
+function recordPipelineFailure(state: AgentWorkflowState, errorMsg: string): string | undefined {
+  state.consecutivePipelineFailures = (state.consecutivePipelineFailures ?? 0) + 1;
+  const count = state.consecutivePipelineFailures;
+
+  // Track error signature for deduplication
+  const sig = errorMsg.slice(0, 100);
+  if (!state.lastErrorSignatures) state.lastErrorSignatures = [];
+  state.lastErrorSignatures.push(sig);
+  if (state.lastErrorSignatures.length > 3) state.lastErrorSignatures.shift();
+
+  // Check for repeated identical error
+  const sigs = state.lastErrorSignatures;
+  if (sigs.length >= 3 && sigs[0] === sigs[1] && sigs[1] === sigs[2]) {
+    return (
+      `You are repeating the SAME error 3 times: "${sig}". ` +
+      `This approach does not work. Remove the problematic property/method entirely and use a completely different technique.`
+    );
+  }
+
+  if (count >= 7) {
+    return (
+      `CRITICAL: ${count} consecutive pipeline failures. You MUST call signal_task_complete now ` +
+      `with a summary of what you achieved and what failed. Do not attempt more code execution.`
+    );
+  }
+  if (count >= 5) {
+    return (
+      `WARNING: ${count} consecutive failures. Create a MINIMAL version first — just the container ` +
+      `with basic content (1-2 children). Verify it works. Then add complexity incrementally.`
+    );
+  }
+  if (count >= 3) {
+    return (
+      `WARNING: ${count} consecutive failures. STOP and re-read ALL previous error messages. ` +
+      `Identify the common pattern across failures. Try a fundamentally different approach — simpler, fewer nodes.`
+    );
+  }
+  return undefined;
+}
+
+/** Reset pipeline failure tracking on a successful verified execution. */
+function resetPipelineFailures(state: AgentWorkflowState): void {
+  state.consecutivePipelineFailures = 0;
+  state.lastErrorSignatures = [];
+}
+
+/** Build a budget awareness message if the agent is running low on attempts. */
+function getBudgetMessage(state: AgentWorkflowState): string | undefined {
+  const attempts = state.codeAttemptCount ?? 0;
+  if (attempts >= 15) {
+    return `You have used ${attempts}/20 steps. Running low — call signal_task_complete with what you have achieved.`;
+  }
+  if (attempts >= 10) {
+    return `You have used ${attempts}/20 steps. Prioritize completing the most important parts of the task.`;
+  }
+  return undefined;
 }
 
 async function handleReviewAndExecute(
@@ -191,6 +262,9 @@ async function handleReviewAndExecute(
   userId: string,
   model?: string
 ): Promise<void> {
+  // Track code attempt count for budget awareness
+  state.codeAttemptCount = (state.codeAttemptCount ?? 0) + 1;
+
   // Step 1: Review LLM call (same model, dedicated prompt, no tools)
   const reviewResult = await callLLM({
     messages: [
@@ -218,23 +292,28 @@ async function handleReviewAndExecute(
   if (!review.approved) {
     const reason = review.reason ?? "Unspecified issues";
 
-    // Emit rejected activity — show corrected code (if available) instead of original
+    // Emit rejected activity
     await executeEffect(state, {
       type: "emit_activity",
       activities: [{
         action: "code_review_llm_rejected" as const,
         issues: reason,
-        codeSnippet: review.correctedCode ?? effect.code,
+        codeSnippet: effect.code,
       }],
     }, userId);
 
-    // Build tool result with corrected code suggestion
-    const parts = [`Code review rejected: ${reason}`];
-    if (review.correctedCode) {
-      parts.push(`\nHere is the corrected code — use it directly:\n\`\`\`js\n${review.correctedCode}\n\`\`\``);
-    } else {
-      parts.push("\nFix the issues and retry with corrected code.");
-    }
+    // Build tool result — issues only, no corrected code (the agent must fix its own code)
+    const parts = [
+      `Code review rejected: ${reason}`,
+      "\nFix the issues listed above and retry with corrected code.",
+    ];
+
+    // Circuit breaker: escalate on consecutive failures
+    const escalation = recordPipelineFailure(state, reason);
+    if (escalation) parts.push(`\n${escalation}`);
+    const budgetMsg = getBudgetMessage(state);
+    if (budgetMsg) parts.push(`\n${budgetMsg}`);
+
     parts.push(`---\n${JSON.stringify({ success: false, error: reason })}`);
     const rejectionResult = parts.join("\n");
 
@@ -425,7 +504,7 @@ return r;`;
           { role: "system", content: FILE_REVIEW_SYSTEM_PROMPT },
           {
             role: "user",
-            content: `Code executed:\n\`\`\`js\n${effect.code}\n\`\`\`\n\nFigma canvas diff:\n${verificationSummary}${imageContext}`,
+            content: `Code executed:\n\`\`\`js\n${effect.code}\n\`\`\`\n\nFigma canvas diff:\n${verificationSummary}${imageContext}${state.taskDescription ? `\n\nOriginal user task: ${state.taskDescription}` : ""}`,
             images: images.length > 0 ? images : undefined,
           },
         ],
@@ -469,19 +548,37 @@ return r;`;
 
     if (verificationSummary) {
       parts.push(`\nCanvas diff:\n${verificationSummary}`);
+
+      // Phase 6 (C3): Extract and expose created node IDs for inter-step references
+      try {
+        const diff = JSON.parse(verificationSummary);
+        if (diff.added?.length > 0) {
+          const ids = diff.added.map((n: { id: string }) => n.id);
+          parts.push(`\nCreated node IDs: ${JSON.stringify(ids)}`);
+          parts.push(`To reference in your next call: const node = await figma.getNodeByIdAsync("${ids[0]}");`);
+        }
+      } catch { /* best-effort ID extraction */ }
     }
 
     if (fileReviewVerdict) {
       if (fileReviewStatus === "verified") {
         parts.push(`\nFile review: VERIFIED — ${fileReviewVerdict}`);
         parts.push("If your task is complete, call signal_task_complete now.");
+        // Reset ALL failure tracking on verified success
+        state.consecutiveFileReviewIssues = 0;
+        resetPipelineFailures(state);
       } else {
         // Track consecutive issues to detect loops
         const consecutiveIssues = (state.consecutiveFileReviewIssues ?? 0) + 1;
         state.consecutiveFileReviewIssues = consecutiveIssues;
 
         parts.push(`\nFile review: ISSUE — ${fileReviewVerdict}`);
-        if (consecutiveIssues >= 3) {
+
+        // Circuit breaker for file review issues
+        const escalation = recordPipelineFailure(state, fileReviewVerdict);
+        if (escalation) {
+          parts.push(escalation);
+        } else if (consecutiveIssues >= 3) {
           parts.push(
             "WARNING: You have received the same ISSUE feedback multiple times. " +
             "Do NOT retry the same code. Try a DIFFERENT approach, or if you believe " +
@@ -492,16 +589,31 @@ return r;`;
         }
       }
     } else {
+      // No file review — still a success, reset pipeline failures
+      resetPipelineFailures(state);
       parts.push("If your task is complete, call signal_task_complete now.");
     }
-    // Reset consecutive issue counter on verified
-    if (fileReviewStatus === "verified") {
-      state.consecutiveFileReviewIssues = 0;
+
+    // Budget awareness
+    const budgetMsg = getBudgetMessage(state);
+    if (budgetMsg) parts.push(`\n${budgetMsg}`);
+
+    // Intent reminder (Phase 5 D1) — keep the original task visible after step 3+
+    if (state.taskDescription && (state.codeAttemptCount ?? 0) >= 3) {
+      parts.push(`\n[Reminder] Your assigned task: "${state.taskDescription}". Ensure your code aligns with this.`);
     }
+
     parts.push(`---\n${JSON.stringify(execResult)}`);
     execResultJson = parts.join("\n");
   } else {
-    execResultJson = `Execution failed. Diagnose the error and retry with corrected code.\n---\n${JSON.stringify(execResult)}`;
+    // Execution failed — circuit breaker
+    const failParts = ["Execution failed. Diagnose the error and retry with corrected code."];
+    const escalation = recordPipelineFailure(state, execResult.error ?? "unknown error");
+    if (escalation) failParts.push(escalation);
+    const budgetMsg = getBudgetMessage(state);
+    if (budgetMsg) failParts.push(budgetMsg);
+    failParts.push(`---\n${JSON.stringify(execResult)}`);
+    execResultJson = failParts.join("\n");
   }
 
   // Collect before/after screenshots to attach to the tool result
@@ -557,6 +669,8 @@ export type { AgentWorkflowInput } from "./types.js";
 
 export async function agentWorkflow(input: AgentWorkflowInput): Promise<void> {
   const state = createAgentState(input.agent);
+  // Store original task for intent pinning (Phase 5 B2 + D1)
+  state.taskDescription = input.task;
   let directoryReceived = false;
 
   // ── Signal handlers (fill the mailboxes) ─────────────────────────────────
