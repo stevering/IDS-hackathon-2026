@@ -68,6 +68,8 @@ export function buildAgentSystemPrompt(
     ? `
 ## Figma execution
 You have access to a Figma plugin via figma_plugin_execute.
+- **FIRST STEP**: Before writing any Figma code, call lookup_figma_docs({ topic: "all", mode: "quick" }) to load the API reference
+- If you need complete up-to-date documentation for a specific node type (e.g. all TextNode properties), call lookup_figma_docs({ topic: "TextNode", mode: "full" }) to fetch the official docs
 - **CRITICAL: Each call runs in a FRESH JavaScript scope.** Variables from previous calls do NOT persist.
 - Create parent containers AND their children in the SAME call — do not split creation across calls
 - Code can be up to ~100 lines if needed — prioritize completeness over brevity

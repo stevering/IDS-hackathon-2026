@@ -596,12 +596,42 @@ export function findUndeclaredMemberAccess(ast: acorn.Node): Set<string> {
 export function reviewFigmaCode(code: string): string[] {
   const issues: string[] = [];
 
-  // Rule 1: 'a' (alpha) in color objects — Figma uses { r, g, b }, not { r, g, b, a }
-  if (/color\s*:\s*\{[^}]*\ba\s*:/i.test(code)) {
-    issues.push(
-      'Color objects in fills/strokes must use { r, g, b } — NOT { r, g, b, a }. ' +
-      'Remove the "a" key. Use paint-level "opacity" instead if needed.'
-    );
+  // Rule 1: 'a' (alpha) in color objects — Figma SOLID fills/strokes use { r, g, b }, not { r, g, b, a }.
+  // BUT effects (DROP_SHADOW, INNER_SHADOW) and gradientStops DO use { r, g, b, a }.
+  // Strategy: find all color: { ... a: } patterns, then walk backwards to find the enclosing
+  // paint/effect object's `type:` field. Only flag if type is 'SOLID'.
+  {
+    const colorAlphaPattern = /color\s*:\s*\{[^}]*\ba\s*:/gi;
+    let match;
+    let hasIllegalAlpha = false;
+    while ((match = colorAlphaPattern.exec(code)) !== null) {
+      // Walk backwards from match to find the enclosing object's `type:` value.
+      // We look for the nearest `type: '...'` or `type: "..."` before this color.
+      const before = code.slice(Math.max(0, match.index - 500), match.index);
+      // Find the LAST type: '...' before this color (nearest enclosing object)
+      const typeMatches = [...before.matchAll(/type\s*:\s*['"](\w+)['"]/gi)];
+      if (typeMatches.length > 0) {
+        const nearestType = typeMatches[typeMatches.length - 1][1];
+        // SOLID fills/strokes must NOT have alpha. Everything else (effects, gradients) is OK.
+        if (nearestType === "SOLID") {
+          hasIllegalAlpha = true;
+          break;
+        }
+      }
+      // If no type found (e.g. standalone color object), flag it conservatively
+      // but only if it's clearly in a fills/strokes context
+      else if (/\.(fills|strokes)\s*=/.test(before.slice(-100))) {
+        hasIllegalAlpha = true;
+        break;
+      }
+    }
+    if (hasIllegalAlpha) {
+      issues.push(
+        'Color objects in SOLID fills/strokes must use { r, g, b } — NOT { r, g, b, a }. ' +
+        'Remove the "a" key. Use paint-level "opacity" instead if needed. ' +
+        'Note: effects (DROP_SHADOW, INNER_SHADOW) and gradientStops DO use { r, g, b, a } — that is correct.'
+      );
+    }
   }
 
   // Rule 2: figma.closePlugin() — kills the bridge

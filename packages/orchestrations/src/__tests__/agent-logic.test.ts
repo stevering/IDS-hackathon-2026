@@ -395,8 +395,64 @@ describe("processLLMResponse", () => {
 });
 
 describe("reviewFigmaCode", () => {
-  it("rejects code with alpha in color objects", () => {
+  it("rejects code with alpha in fill color objects", () => {
     const code = "const node = figma.createRectangle();\nnode.fills = [{type: 'SOLID', color: {r: 1, g: 0, b: 0, a: 1}}]";
+    const issues = reviewFigmaCode(code);
+    expect(issues.some(i => i.includes('"a" key'))).toBe(true);
+  });
+
+  it("allows alpha in effects color (DROP_SHADOW uses RGBA)", () => {
+    const code = `const frame = figma.createFrame();
+frame.resize(200, 200);
+frame.effects = [{type: 'DROP_SHADOW', color: {r: 0, g: 0, b: 0, a: 0.25}, offset: {x: 0, y: 4}, radius: 8, spread: 0, visible: true, blendMode: 'NORMAL'}];`;
+    const issues = reviewFigmaCode(code);
+    expect(issues.some(i => i.includes('"a" key'))).toBe(false);
+  });
+
+  it("allows alpha in gradientStops color", () => {
+    const code = `const rect = figma.createRectangle();
+rect.resize(100, 100);
+rect.fills = [{type: 'GRADIENT_LINEAR', gradientTransform: [[1,0,0],[0,1,0]], gradientStops: [{position: 0, color: {r: 1, g: 0, b: 0, a: 1}}, {position: 1, color: {r: 0, g: 0, b: 1, a: 1}}]}];`;
+    const issues = reviewFigmaCode(code);
+    expect(issues.some(i => i.includes('"a" key'))).toBe(false);
+  });
+
+  it("allows alpha in DROP_SHADOW even in large code blocks", () => {
+    // Reproduces the real failure: DROP_SHADOW type is far from the color object
+    const code = `const frame = figma.createFrame();
+frame.name = "Design System";
+frame.resize(800, 600);
+frame.layoutMode = "VERTICAL";
+frame.itemSpacing = 20;
+frame.paddingTop = 20;
+frame.paddingRight = 20;
+frame.paddingBottom = 20;
+frame.paddingLeft = 20;
+frame.fills = [{ type: 'SOLID', color: { r: 0.95, g: 0.95, b: 0.95 } }];
+const swatch = figma.createFrame();
+swatch.name = "Color Swatch";
+swatch.resize(80, 80);
+swatch.cornerRadius = 40;
+swatch.fills = [{ type: 'SOLID', color: { r: 0.2, g: 0.5, b: 0.2 } }];
+swatch.effects = [{
+  type: 'DROP_SHADOW',
+  color: { r: 0, g: 0, b: 0, a: 0.3 },
+  offset: { x: 0, y: 2 },
+  radius: 4,
+  spread: 0,
+  visible: true,
+  blendMode: 'NORMAL'
+}];
+frame.appendChild(swatch);`;
+    const issues = reviewFigmaCode(code);
+    expect(issues.some(i => i.includes('"a" key'))).toBe(false);
+  });
+
+  it("rejects alpha in SOLID stroke even when effects are nearby", () => {
+    const code = `const rect = figma.createRectangle();
+rect.resize(100, 100);
+rect.effects = [{type: 'DROP_SHADOW', color: {r: 0, g: 0, b: 0, a: 0.25}, offset: {x:0,y:2}, radius: 4, spread: 0, visible: true, blendMode: 'NORMAL'}];
+rect.strokes = [{type: 'SOLID', color: {r: 0.25, g: 0.1, b: 0.6, a: 0.5}}];`;
     const issues = reviewFigmaCode(code);
     expect(issues.some(i => i.includes('"a" key'))).toBe(true);
   });

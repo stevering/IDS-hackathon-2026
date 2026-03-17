@@ -30,6 +30,7 @@ import {
   type AgentWorkflowState,
   type AgentEffect,
   buildAgentSystemPrompt,
+  FIGMA_API_QUICK_REFERENCE,
 } from "@guardian/orchestrations";
 
 import type { AgentId, LLMMessage } from "@guardian/orchestrations";
@@ -101,8 +102,11 @@ CRITICAL CONTEXT: Each code execution runs in a **completely fresh JavaScript sc
 
 Check for:
 1. **Self-contained code**: Every variable used must be declared (const/let/var) in THIS snippet. If the code references a variable like "ellipse" or "canvas" without declaring it, REJECT it.
-2. Correct Figma Plugin API usage (methods, properties, async patterns)
-3. Color objects must use { r, g, b } format — NO 'a' (alpha) key
+2. Correct Figma Plugin API usage — use the API reference below to verify methods, properties, and async patterns
+3. Color rules:
+   - fills/strokes: use { r, g, b } — NO 'a' key. For opacity use paint-level "opacity" property.
+   - effects (DROP_SHADOW, INNER_SHADOW): color MUST use { r, g, b, a } — the 'a' key IS required here.
+   - gradientStops: color MUST use { r, g, b, a } — the 'a' key IS required here.
 4. No figma.closePlugin() — it kills the bridge
 5. No assignment to read-only properties (.children)
 6. Must call await figma.loadFontAsync() before setting .characters or .fontName
@@ -110,10 +114,15 @@ Check for:
 8. FrameNode has no .backgroundColor — use .fills instead
 9. GroupNode has no .layoutMode — use figma.createFrame() for auto-layout
 10. figma.currentPage has NO .width or .height — pages are infinite canvases. Use figma.viewport.center or hardcoded coordinates.
+11. Code must execute immediately — do NOT just define an async function without calling it. Either use top-level statements or call the function at the end.
+
+${FIGMA_API_QUICK_REFERENCE}
 
 Respond with EXACTLY one of:
-- "APPROVED" (on its own line) if the code is correct
-- "REJECTED: <reason>" (on its own line) if you find issues`;
+- "APPROVED" if the code is correct
+- If you find issues, respond with ALL of the following (in order):
+  1. "REJECTED: <brief reason>" on its own line
+  2. Then output the CORRECTED code in a \`\`\`js fenced block — fix ALL issues you found`;
 
 // ---------------------------------------------------------------------------
 // File review — verifies execution result against the Figma canvas diff
@@ -124,6 +133,12 @@ const FILE_REVIEW_SYSTEM_PROMPT = `You are a Figma file reviewer. After code was
 You receive:
 1. The code that was executed
 2. A JSON diff showing what changed on the Figma page (nodes added, removed, total children count, with properties like type, name, position, size, fills)
+
+IMPORTANT about the diff:
+- The diff shows TOP-LEVEL page children only. Nested children (inside frames) are NOT listed individually.
+- If a node has descendantCount > 0, it means it contains nested children — this is expected for complex components.
+- Do NOT report ISSUE just because you only see one frame added. Check the descendantCount to see if it contains the expected content.
+- A frame with descendantCount: 50 that the code intended to fill with sections, colors, text etc. is likely correct.
 
 Your job: assess whether the execution result looks correct based on what the code intended to do.
 
@@ -146,16 +161,28 @@ function parseFileReviewResponse(content: string): { status: "verified" | "issue
   return { status: "verified", verdict: content.trim().slice(0, 200) };
 }
 
-function parseReviewResponse(content: string): { approved: boolean; reason?: string } {
+function parseReviewResponse(content: string): { approved: boolean; reason?: string; correctedCode?: string } {
   const lines = content.trim().split("\n");
+  let reason: string | undefined;
   for (const line of lines) {
     const trimmed = line.trim();
     if (/^APPROVED$/i.test(trimmed)) return { approved: true };
     const match = trimmed.match(/^REJECTED:\s*(.+)$/i);
-    if (match) return { approved: false, reason: match[1] };
+    if (match) {
+      reason = match[1];
+      break;
+    }
   }
-  // Default to approved if the model didn't follow format (fail-open)
-  return { approved: true };
+  if (!reason) {
+    // Default to approved if the model didn't follow format (fail-open)
+    return { approved: true };
+  }
+
+  // Extract corrected code from ```js ... ``` block
+  const codeMatch = content.match(/```(?:js|javascript)?\s*\n([\s\S]*?)```/);
+  const correctedCode = codeMatch?.[1]?.trim();
+
+  return { approved: false, reason, correctedCode };
 }
 
 async function handleReviewAndExecute(
@@ -172,7 +199,7 @@ async function handleReviewAndExecute(
     ],
     userId,
     model,
-    maxTokens: 512,
+    maxTokens: 4096,
   });
 
   // Emit the raw review response with usage inline
@@ -189,19 +216,27 @@ async function handleReviewAndExecute(
   const review = parseReviewResponse(reviewResult.content);
 
   if (!review.approved) {
-    // Emit rejected activity
+    const reason = review.reason ?? "Unspecified issues";
+
+    // Emit rejected activity — show corrected code (if available) instead of original
     await executeEffect(state, {
       type: "emit_activity",
       activities: [{
         action: "code_review_llm_rejected" as const,
-        issues: review.reason ?? "Unspecified issues",
-        codeSnippet: effect.code,
+        issues: reason,
+        codeSnippet: review.correctedCode ?? effect.code,
       }],
     }, userId);
 
-    // Inject rejection as tool result — human-readable text + JSON data
-    const reason = review.reason ?? "Unspecified issues";
-    const rejectionResult = `Code review rejected: ${reason}\n\nFix the issue and retry with corrected code.\n---\n${JSON.stringify({ success: false, error: reason })}`;
+    // Build tool result with corrected code suggestion
+    const parts = [`Code review rejected: ${reason}`];
+    if (review.correctedCode) {
+      parts.push(`\nHere is the corrected code — use it directly:\n\`\`\`js\n${review.correctedCode}\n\`\`\``);
+    } else {
+      parts.push("\nFix the issues and retry with corrected code.");
+    }
+    parts.push(`---\n${JSON.stringify({ success: false, error: reason })}`);
+    const rejectionResult = parts.join("\n");
 
     await executeEffect(state, {
       type: "emit_activity",
@@ -296,11 +331,19 @@ const prevCounts = ${beforeCounts};
 const children = figma.currentPage.children;
 const added = children.filter(n => !before.has(n.id));
 const removed = ${beforeSet}.filter(id => !children.find(n => n.id === id));
+const countDescendants = n => {
+  if (!('children' in n)) return 0;
+  let count = n.children.length;
+  for (const c of n.children) count += countDescendants(c);
+  return count;
+};
 const describe = n => ({
   id: n.id, name: n.name, type: n.type,
   x: Math.round(n.x), y: Math.round(n.y),
   width: Math.round(n.width), height: Math.round(n.height),
   fills: 'fills' in n ? n.fills : undefined,
+  childCount: 'children' in n ? n.children.length : undefined,
+  descendantCount: countDescendants(n),
 });
 const modified = [];
 for (const n of children) {
