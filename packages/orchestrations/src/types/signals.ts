@@ -196,6 +196,7 @@ export type AgentActivity =
   | { action: "code_review_llm_response"; response: string; reasoning?: string; usage?: TokenUsage }
   | { action: "code_executed"; success: boolean; summary: string }
   | { action: "code_verified"; selection: string }
+  | { action: "file_review_llm_response"; verdict: string; status: "verified" | "issue"; usage?: TokenUsage }
   | { action: "guardian_message"; recipient: string; message: string };
 
 export type AgentActivityPayload = {

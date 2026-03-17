@@ -110,6 +110,37 @@ Respond with EXACTLY one of:
 - "APPROVED" (on its own line) if the code is correct
 - "REJECTED: <reason>" (on its own line) if you find issues`;
 
+// ---------------------------------------------------------------------------
+// File review — verifies execution result against the Figma canvas diff
+// ---------------------------------------------------------------------------
+
+const FILE_REVIEW_SYSTEM_PROMPT = `You are a Figma file reviewer. After code was executed in a Figma plugin, you verify whether the execution produced the expected result on the canvas.
+
+You receive:
+1. The code that was executed
+2. A JSON diff showing what changed on the Figma page (nodes added, removed, total children count, with properties like type, name, position, size, fills)
+
+Your job: assess whether the execution result looks correct based on what the code intended to do.
+
+Respond with EXACTLY one of:
+- "VERIFIED: <brief description of what was created/modified>" if the result matches what the code intended
+- "ISSUE: <brief description of the problem>" if something looks wrong (e.g. wrong color, missing node, unexpected changes)
+
+Be concise (1 sentence max).`;
+
+function parseFileReviewResponse(content: string): { status: "verified" | "issue"; verdict: string } {
+  const lines = content.trim().split("\n");
+  for (const line of lines) {
+    const trimmed = line.trim();
+    const verifiedMatch = trimmed.match(/^VERIFIED:\s*(.+)$/i);
+    if (verifiedMatch) return { status: "verified", verdict: verifiedMatch[1] };
+    const issueMatch = trimmed.match(/^ISSUE:\s*(.+)$/i);
+    if (issueMatch) return { status: "issue", verdict: issueMatch[1] };
+  }
+  // Default to verified if the model didn't follow format
+  return { status: "verified", verdict: content.trim().slice(0, 200) };
+}
+
 function parseReviewResponse(content: string): { approved: boolean; reason?: string } {
   const lines = content.trim().split("\n");
   for (const line of lines) {
@@ -269,26 +300,55 @@ return JSON.stringify({
 
   await notifyGuardrailIfBlocked(execResult, state);
 
-  // Inject result as tool result — include verification diff so the agent sees what changed
+  // Step 5: File review LLM — ask an LLM to interpret the diff in natural language
+  let fileReviewVerdict: string | undefined;
+  let fileReviewStatus: "verified" | "issue" = "verified";
+  if (execResult.success && verificationSummary) {
+    try {
+      const fileReviewResult = await callLLM({
+        messages: [
+          { role: "system", content: FILE_REVIEW_SYSTEM_PROMPT },
+          { role: "user", content: `Code executed:\n\`\`\`js\n${effect.code}\n\`\`\`\n\nFigma canvas diff:\n${verificationSummary}` },
+        ],
+        userId,
+        model,
+        maxTokens: 256,
+      });
+
+      const review = parseFileReviewResponse(fileReviewResult.content);
+      fileReviewVerdict = review.verdict;
+      fileReviewStatus = review.status;
+
+      await executeEffect(state, {
+        type: "emit_activity",
+        activities: [{
+          action: "file_review_llm_response" as const,
+          verdict: review.verdict,
+          status: review.status,
+          usage: fileReviewResult.usage,
+        }],
+      }, userId);
+    } catch {
+      // File review is best-effort
+    }
+  }
+
+  // Inject result as tool result — include file review verdict so the agent understands what happened
   let execResultJson: string;
   if (execResult.success) {
     const parts = [
-      "Execution succeeded. If your task is complete, call signal_task_complete now. Do NOT re-execute code that already succeeded.",
+      "Execution succeeded.",
     ];
-    if (verificationSummary) {
-      try {
-        const diff = JSON.parse(verificationSummary);
-        const addedCount = diff.added?.length ?? 0;
-        parts.push(`\nFigma verification: ${addedCount} node(s) added, ${diff.removedCount ?? 0} removed, ${diff.totalChildren} total children on page.`);
-        if (addedCount > 0) {
-          const descriptions = diff.added.map((n: Record<string, unknown>) => {
-            const fills = n.fills as Array<{ color?: { r: number; g: number; b: number } }> | undefined;
-            const fillStr = fills?.[0]?.color ? ` fill:rgb(${Math.round(fills[0].color.r * 255)},${Math.round(fills[0].color.g * 255)},${Math.round(fills[0].color.b * 255)})` : "";
-            return `  + ${n.type} "${n.name}" ${n.width}x${n.height}${fillStr}`;
-          });
-          parts.push(descriptions.join("\n"));
-        }
-      } catch { /* ignore parse errors */ }
+    if (fileReviewVerdict) {
+      if (fileReviewStatus === "verified") {
+        parts.push(`\nFile review: VERIFIED — ${fileReviewVerdict}`);
+        parts.push("If your task is complete, call signal_task_complete now. Do NOT re-execute code that already succeeded.");
+      } else {
+        parts.push(`\nFile review: ISSUE — ${fileReviewVerdict}`);
+        parts.push("Fix the issue and retry.");
+      }
+    } else {
+      parts.push("If your task is complete, call signal_task_complete now. Do NOT re-execute code that already succeeded.");
     }
     parts.push(`---\n${JSON.stringify(execResult)}`);
     execResultJson = parts.join("\n");

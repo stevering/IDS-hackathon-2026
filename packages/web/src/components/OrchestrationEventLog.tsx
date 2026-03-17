@@ -671,6 +671,16 @@ function AgentActivityItem({ activity, agentShortId }: { activity: AgentActivity
           colorClass="bg-teal-500/5 border-teal-500/10 text-teal-400/60 hover:bg-teal-500/10" />
       );
     }
+    case "file_review_llm_response":
+      return (
+        <ActivityRow pill={pill}
+          label={`${agentShortId} File review: ${activity.status === "verified" ? "OK" : "ISSUE"}`}
+          detail={activity.verdict}
+          usage={activity.usage}
+          colorClass={activity.status === "verified"
+            ? "bg-teal-500/5 border-teal-500/10 text-teal-400/60 hover:bg-teal-500/10"
+            : "bg-orange-500/5 border-orange-500/10 text-orange-400/60 hover:bg-orange-500/10"} />
+      );
     case "guardian_message":
       return (
         <ActivityRow pill={pill} label={`Guardian → ${activity.recipient}`} detail={activity.message}

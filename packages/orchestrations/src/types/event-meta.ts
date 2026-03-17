@@ -145,6 +145,9 @@ export function getActivityMeta(activity: AgentActivity): EventMeta {
     case "code_verified":
       return { category: "system-tool-result", direction: "figma → guardian", subject: "verification", visibleInNormalMode: false };
 
+    case "file_review_llm_response":
+      return { category: "system-tool-result", direction: "guardian → agent", subject: "file review", visibleInNormalMode: false };
+
     case "guardian_message":
       return { category: "message", direction: "guardian → agent", subject: "tool result injected", visibleInNormalMode: false };
 
