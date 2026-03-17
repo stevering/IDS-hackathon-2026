@@ -3805,8 +3805,8 @@ export default function Home() {
             </div>{/* end chat panel */}
 
             {/* ── Right panel: Orchestration conversation ── */}
-            <div className="min-w-full h-full flex flex-col">
-            <div ref={orchScrollContainerRef} onScroll={handleOrchScroll} className={`flex-1 overflow-y-auto px-3 sm:px-4 pb-4 ${headerPaddingClass}`}>
+            <div className="min-w-full h-full relative">
+            <div ref={orchScrollContainerRef} onScroll={handleOrchScroll} className={`absolute inset-0 overflow-y-auto px-3 sm:px-4 pb-40 ${headerPaddingClass}`}>
               {/* Orchestration event log — webapp side */}
               {!isFigmaPlugin && temporal.events.length > 0 && (
                 <OrchestrationEventLog
@@ -3880,7 +3880,7 @@ export default function Home() {
               )}
             </div>
             {/* ── Orchestration input form (simpler, inside the orch panel) ── */}
-            <div className="shrink-0 px-3 sm:px-4 pt-2 pb-[calc(0.75rem+env(safe-area-inset-bottom))]">
+            <div className="absolute bottom-0 left-0 right-0 z-10 px-3 sm:px-4 pt-2 pb-[calc(0.75rem+env(safe-area-inset-bottom))]">
               {/* Approval overlay — also in orchestration panel for plugins */}
               {pendingApproval && (
                 <div className="mb-2 max-w-3xl mx-auto">
