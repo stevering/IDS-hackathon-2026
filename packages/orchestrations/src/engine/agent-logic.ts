@@ -283,6 +283,83 @@ export function processQueues(state: AgentWorkflowState): AgentEffect[] {
 }
 
 // ---------------------------------------------------------------------------
+// Text-based tool call extraction (for LLMs like kimi-k2.5 that sometimes
+// output tool calls as plain text instead of structured tool_use blocks)
+// ---------------------------------------------------------------------------
+
+const TOOL_NAMES = [
+  "figma_plugin_execute",
+  "signal_task_complete",
+  "send_peer_message",
+  "broadcast_message",
+  "lookup_figma_docs",
+];
+
+/**
+ * Attempt to extract tool calls from plain text content.
+ * Handles patterns like:
+ *   - `[Called tool: toolName({"arg": "val"})]`
+ *   - `{"tool": "toolName", "arguments": {...}}`
+ *   - Bare JSON `{"code": "..."}` when the context clearly implies figma_plugin_execute
+ */
+export function extractTextToolCalls(content: string): LLMToolCall[] {
+  const calls: LLMToolCall[] = [];
+  let callIndex = 0;
+
+  // Pattern 1: [Called tool: toolName({...})]
+  const calledToolPattern = /\[Called tool:\s*(\w+)\(([\s\S]*?)\)\]/g;
+  let match;
+  while ((match = calledToolPattern.exec(content)) !== null) {
+    const toolName = match[1];
+    if (!TOOL_NAMES.includes(toolName)) continue;
+    try {
+      const args = JSON.parse(match[2]);
+      calls.push({ id: `text-tc-${callIndex++}`, name: toolName, arguments: args });
+    } catch {
+      // If JSON parse fails, try to extract code from the args string for figma_plugin_execute
+      if (toolName === "figma_plugin_execute") {
+        const codeMatch = match[2].match(/"code"\s*:\s*"([\s\S]*?)(?:"\s*[,}])/);
+        if (codeMatch) {
+          const code = codeMatch[1].replace(/\\n/g, "\n").replace(/\\"/g, '"');
+          calls.push({ id: `text-tc-${callIndex++}`, name: toolName, arguments: { code } });
+        }
+      }
+    }
+  }
+  if (calls.length > 0) return calls;
+
+  // Pattern 2: JSON object with "tool" or "name" field
+  try {
+    const parsed = JSON.parse(content.trim());
+    const toolName = parsed.tool || parsed.name;
+    if (toolName && TOOL_NAMES.includes(toolName)) {
+      const args = parsed.arguments || parsed.args || parsed.input || {};
+      calls.push({ id: `text-tc-${callIndex++}`, name: toolName, arguments: args });
+      return calls;
+    }
+  } catch { /* not a single JSON object */ }
+
+  // Pattern 3: signal_task_complete detected in text (legacy — keep existing behavior)
+  if (/signal_task_complete/i.test(content)) {
+    let summary = "Task completed.";
+    try {
+      const parsed = JSON.parse(content);
+      if (parsed.summary) summary = parsed.summary;
+    } catch {
+      const m = content.match(/["']summary["']\s*:\s*["']([^"']+)["']/);
+      if (m) summary = m[1];
+    }
+    calls.push({
+      id: `text-tc-${callIndex++}`,
+      name: "signal_task_complete",
+      arguments: { summary },
+    });
+  }
+
+  return calls;
+}
+
+// ---------------------------------------------------------------------------
 // Process LLM response (may trigger tool calls)
 // ---------------------------------------------------------------------------
 
@@ -319,36 +396,36 @@ export function processLLMResponse(
   }
 
   if (!toolCalls || toolCalls.length === 0) {
-    // Detect LLMs that write tool calls as text instead of invoking them.
-    // kimi-k2.5 commonly outputs '{ "tool": "signal_task_complete", ... }'
-    // as plain text. Parse it and treat it as a real tool call.
-    if (/signal_task_complete/i.test(content) && !state.completed) {
-      let summary = "Task completed.";
-      try {
-        const parsed = JSON.parse(content);
-        if (parsed.summary) summary = parsed.summary;
-      } catch {
-        const match = content.match(/["']summary["']\s*:\s*["']([^"']+)["']/);
-        if (match) summary = match[1];
+    // Detect LLMs that write tool calls as text instead of structured tool_use.
+    // kimi-k2.5 commonly outputs '[Called tool: figma_plugin_execute({...})]'
+    // or '{"tool": "signal_task_complete", ...}' as plain text.
+    const textToolCalls = extractTextToolCalls(content);
+
+    if (textToolCalls.length > 0) {
+      // Process extracted tool calls as if the LLM had invoked them properly
+      for (const tc of textToolCalls) {
+        activities.push({ action: "tool_call", toolName: tc.name, summary: `(auto-detected from text) ${tc.name}` });
+        const { effects: toolEffects, activities: toolActivities } = processToolCall(state, tc);
+        effects.push(...toolEffects);
+        activities.push(...toolActivities);
       }
-      activities.push({ action: "tool_call", toolName: "signal_task_complete", summary: `(auto-detected from text) ${summary}` });
+
       if (activities.length > 0) {
         effects.push({ type: "emit_activity", activities });
       }
-      state.completed = true;
-      effects.push({
-        type: "report_to_orchestrator",
-        report: {
-          agentShortId: state.agent.shortId,
-          status: "completed",
-          summary,
-        },
-      });
-      effects.push({ type: "complete" });
+
+      // Continue LLM loop if not completed
+      if (!state.completed && state.stepCount < MAX_STEPS) {
+        effects.push({
+          type: "call_llm",
+          messages: [...state.messageHistory],
+          tools: getAgentTools(state),
+        });
+      }
       return effects;
     }
 
-    // No tool calls — report in-progress and wait
+    // No tool calls detected — report in-progress and wait
     if (activities.length > 0) {
       effects.push({ type: "emit_activity", activities });
     }
