@@ -10,6 +10,8 @@ import type {
   LLMCallResult,
   ExecuteCodeParams,
   ExecuteCodeResult,
+  FetchFigmaDocsParams,
+  FetchFigmaDocsResult,
 } from "@guardian/orchestrations";
 
 // ---------------------------------------------------------------------------
@@ -51,4 +53,12 @@ export interface PersistenceActivities {
     durationMs: number;
     userId: string;
   }): Promise<void>;
+}
+
+// ---------------------------------------------------------------------------
+// Docs Activities
+// ---------------------------------------------------------------------------
+
+export interface DocsActivities {
+  fetchFigmaDocs(params: FetchFigmaDocsParams): Promise<FetchFigmaDocsResult>;
 }

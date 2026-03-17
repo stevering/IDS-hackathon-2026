@@ -554,3 +554,41 @@ describe("injectToolResult", () => {
     expect(state.messageHistory[0].images).toBeUndefined();
   });
 });
+
+describe("lookup_figma_docs tool", () => {
+  it("returns quick reference immediately for mode=quick", () => {
+    const state = createAgentState(makeAgentId());
+    const effects = processLLMResponse(state, "Looking up docs", [
+      { id: "tc1", name: "lookup_figma_docs", arguments: { topic: "all", mode: "quick" } },
+    ]);
+    // Quick mode injects tool result directly — no fetch_figma_docs effect
+    const fetchEffects = effects.filter((e) => e.type === "fetch_figma_docs");
+    expect(fetchEffects).toHaveLength(0);
+    const toolMsg = state.messageHistory.find((m) => m.role === "tool");
+    expect(toolMsg).toBeDefined();
+    expect(toolMsg!.content).toContain("Figma Plugin API");
+  });
+
+  it("emits fetch_figma_docs effect for mode=full", () => {
+    const state = createAgentState(makeAgentId());
+    const effects = processLLMResponse(state, "Looking up docs", [
+      { id: "tc1", name: "lookup_figma_docs", arguments: { topic: "TextNode", mode: "full" } },
+    ]);
+    const fetchEffects = effects.filter((e) => e.type === "fetch_figma_docs");
+    expect(fetchEffects).toHaveLength(1);
+    if (fetchEffects[0].type === "fetch_figma_docs") {
+      expect(fetchEffects[0].topic).toBe("TextNode");
+      expect(fetchEffects[0].toolCallId).toBe("tc1");
+    }
+  });
+
+  it("defaults to quick mode when mode is omitted", () => {
+    const state = createAgentState(makeAgentId());
+    processLLMResponse(state, "Checking API", [
+      { id: "tc1", name: "lookup_figma_docs", arguments: { topic: "FrameNode" } },
+    ]);
+    const toolMsg = state.messageHistory.find((m) => m.role === "tool");
+    expect(toolMsg).toBeDefined();
+    expect(toolMsg!.content).toContain("Figma Plugin API");
+  });
+});

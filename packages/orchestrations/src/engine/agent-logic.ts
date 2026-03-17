@@ -19,6 +19,7 @@ import type {
   AgentActivity,
 } from "../types/signals.js";
 import type { LLMMessage, LLMToolCall, LLMToolDefinition, SubConversationState } from "../types/agents.js";
+import { FIGMA_API_QUICK_REFERENCE } from "../logic/figma-api-reference.js";
 import * as acorn from "acorn";
 
 // ---------------------------------------------------------------------------
@@ -69,6 +70,7 @@ export type AgentWorkflowState = {
 export type AgentEffect =
   | { type: "call_llm"; messages: LLMMessage[]; tools: LLMToolDefinition[] }
   | { type: "review_and_execute_figma_code"; pluginClientId: string; userId: string; code: string; toolCallId: string }
+  | { type: "fetch_figma_docs"; topic: string; toolCallId: string }
   | { type: "report_to_orchestrator"; report: AgentReportPayload }
   | { type: "send_peer_message"; targetWorkflowId: string; message: PeerMessagePayload }
   | { type: "send_broadcast"; broadcast: BroadcastPayload }
@@ -848,6 +850,22 @@ function processToolCall(
       });
       break;
     }
+
+    case "lookup_figma_docs": {
+      const args = tc.arguments as { topic?: string; mode?: string };
+      const mode = args.mode ?? "quick";
+      const topic = args.topic ?? "all";
+      activities.push({ action: "tool_call", toolName: tc.name, summary: `${mode}: ${topic}` });
+
+      if (mode === "quick") {
+        // Immediate — no effect needed, inject static reference directly
+        injectToolResult(state, tc.id, FIGMA_API_QUICK_REFERENCE);
+      } else {
+        // Delegate to Temporal activity for live fetch
+        effects.push({ type: "fetch_figma_docs", topic, toolCallId: tc.id });
+      }
+      break;
+    }
   }
 
   return { effects, activities };
@@ -942,6 +960,29 @@ function getAgentTools(state: AgentWorkflowState): LLMToolDefinition[] {
           code: { type: "string", description: "JavaScript code to execute in the Figma Plugin API" },
         },
         required: ["code"],
+      },
+    });
+
+    tools.push({
+      name: "lookup_figma_docs",
+      description:
+        "Look up Figma Plugin API documentation. " +
+        "Use mode 'quick' for a condensed reference of common APIs (instant), " +
+        "or 'full' to fetch complete documentation for a specific node type from the official Figma docs (slower, uses network).",
+      parameters: {
+        type: "object",
+        properties: {
+          topic: {
+            type: "string",
+            description: "API topic: 'all' for quick overview, or a node type like 'FrameNode', 'TextNode', 'EllipseNode', 'figma' (global object), etc.",
+          },
+          mode: {
+            type: "string",
+            enum: ["quick", "full"],
+            description: "quick = static condensed ref (~4KB, instant). full = fetch complete docs from developers.figma.com (slower). Default: quick.",
+          },
+        },
+        required: ["topic"],
       },
     });
   }

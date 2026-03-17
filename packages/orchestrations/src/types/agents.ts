@@ -144,6 +144,23 @@ export type ExecuteCodeResult = {
 };
 
 // ---------------------------------------------------------------------------
+// Figma docs fetch types
+// ---------------------------------------------------------------------------
+
+export type FetchFigmaDocsParams = {
+  /** Topic to look up (e.g. "FrameNode", "TextNode", "figma") */
+  topic: string;
+  /** Timeout in ms (default 15000) */
+  timeoutMs?: number;
+};
+
+export type FetchFigmaDocsResult = {
+  success: boolean;
+  content?: string;
+  error?: string;
+};
+
+// ---------------------------------------------------------------------------
 // Presence types
 // ---------------------------------------------------------------------------
 

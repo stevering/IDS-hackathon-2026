@@ -51,7 +51,7 @@ import {
   agentActivitySignal,
 } from "../signals/definitions.js";
 
-import type { LLMActivities, FigmaActivities } from "../activities/types.js";
+import type { LLMActivities, FigmaActivities, DocsActivities } from "../activities/types.js";
 
 // Proxy activities
 const { callLLM } = proxyActivities<LLMActivities>({
@@ -61,6 +61,11 @@ const { callLLM } = proxyActivities<LLMActivities>({
 
 const { executeFigmaCode } = proxyActivities<FigmaActivities>({
   startToCloseTimeout: "30 seconds",
+  retry: { maximumAttempts: 2 },
+});
+
+const { fetchFigmaDocs } = proxyActivities<DocsActivities>({
+  startToCloseTimeout: "20 seconds",
   retry: { maximumAttempts: 2 },
 });
 
@@ -480,6 +485,26 @@ return r;`;
   recordExecResult(state, execResult.success ?? false);
 }
 
+// ---------------------------------------------------------------------------
+// Fetch Figma docs (mode "full" — network call via activity)
+// ---------------------------------------------------------------------------
+
+async function handleFetchFigmaDocs(
+  state: AgentWorkflowState,
+  effect: Extract<AgentEffect, { type: "fetch_figma_docs" }>
+): Promise<void> {
+  const result = await fetchFigmaDocs({ topic: effect.topic });
+  if (result.success && result.content) {
+    injectToolResult(state, effect.toolCallId, result.content);
+  } else {
+    injectToolResult(
+      state,
+      effect.toolCallId,
+      `Could not fetch docs for "${effect.topic}": ${result.error ?? "unknown error"}. Use mode "quick" instead.`
+    );
+  }
+}
+
 // Re-export for convenience within the workflow sandbox
 export type { AgentWorkflowInput } from "./types.js";
 
@@ -590,6 +615,9 @@ export async function agentWorkflow(input: AgentWorkflowInput): Promise<void> {
           if (rEffect.type === "review_and_execute_figma_code") {
             await handleReviewAndExecute(state, rEffect, input.userId, input.model);
             didExecTool = true;
+          } else if (rEffect.type === "fetch_figma_docs") {
+            await handleFetchFigmaDocs(state, rEffect);
+            didExecTool = true;
           } else if (rEffect.type === "call_llm") {
             pendingLLM = { messages: rEffect.messages, tools: rEffect.tools };
           } else {
@@ -643,6 +671,10 @@ async function executeLLMLoop(
       if (effect.type === "emit_activity") continue;
       if (effect.type === "review_and_execute_figma_code") {
         await handleReviewAndExecute(state, effect, userId, model);
+        didExecuteTool = true;
+        needsContinue = true;
+      } else if (effect.type === "fetch_figma_docs") {
+        await handleFetchFigmaDocs(state, effect);
         didExecuteTool = true;
         needsContinue = true;
       } else if (effect.type === "call_llm") {

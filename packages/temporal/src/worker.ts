@@ -10,6 +10,7 @@ import { callLLM } from "./activities/llm.js";
 import { executeFigmaCode } from "./activities/figma-execute.js";
 import { checkPresence } from "./activities/presence.js";
 import { saveOrchestrationState } from "./activities/persistence.js";
+import { fetchFigmaDocs } from "./activities/fetch-docs.js";
 
 async function run() {
   const address = process.env.TEMPORAL_ADDRESS ?? "localhost:7233";
@@ -42,6 +43,7 @@ async function run() {
       executeFigmaCode,
       checkPresence,
       saveOrchestrationState,
+      fetchFigmaDocs,
     },
   });
 

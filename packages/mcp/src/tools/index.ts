@@ -24,6 +24,7 @@ import { registerFigmaExecuteTool } from "./figma-execute.js"
 import { registerActionTools } from "./actions.js"
 import { registerListPageChildrenTool } from "./list-page-children.js"
 import { registerGetConnectedClientsTool } from "./get-connected-clients.js"
+import { registerLookupFigmaDocsTool } from "./lookup-figma-docs.js"
 
 export function registerAllTools(server: McpServer, userId?: string): void {
   // Investigation tools
@@ -42,4 +43,7 @@ export function registerAllTools(server: McpServer, userId?: string): void {
 
   // Discovery tools (presence-only, no code execution)
   registerGetConnectedClientsTool(server, userId)
+
+  // Reference tools (no plugin needed)
+  registerLookupFigmaDocsTool(server)
 }
