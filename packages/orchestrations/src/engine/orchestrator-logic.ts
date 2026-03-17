@@ -428,6 +428,12 @@ export function processOrchestratorLLMResponse(
       if (!resolved || !resolved.agent.agent.workflowId) continue;
       const { key: shortId, agent: agentState } = resolved;
 
+      // Guard: skip terminated agents in text-based directive fallback
+      if (agentState.confirmedByAgent &&
+          (agentState.status === "failed" || agentState.status === "completed" || agentState.status === "interrupted")) {
+        continue;
+      }
+
       agentState.status = "active";
       const payload: DirectivePayload = {
         directiveId: `dir-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
@@ -513,6 +519,22 @@ export function processOrchestratorLLMResponse(
 
         if (resolved && resolved.agent.agent.workflowId) {
           const { key: shortId, agent: agentState } = resolved;
+
+          // Guard: do not send directives to agents whose workflow has terminated
+          if (agentState.confirmedByAgent &&
+              (agentState.status === "failed" || agentState.status === "completed" || agentState.status === "interrupted")) {
+            const errMsg = `Agent ${shortId} has already ${agentState.status} and cannot receive new directives. ` +
+              `Its workflow has terminated. Consider using a different agent or completing the orchestration.`;
+            state.messageHistory.push({
+              role: "tool",
+              content: `${errMsg}\n---\n${JSON.stringify({ success: false, error: errMsg })}`,
+              toolCallId: tc.id,
+            });
+            effects.push({ type: "emit_event", event: { type: "orchestrator_tool_result", toolName: tc.name, result: errMsg, isError: true } });
+            state.eventLog.push({ type: "orchestrator_tool_result", toolName: tc.name, result: errMsg, isError: true });
+            break;
+          }
+
           agentState.status = "active";
           const payload: DirectivePayload = {
             directiveId: `dir-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
@@ -602,16 +624,32 @@ export function processOrchestratorLLMResponse(
 
       case "broadcast_to_agents": {
         const args = tc.arguments as { content: string };
+
+        // Identify which agents will actually receive the broadcast (only active ones)
+        const activeRecipients = Array.from(state.agents.entries())
+          .filter(([, a]) => a.status === "active")
+          .map(([id]) => id);
+        const terminatedAgents = Array.from(state.agents.entries())
+          .filter(([, a]) => a.confirmedByAgent && (a.status === "failed" || a.status === "completed" || a.status === "interrupted"))
+          .map(([id, a]) => `${id} (${a.status})`);
+
         effects.push({
           type: "broadcast_to_agents",
           excludeShortIds: [],
           content: args.content,
           fromAgentId: "orchestrator",
         });
-        const broadcastMsg = "Broadcast sent to all active agents.";
+
+        let broadcastMsg = activeRecipients.length > 0
+          ? `Broadcast sent to active agents: ${activeRecipients.join(", ")}.`
+          : "No active agents to receive the broadcast.";
+        if (terminatedAgents.length > 0) {
+          broadcastMsg += ` Skipped terminated agents: ${terminatedAgents.join(", ")}.`;
+        }
+
         state.messageHistory.push({
           role: "tool",
-          content: `${broadcastMsg}\n---\n${JSON.stringify({ success: true })}`,
+          content: `${broadcastMsg}\n---\n${JSON.stringify({ success: activeRecipients.length > 0 })}`,
           toolCallId: tc.id,
         });
         effects.push({ type: "emit_event", event: { type: "orchestrator_tool_result", toolName: tc.name, result: broadcastMsg, isError: false } });
