@@ -19,6 +19,7 @@ import type {
   AgentActivity,
 } from "../types/signals.js";
 import type { LLMMessage, LLMToolCall, LLMToolDefinition, SubConversationState } from "../types/agents.js";
+import * as acorn from "acorn";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -57,6 +58,8 @@ export type AgentWorkflowState = {
   stepCount: number;
   /** Execution success/failure tracking */
   execStats: { success: number; fail: number };
+  /** Consecutive file review ISSUE count (for loop detection) */
+  consecutiveFileReviewIssues?: number;
 };
 
 // ---------------------------------------------------------------------------
@@ -424,6 +427,161 @@ export function recordExecResult(state: AgentWorkflowState, success: boolean): v
 // Pre-execution code review (Figma API linter)
 // ---------------------------------------------------------------------------
 
+/** Globals available in the Figma Plugin sandbox. */
+const FIGMA_GLOBALS = new Set([
+  "figma", "console", "Math", "JSON", "Date", "Array", "Object",
+  "String", "Number", "Boolean", "Promise", "parseInt", "parseFloat",
+  "setTimeout", "clearTimeout", "setInterval", "clearInterval",
+  "Infinity", "NaN", "Error", "RegExp", "Map", "Set", "undefined",
+  "Symbol", "BigInt", "Proxy", "Reflect", "globalThis",
+  "__html__", "__uiFiles__",
+]);
+
+// ---- Minimal AST walker (no external dependency) ----
+
+type AnyNode = acorn.Node & { [key: string]: unknown };
+
+/**
+ * Walk an acorn AST, tracking lexical scopes, and return identifiers that are
+ * used as the *object* of a MemberExpression (foo.bar) but never declared in
+ * any enclosing scope and are not known globals.
+ */
+export function findUndeclaredMemberAccess(ast: acorn.Node): Set<string> {
+  const undeclared = new Set<string>();
+
+  // Scope chain: each entry is a Set of names declared in that scope.
+  const scopes: Set<string>[] = [new Set()];
+
+  const pushScope = () => scopes.push(new Set<string>());
+  const popScope = () => scopes.pop();
+  const declare = (name: string) => scopes[scopes.length - 1].add(name);
+  const isDeclared = (name: string): boolean => {
+    for (let i = scopes.length - 1; i >= 0; i--) {
+      if (scopes[i].has(name)) return true;
+    }
+    return FIGMA_GLOBALS.has(name);
+  };
+
+  function collectPatternNames(node: AnyNode): string[] {
+    if (!node) return [];
+    switch (node.type) {
+      case "Identifier":
+        return [node.name as string];
+      case "ObjectPattern":
+        return (node.properties as AnyNode[]).flatMap((p) =>
+          collectPatternNames((p.value ?? p.argument) as AnyNode)
+        );
+      case "ArrayPattern":
+        return (node.elements as (AnyNode | null)[]).flatMap((e) =>
+          e ? collectPatternNames(e) : []
+        );
+      case "RestElement":
+        return collectPatternNames(node.argument as AnyNode);
+      case "AssignmentPattern":
+        return collectPatternNames(node.left as AnyNode);
+      default:
+        return [];
+    }
+  }
+
+  function declareParams(params: AnyNode[]) {
+    for (const p of params) {
+      for (const name of collectPatternNames(p)) declare(name);
+    }
+  }
+
+  function walk(node: AnyNode) {
+    if (!node || typeof node !== "object" || !node.type) return;
+
+    // --- scope-creating nodes ---
+
+    if (node.type === "FunctionDeclaration") {
+      if (node.id) declare((node.id as AnyNode).name as string);
+      pushScope();
+      declareParams(node.params as AnyNode[]);
+      walk(node.body as AnyNode);
+      popScope();
+      return;
+    }
+
+    if (node.type === "FunctionExpression" || node.type === "ArrowFunctionExpression") {
+      pushScope();
+      if (node.type === "FunctionExpression" && node.id) {
+        declare((node.id as AnyNode).name as string);
+      }
+      declareParams(node.params as AnyNode[]);
+      walk(node.body as AnyNode);
+      popScope();
+      return;
+    }
+
+    if (node.type === "BlockStatement" || node.type === "ForStatement" ||
+        node.type === "ForInStatement" || node.type === "ForOfStatement") {
+      pushScope();
+      walkChildren(node);
+      popScope();
+      return;
+    }
+
+    if (node.type === "CatchClause") {
+      pushScope();
+      if (node.param) {
+        for (const name of collectPatternNames(node.param as AnyNode)) declare(name);
+      }
+      walk(node.body as AnyNode);
+      popScope();
+      return;
+    }
+
+    // --- declarations ---
+
+    if (node.type === "VariableDeclaration") {
+      for (const decl of node.declarations as AnyNode[]) {
+        // Walk init first (it's in the outer scope for let/const, but fine for our check)
+        if (decl.init) walk(decl.init as AnyNode);
+        for (const name of collectPatternNames(decl.id as AnyNode)) declare(name);
+      }
+      return;
+    }
+
+    // --- member access check ---
+
+    if (node.type === "MemberExpression" && !node.computed) {
+      const obj = node.object as AnyNode;
+      if (obj.type === "Identifier") {
+        const name = obj.name as string;
+        if (!isDeclared(name)) undeclared.add(name);
+      }
+      // Still walk the object (could be chained) and property is just a name
+      walk(obj);
+      return;
+    }
+
+    // --- default: recurse children ---
+    walkChildren(node);
+  }
+
+  function walkChildren(node: AnyNode) {
+    for (const key of Object.keys(node)) {
+      if (key === "type" || key === "start" || key === "end" || key === "loc" ||
+          key === "range" || key === "sourceType") continue;
+      const child = node[key];
+      if (Array.isArray(child)) {
+        for (const item of child) {
+          if (item && typeof item === "object" && (item as AnyNode).type) {
+            walk(item as AnyNode);
+          }
+        }
+      } else if (child && typeof child === "object" && (child as AnyNode).type) {
+        walk(child as AnyNode);
+      }
+    }
+  }
+
+  walk(ast as AnyNode);
+  return undeclared;
+}
+
 /**
  * Validates generated Figma Plugin API code BEFORE execution.
  * Returns an array of issues. Empty = code is OK to execute.
@@ -465,53 +623,32 @@ export function reviewFigmaCode(code: string): string[] {
     );
   }
 
-  // Rule 5: detect partial code (undeclared variables used in member access)
+  // Rule 5: parse JS with acorn — catches syntax errors AND undeclared variables.
   // Each figma_plugin_execute runs in a fresh scope — variables don't persist.
   {
-    // Collect all variable declarations
-    const declared = new Set<string>();
-    for (const m of code.matchAll(/\b(?:const|let|var)\s+(\w+)/g)) declared.add(m[1]);
-    for (const m of code.matchAll(/\bfunction\s+(\w+)/g)) declared.add(m[1]);
-    // Arrow function params: (a, b) => ... or single param: x =>
-    for (const m of code.matchAll(/\(([^)]*)\)\s*(?:=>|\{)/g)) {
-      for (const p of m[1].split(",")) {
-        const name = p.trim().split(/\s*[=:]/)[0].trim();
-        if (/^\w+$/.test(name) && name.length > 0) declared.add(name);
-      }
-    }
-    for (const m of code.matchAll(/\b(\w+)\s*=>/g)) declared.add(m[1]);
-    // for..of / for..in
-    for (const m of code.matchAll(/\bfor\s*\(\s*(?:const|let|var)\s+(\w+)/g)) declared.add(m[1]);
-
-    const KNOWN_IDENTS = new Set([
-      // Figma & browser globals
-      "figma", "console", "Math", "JSON", "Date", "Array", "Object",
-      "String", "Number", "Boolean", "Promise", "parseInt", "parseFloat",
-      "setTimeout", "clearTimeout", "setInterval", "clearInterval",
-      "Infinity", "NaN", "Error", "RegExp", "Map", "Set", "undefined",
-      "Symbol", "BigInt", "Proxy", "Reflect", "globalThis",
-      "__html__", "__uiFiles__",
-      // JS keywords that can precede `.`
-      "this", "true", "false", "null", "new", "typeof", "void",
-      "return", "throw", "await", "delete", "super",
-    ]);
-
-    // Find identifiers used as base objects in member access (foo.bar)
-    // Negative lookbehind (?<!\.) prevents matching chained properties (e.g. figma.viewport.center)
-    const undeclared = new Set<string>();
-    for (const m of code.matchAll(/(?<!\.)(?<!\w)\b([a-zA-Z_$]\w*)\s*\./g)) {
-      const name = m[1];
-      if (!declared.has(name) && !KNOWN_IDENTS.has(name)) {
-        undeclared.add(name);
-      }
+    // Wrap in async function to allow top-level await
+    const wrapped = `(async () => {\n${code}\n})()`;
+    let ast: acorn.Node | null = null;
+    try {
+      ast = acorn.parse(wrapped, {
+        ecmaVersion: "latest",
+        sourceType: "script",
+      } as acorn.Options);
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      issues.push(`Syntax error: ${msg}. Send valid JavaScript (not TypeScript).`);
     }
 
-    if (undeclared.size > 0) {
-      issues.push(
-        `Undeclared variable(s): ${Array.from(undeclared).join(", ")}. ` +
-        "Each figma_plugin_execute call runs in a FRESH JavaScript scope — " +
-        "variables from previous calls do NOT persist. Send complete, self-contained code that declares all variables."
-      );
+    // If parsing succeeded, walk the AST for scope-aware undeclared variable detection
+    if (ast) {
+      const undeclared = findUndeclaredMemberAccess(ast);
+      if (undeclared.size > 0) {
+        issues.push(
+          `Undeclared variable(s): ${Array.from(undeclared).join(", ")}. ` +
+          "Each figma_plugin_execute call runs in a FRESH JavaScript scope — " +
+          "variables from previous calls do NOT persist. Send complete, self-contained code that declares all variables."
+        );
+      }
     }
   }
 
@@ -684,11 +821,8 @@ function processToolCall(
       // Phase 1: programmatic linter — instant, free
       const codeIssues = reviewFigmaCode(args.code);
       if (codeIssues.length > 0) {
-        const linterFeedback = JSON.stringify({
-          success: false,
-          codeReview: codeIssues,
-          error: `Code review rejected (${codeIssues.length} issue${codeIssues.length > 1 ? "s" : ""}). Fix and retry.`,
-        });
+        const issueList = codeIssues.map((issue, i) => `${i + 1}. ${issue}`).join("\n");
+        const linterFeedback = `Code review rejected (${codeIssues.length} issue${codeIssues.length > 1 ? "s" : ""}):\n${issueList}\n\nFix these issues and retry with corrected code.\n---\n${JSON.stringify({ success: false, codeReview: codeIssues })}`;
         activities.push({ action: "code_review_rejected", issues: codeIssues, feedback: linterFeedback });
         activities.push({
           action: "guardian_message",

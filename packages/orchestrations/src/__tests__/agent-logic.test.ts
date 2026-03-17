@@ -460,6 +460,75 @@ ellipse.x = center.x - 50;`;
     const issues = reviewFigmaCode(code);
     expect(issues).toHaveLength(0);
   });
+
+  it("does not flag forEach callback params with double parens", () => {
+    const code = `const colors = [{name: 'Red', color: {r:1,g:0,b:0}}];
+colors.forEach((c, i) => {
+  const rect = figma.createRectangle();
+  rect.fills = [{type: 'SOLID', color: c.color}];
+  rect.x = i * 100;
+});`;
+    const issues = reviewFigmaCode(code);
+    expect(issues).toHaveLength(0);
+  });
+
+  it("does not flag map callback params with double parens", () => {
+    const code = `const items = [{name: 'A'}];
+const nodes = items.map((item) => {
+  const frame = figma.createFrame();
+  frame.name = item.name;
+  return frame;
+});`;
+    const issues = reviewFigmaCode(code);
+    expect(issues).toHaveLength(0);
+  });
+
+  it("catches syntax errors (broken XML from LLMs)", () => {
+    const code = `const frame = figma.createFrame();
+frame.name = "test";
+</xai:function_call>`;
+    const issues = reviewFigmaCode(code);
+    expect(issues.some(i => i.includes("Syntax error"))).toBe(true);
+  });
+
+  it("does not flag nested destructuring and complex patterns", () => {
+    const code = `const { x, y } = figma.viewport.center;
+const [first, ...rest] = figma.currentPage.children;
+first.x = x;
+rest.forEach((node) => { node.visible = false; });`;
+    const issues = reviewFigmaCode(code);
+    expect(issues).toHaveLength(0);
+  });
+
+  it("does not flag for..of loop variables", () => {
+    const code = `const children = figma.currentPage.children;
+for (const child of children) {
+  child.visible = true;
+}`;
+    const issues = reviewFigmaCode(code);
+    expect(issues).toHaveLength(0);
+  });
+
+  it("does not flag catch clause params", () => {
+    const code = `try {
+  const node = figma.createFrame();
+  node.resize(100, 100);
+} catch (err) {
+  console.log(err.message);
+}`;
+    const issues = reviewFigmaCode(code);
+    expect(issues).toHaveLength(0);
+  });
+
+  it("does not flag function expression names", () => {
+    const code = `const handler = function process(node) {
+  node.visible = true;
+  return process;
+};
+handler(figma.createFrame());`;
+    const issues = reviewFigmaCode(code);
+    expect(issues).toHaveLength(0);
+  });
 });
 
 describe("injectToolResult", () => {

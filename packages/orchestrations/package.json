@@ -19,5 +19,8 @@
   "devDependencies": {
     "typescript": "^5.7.0",
     "vitest": "^4.1.0"
+  },
+  "dependencies": {
+    "acorn": "^8.16.0"
   }
 }

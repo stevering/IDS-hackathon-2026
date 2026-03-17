@@ -194,11 +194,9 @@ async function handleReviewAndExecute(
       }],
     }, userId);
 
-    // Inject rejection as tool result
-    const rejectionResult = JSON.stringify({
-      success: false,
-      error: `Code review rejected: ${review.reason ?? "Unspecified issues"}. Fix and retry.`,
-    });
+    // Inject rejection as tool result — human-readable text + JSON data
+    const reason = review.reason ?? "Unspecified issues";
+    const rejectionResult = `Code review rejected: ${reason}\n\nFix the issue and retry with corrected code.\n---\n${JSON.stringify({ success: false, error: reason })}`;
 
     await executeEffect(state, {
       type: "emit_activity",
@@ -223,10 +221,11 @@ async function handleReviewAndExecute(
     }],
   }, userId);
 
-  // Step 2: Snapshot BEFORE — list all node IDs + capture screenshot
+  // Step 2: Snapshot BEFORE — list all node IDs + their child counts + capture screenshot
   const clientId = effect.pluginClientId || state.agent.pluginClientId || "";
-  const snapshotCode = `return JSON.stringify(figma.currentPage.children.map(n => n.id));`;
+  const snapshotCode = `return JSON.stringify(figma.currentPage.children.map(n => ({ id: n.id, childCount: 'children' in n ? n.children.length : 0 })));`;
   let beforeIds: string[] = [];
+  let beforeChildCounts: Record<string, number> = {};
   let beforeScreenshot: string | undefined;
   try {
     const beforeResult = await executeFigmaCode({
@@ -234,7 +233,11 @@ async function handleReviewAndExecute(
       workflowId: state.orchestratorWorkflowId,
     });
     if (beforeResult.success && beforeResult.result) {
-      beforeIds = JSON.parse(String(beforeResult.result));
+      const parsed = JSON.parse(String(beforeResult.result));
+      beforeIds = parsed.map((n: { id: string }) => n.id);
+      beforeChildCounts = Object.fromEntries(
+        parsed.map((n: { id: string; childCount: number }) => [n.id, n.childCount])
+      );
     }
     // Capture screenshot only if page has content (avoid empty export)
     if (beforeIds.length > 0) {
@@ -282,10 +285,11 @@ return r;`;
   if (execResult.success) {
     try {
       const beforeSet = JSON.stringify(beforeIds);
+      const beforeCounts = JSON.stringify(beforeChildCounts);
       const diffCode = `const before = new Set(${beforeSet});
+const prevCounts = ${beforeCounts};
 const children = figma.currentPage.children;
 const added = children.filter(n => !before.has(n.id));
-const kept = children.filter(n => before.has(n.id));
 const removed = ${beforeSet}.filter(id => !children.find(n => n.id === id));
 const describe = n => ({
   id: n.id, name: n.name, type: n.type,
@@ -293,8 +297,19 @@ const describe = n => ({
   width: Math.round(n.width), height: Math.round(n.height),
   fills: 'fills' in n ? n.fills : undefined,
 });
+const modified = [];
+for (const n of children) {
+  if (before.has(n.id) && 'children' in n) {
+    const prev = prevCounts[n.id] || 0;
+    const curr = n.children.length;
+    if (curr !== prev) {
+      modified.push({ id: n.id, name: n.name, childrenBefore: prev, childrenAfter: curr });
+    }
+  }
+}
 return JSON.stringify({
   added: added.map(describe),
+  modified: modified,
   removedCount: removed.length,
   totalChildren: children.length,
 });`;
@@ -406,11 +421,27 @@ return r;`;
         parts.push(`\nFile review: VERIFIED — ${fileReviewVerdict}`);
         parts.push("If your task is complete, call signal_task_complete now. Do NOT re-execute code that already succeeded.");
       } else {
+        // Track consecutive issues to detect loops
+        const consecutiveIssues = (state.consecutiveFileReviewIssues ?? 0) + 1;
+        state.consecutiveFileReviewIssues = consecutiveIssues;
+
         parts.push(`\nFile review: ISSUE — ${fileReviewVerdict}`);
-        parts.push("Fix the issue and retry.");
+        if (consecutiveIssues >= 3) {
+          parts.push(
+            "WARNING: You have received the same ISSUE feedback multiple times. " +
+            "Do NOT retry the same code. Try a DIFFERENT approach, or if you believe " +
+            "the task is actually done, call signal_task_complete."
+          );
+        } else {
+          parts.push("Fix the issue and retry with different code. Do NOT resend the same code.");
+        }
       }
     } else {
       parts.push("If your task is complete, call signal_task_complete now. Do NOT re-execute code that already succeeded.");
+    }
+    // Reset consecutive issue counter on verified
+    if (fileReviewStatus === "verified") {
+      state.consecutiveFileReviewIssues = 0;
     }
     parts.push(`---\n${JSON.stringify(execResult)}`);
     execResultJson = parts.join("\n");
@@ -527,16 +558,20 @@ export async function agentWorkflow(input: AgentWorkflowInput): Promise<void> {
           llmResult.usage
         );
 
-        // Execute tool effects first, then LLM continuation
+        // Emit activities first so tool_call events arrive before their pipeline children
         let didExecTool = false;
         let pendingLLM: { messages: typeof effect.messages; tools: typeof effect.tools } | null = null;
 
         for (const rEffect of responseEffects) {
+          if (rEffect.type === "emit_activity") {
+            await executeEffect(state, rEffect, input.userId);
+          }
+        }
+        for (const rEffect of responseEffects) {
+          if (rEffect.type === "emit_activity") continue;
           if (rEffect.type === "review_and_execute_figma_code") {
             await handleReviewAndExecute(state, rEffect, input.userId, input.model);
             didExecTool = true;
-          } else if (rEffect.type === "emit_activity") {
-            await executeEffect(state, rEffect, input.userId);
           } else if (rEffect.type === "call_llm") {
             pendingLLM = { messages: rEffect.messages, tools: rEffect.tools };
           } else {
@@ -579,13 +614,19 @@ async function executeLLMLoop(
     let needsContinue = false;
     let didExecuteTool = false;
 
+    // First pass: emit activities so tool_call events arrive before their pipeline children
     for (const effect of effects) {
+      if (effect.type === "emit_activity") {
+        await executeEffect(state, effect, userId);
+      }
+    }
+    // Second pass: process tool executions and other effects
+    for (const effect of effects) {
+      if (effect.type === "emit_activity") continue;
       if (effect.type === "review_and_execute_figma_code") {
         await handleReviewAndExecute(state, effect, userId, model);
         didExecuteTool = true;
         needsContinue = true;
-      } else if (effect.type === "emit_activity") {
-        await executeEffect(state, effect, userId);
       } else if (effect.type === "call_llm") {
         if (!didExecuteTool) {
           messages = effect.messages;

@@ -850,6 +850,169 @@ function ActivityRow({
 }
 
 // ---------------------------------------------------------------------------
+// Pipeline grouping — nests pipeline child events under tool_call header
+// ---------------------------------------------------------------------------
+
+const PIPELINE_CHILD_ACTIONS = new Set([
+  "code_review_llm_response", "code_review_llm_approved", "code_review_llm_rejected",
+  "code_executed", "code_verified", "file_review_llm_response", "guardian_message",
+  "code_review_passed", "code_review_rejected",
+]);
+
+type PipelineGroup = {
+  _pipeline: true;
+  agentShortId: string;
+  headerEvent: OrchestrationSSEEvent & { type: "agent_activity" };
+  childEvents: (OrchestrationSSEEvent & { type: "agent_activity" })[];
+};
+
+type GroupedItem = OrchestrationSSEEvent | PipelineGroup;
+
+function isPipelineGroup(item: GroupedItem): item is PipelineGroup {
+  return "_pipeline" in item;
+}
+
+function groupPipelineEvents(events: OrchestrationSSEEvent[]): GroupedItem[] {
+  const result: GroupedItem[] = [];
+  const openGroups = new Map<string, PipelineGroup>();
+
+  for (const event of events) {
+    if (event.type !== "agent_activity") {
+      result.push(event);
+      continue;
+    }
+
+    // Check if this batch contains a tool_call for figma_plugin_execute
+    const hasFigmaToolCall = event.activities.some(
+      (a) => a.action === "tool_call" && a.toolName === "figma_plugin_execute"
+    );
+
+    if (hasFigmaToolCall) {
+      const group: PipelineGroup = {
+        _pipeline: true,
+        agentShortId: event.agentShortId,
+        headerEvent: event as OrchestrationSSEEvent & { type: "agent_activity" },
+        childEvents: [],
+      };
+      openGroups.set(event.agentShortId, group);
+      result.push(group);
+      continue;
+    }
+
+    // Check if all activities in this batch are pipeline children
+    const allPipeline = event.activities.every((a) => PIPELINE_CHILD_ACTIONS.has(a.action));
+    const openGroup = openGroups.get(event.agentShortId);
+
+    if (allPipeline && openGroup) {
+      openGroup.childEvents.push(event as OrchestrationSSEEvent & { type: "agent_activity" });
+      continue;
+    }
+
+    // Not a pipeline event — close any open group for this agent
+    openGroups.delete(event.agentShortId);
+    result.push(event);
+  }
+
+  return result;
+}
+
+// ---------------------------------------------------------------------------
+// Pipeline group component — collapsible tool_call with nested children
+// ---------------------------------------------------------------------------
+
+function PipelineGroupBlock({
+  group,
+  agents,
+  showAllEvents,
+}: {
+  group: PipelineGroup;
+  agents: AgentViewState[];
+  showAllEvents?: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const toolCallAct = group.headerEvent.activities.find(
+    (a) => a.action === "tool_call" && a.toolName === "figma_plugin_execute"
+  );
+  if (!toolCallAct || toolCallAct.action !== "tool_call") return null;
+
+  const usage = toolCallAct.usage;
+  const childCount = group.childEvents.reduce((n, e) => n + e.activities.length, 0);
+
+  // Find the execution result from children
+  const execResult = group.childEvents
+    .flatMap((e) => e.activities)
+    .find((a) => a.action === "code_executed");
+  const execOk = execResult?.action === "code_executed" && execResult.success;
+  const fileReview = group.childEvents
+    .flatMap((e) => e.activities)
+    .find((a) => a.action === "file_review_llm_response");
+  const reviewOk = fileReview?.action === "file_review_llm_response" && fileReview.status === "verified";
+
+  // Status badge
+  const statusLabel = execResult
+    ? (reviewOk ? "VERIFIED" : execOk ? "OK" : "FAILED")
+    : "...";
+  const statusColor = reviewOk
+    ? "text-emerald-400/70"
+    : execOk
+      ? "text-teal-400/60"
+      : execResult ? "text-red-400/70" : "text-white/30";
+
+  return (
+    <div className="mx-2 sm:mx-4 my-0.5">
+      <div
+        className="rounded-lg border border-indigo-500/20 overflow-hidden"
+        style={{ background: "rgba(10, 10, 10, 0.35)", backdropFilter: "blur(24px) saturate(1.4)" }}
+      >
+        <button
+          onClick={() => setOpen(!open)}
+          className="flex items-center gap-1.5 text-[10px] px-2.5 py-1 w-full text-left cursor-pointer hover:bg-white/[0.02] transition-colors min-w-0"
+        >
+          <svg
+            className={`h-2.5 w-2.5 shrink-0 transition-transform opacity-40 ${open ? "rotate-90" : ""}`}
+            viewBox="0 0 24 24" fill="currentColor"
+          >
+            <path d="M8.59 16.59L13.17 12 8.59 7.41 10 6l6 6-6 6z" />
+          </svg>
+          <span className="text-[7px] px-1 py-px rounded border font-medium uppercase tracking-wider text-indigo-300/60 border-indigo-500/30 bg-indigo-500/10 shrink-0">
+            exec
+          </span>
+          <span className="font-mono font-medium text-indigo-300/80 shrink-0">
+            {group.agentShortId} figma_plugin_execute
+          </span>
+          <span className={`font-mono font-medium shrink-0 ${statusColor}`}>{statusLabel}</span>
+          {usage && <span className="shrink-0 text-[8px] font-mono text-white/30">{usage.totalTokens} tok</span>}
+          {childCount > 0 && <span className="shrink-0 text-[8px] text-white/20">{childCount} steps</span>}
+          {!open && (
+            <span className="truncate opacity-30 min-w-0 font-mono">
+              {toolCallAct.summary.slice(0, 60)}
+            </span>
+          )}
+        </button>
+        {open && (
+          <div className="border-t border-indigo-500/10 px-1 pb-1 pt-0.5">
+            {/* Header activities (tool_call + code_review_passed) */}
+            <div className="ml-3 mr-1 space-y-0.5 mb-0.5">
+              {group.headerEvent.activities.map((act, ai) => (
+                <AgentActivityItem key={`h-${ai}`} activity={act} agentShortId={group.agentShortId} />
+              ))}
+            </div>
+            {/* Pipeline child events — nested */}
+            <div className="ml-3 mr-1 space-y-0.5 border-l border-indigo-500/10 pl-2">
+              {group.childEvents.map((childEvent, ci) =>
+                childEvent.activities.map((act, ai) => (
+                  <AgentActivityItem key={`c-${ci}-${ai}`} activity={act} agentShortId={childEvent.agentShortId} />
+                ))
+              )}
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Main component
 // ---------------------------------------------------------------------------
 
@@ -862,6 +1025,8 @@ export function OrchestrationEventLog({ events, agents, agentFilter, showAllEven
 
   if (visibleEvents.length === 0) return null;
 
+  const grouped = groupPipelineEvents(visibleEvents);
+
   return (
     <div className="mt-2 mb-4">
       <div className="flex items-center gap-2 mx-4 mb-2">
@@ -872,7 +1037,11 @@ export function OrchestrationEventLog({ events, agents, agentFilter, showAllEven
         <div className="h-px flex-1 bg-amber-500/15" />
       </div>
 
-      {visibleEvents.map((event, i) => renderEvent(event, i, agents, showAllEvents))}
+      {grouped.map((item, i) =>
+        isPipelineGroup(item)
+          ? <PipelineGroupBlock key={i} group={item} agents={agents} showAllEvents={showAllEvents} />
+          : renderEvent(item, i, agents, showAllEvents)
+      )}
     </div>
   );
 }
