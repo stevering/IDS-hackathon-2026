@@ -70,6 +70,8 @@ export type AgentWorkflowState = {
   codeAttemptCount?: number;
   /** Original task description from the orchestrator directive */
   taskDescription?: string;
+  /** Consecutive LLM responses with no tool calls (idle text loop detection) */
+  consecutiveTextOnlyResponses?: number;
 };
 
 // ---------------------------------------------------------------------------
@@ -425,7 +427,41 @@ export function processLLMResponse(
       return effects;
     }
 
-    // No tool calls detected — report in-progress and wait
+    // No tool calls detected — idle text loop detection
+    state.consecutiveTextOnlyResponses = (state.consecutiveTextOnlyResponses ?? 0) + 1;
+    const idleCount = state.consecutiveTextOnlyResponses;
+
+    if (idleCount >= 5 && !state.completed) {
+      // Force auto-complete after 5 consecutive text-only responses
+      const summary = content.slice(0, 500) || "Agent auto-completed after idle text loop.";
+      activities.push({ action: "tool_call", toolName: "signal_task_complete", summary: `(auto-completed: ${idleCount} text responses without tool calls)` });
+      if (activities.length > 0) {
+        effects.push({ type: "emit_activity", activities });
+      }
+      state.completed = true;
+      effects.push({
+        type: "report_to_orchestrator",
+        report: {
+          agentShortId: state.agent.shortId,
+          status: "completed",
+          summary,
+        },
+      });
+      effects.push({ type: "complete" });
+      return effects;
+    }
+
+    if (idleCount === 3) {
+      // Inject a nudge at 3 idle responses
+      state.messageHistory.push({
+        role: "user",
+        content: "WARNING: You have sent 3 text responses without executing any tool. " +
+          "Call signal_task_complete if your task is done, or call figma_plugin_execute to continue working. " +
+          "Do NOT send more status messages — take action.",
+      });
+    }
+
+    // Report in-progress and wait
     if (activities.length > 0) {
       effects.push({ type: "emit_activity", activities });
     }
@@ -440,6 +476,9 @@ export function processLLMResponse(
     effects.push({ type: "wait_for_input" });
     return effects;
   }
+
+  // Reset idle text counter — agent is taking real action
+  state.consecutiveTextOnlyResponses = 0;
 
   for (const tc of toolCalls) {
     const { effects: toolEffects, activities: toolActivities } = processToolCall(state, tc);

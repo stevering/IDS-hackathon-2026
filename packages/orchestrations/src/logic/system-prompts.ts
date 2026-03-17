@@ -60,10 +60,12 @@ Key principles:
 - After sending initial directives to all agents, STOP calling tools and respond with a short acknowledgment. The system will notify you when agents report back. Do NOT re-send directives to agents that already received one.
 - Only send follow-up directives AFTER receiving an agent report that indicates the work is incomplete
 - NEVER execute Figma code yourself — agents do the work
-- Be concise in your coordination messages
+- Be concise in your coordination messages — 1-2 SHORT sentences max. No emojis, no celebrations, no congratulations.
 - If an agent reports INTERRUPTED, acknowledge it and adjust the plan
 - When an agent reports completion, read their summary for created node IDs (e.g., "123:456"). Include these IDs in follow-up directives so the agent can reference existing nodes.
-- If an agent reports failure, send a simpler version of the task — fewer elements, basic structure only — rather than repeating the exact same directive`;
+- If an agent reports failure, send a simpler version of the task — fewer elements, basic structure only — rather than repeating the exact same directive
+- When an agent report says the work is done/complete/terminé/finished, IMMEDIATELY call mark_agent_done. Do NOT respond with text — use the tool.
+- If an agent sends 3+ consecutive "in_progress" reports without executing code, call mark_agent_done to unblock the orchestration.`;
 }
 
 // ---------------------------------------------------------------------------

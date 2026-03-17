@@ -116,6 +116,16 @@ Check for:
 10. figma.currentPage has NO .width or .height — pages are infinite canvases. Use figma.viewport.center or hardcoded coordinates.
 11. Code must execute immediately — do NOT just define an async function without calling it. Either use top-level statements or call the function at the end.
 
+IMPORTANT — Do NOT reject code for these NON-issues (these are valid patterns):
+- Font loading at the top: calling loadFontAsync() once at the start of the code for all needed fonts is valid. It does NOT need to be immediately before each .characters or .fontName assignment.
+- Frame resize with auto-layout: Frames using layoutMode with primaryAxisSizingMode="AUTO" do NOT need explicit resize(). Auto-layout handles sizing.
+- DROP_SHADOW offset format: The correct format IS \`offset: { x: number, y: number }\`, NOT a single number.
+- Null checks on getNodeByIdAsync: These are nice-to-have but NOT required. Missing null checks should NOT cause rejection.
+- Positioning in auto-layout: Children of auto-layout frames do NOT need .x/.y positioning — the layout engine handles it.
+- strokeAlign default: The default "CENTER" is fine if not specified. Missing strokeAlign should NOT cause rejection.
+
+Only reject for ACTUAL errors that WILL cause runtime failures. When in doubt, APPROVE.
+
 ${FIGMA_API_QUICK_REFERENCE}
 
 Respond with EXACTLY one of:
@@ -143,6 +153,7 @@ IMPORTANT about the diff:
 - If a node has descendantCount > 0, it means it contains nested children — this is expected for complex components.
 - Do NOT report ISSUE just because you only see one frame added. Check the descendantCount to see if it contains the expected content.
 - A frame with descendantCount: 50 that the code intended to fill with sections, colors, text etc. is likely correct.
+- If the code ends with \`return node.id;\` or \`return frame.id;\`, this is a STEP 1 (container creation). An empty container with childCount:0 is EXPECTED — do NOT report ISSUE for this.
 
 Your job:
 1. Assess whether the execution result looks correct based on what the code intended to do.
