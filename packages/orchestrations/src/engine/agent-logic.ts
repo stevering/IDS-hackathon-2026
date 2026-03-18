@@ -72,6 +72,8 @@ export type AgentWorkflowState = {
   taskDescription?: string;
   /** Consecutive LLM responses with no tool calls (idle text loop detection) */
   consecutiveTextOnlyResponses?: number;
+  /** Latest directive content from the orchestrator (used by file review for agent-specific context) */
+  lastDirectiveContent?: string;
 };
 
 // ---------------------------------------------------------------------------
@@ -122,6 +124,9 @@ export function createAgentState(agent: AgentId): AgentWorkflowState {
 
 export function handleDirective(state: AgentWorkflowState, directive: DirectivePayload): void {
   state.directiveQueue.push(directive);
+  // Store the latest directive content — used by file review instead of the global task
+  // so the reviewer judges against what THIS agent was asked to do, not the full orchestration task
+  state.lastDirectiveContent = directive.content;
 }
 
 export function handlePeerMessage(state: AgentWorkflowState, message: PeerMessagePayload): void {
@@ -428,8 +433,12 @@ export function processLLMResponse(
     }
 
     // No tool calls detected — idle text loop detection
-    state.consecutiveTextOnlyResponses = (state.consecutiveTextOnlyResponses ?? 0) + 1;
-    const idleCount = state.consecutiveTextOnlyResponses;
+    // Only count idle texts AFTER the agent has received at least one directive.
+    // Pre-directive idle (agent waiting for instructions) should not trigger auto-complete.
+    if (state.lastDirectiveContent) {
+      state.consecutiveTextOnlyResponses = (state.consecutiveTextOnlyResponses ?? 0) + 1;
+    }
+    const idleCount = state.consecutiveTextOnlyResponses ?? 0;
 
     if (idleCount >= 5 && !state.completed) {
       // Force auto-complete after 5 consecutive text-only responses

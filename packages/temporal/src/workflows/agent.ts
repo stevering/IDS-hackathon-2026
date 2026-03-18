@@ -146,7 +146,7 @@ const FILE_REVIEW_SYSTEM_PROMPT = `You are a Figma file reviewer. After code was
 You receive:
 1. The code that was executed
 2. A JSON diff showing what changed on the Figma page (nodes added, removed, total children count, with properties like type, name, position, size, fills)
-3. The ORIGINAL USER TASK (if available) — use this to check semantic alignment
+3. The AGENT DIRECTIVE (if available) — what THIS specific agent was asked to do. Use this to check semantic alignment. NOTE: In multi-agent orchestrations, each agent has its OWN directive. Do NOT judge an agent's work against the full orchestration task — only against its specific directive.
 
 IMPORTANT about the diff:
 - The diff shows TOP-LEVEL page children only. Nested children (inside frames) are NOT listed individually.
@@ -157,7 +157,7 @@ IMPORTANT about the diff:
 
 Your job:
 1. Assess whether the execution result looks correct based on what the code intended to do.
-2. If the original user task is provided, check that the result is semantically aligned with what the user asked for (correct theme, correct components, correct style). If the code ran successfully but produces something the user didn't ask for (e.g., wrong theme, missing required elements), report it as an issue.
+2. If an agent directive is provided, check that the result is semantically aligned with what THIS agent was asked to do. Only judge against the agent's specific directive, not the full orchestration task. If the code ran successfully but produces something different from the directive, report it as an issue.
 
 Respond with EXACTLY one of:
 - "VERIFIED: <brief description of what was created/modified>" if the result matches what the code intended AND the user's task
@@ -498,7 +498,7 @@ return r;`;
           { role: "system", content: FILE_REVIEW_SYSTEM_PROMPT },
           {
             role: "user",
-            content: `Code executed:\n\`\`\`js\n${effect.code}\n\`\`\`\n\nFigma canvas diff:\n${verificationSummary}${imageContext}${state.taskDescription ? `\n\nOriginal user task: ${state.taskDescription}` : ""}`,
+            content: `Code executed:\n\`\`\`js\n${effect.code}\n\`\`\`\n\nFigma canvas diff:\n${verificationSummary}${imageContext}${state.lastDirectiveContent ? `\n\nAgent directive (what THIS agent was asked to do): ${state.lastDirectiveContent}` : state.taskDescription ? `\n\nOriginal user task: ${state.taskDescription}` : ""}`,
             images: images.length > 0 ? images : undefined,
           },
         ],
@@ -589,9 +589,10 @@ return r;`;
       parts.push("If your task is complete, call signal_task_complete now.");
     }
 
-    // Intent reminder — keep the original task visible after a few executions
-    if (state.taskDescription && state.stepCount >= 5) {
-      parts.push(`\n[Reminder] Your assigned task: "${state.taskDescription}". Ensure your code aligns with this.`);
+    // Intent reminder — keep the directive visible after a few executions
+    const intentReminder = state.lastDirectiveContent ?? state.taskDescription;
+    if (intentReminder && state.stepCount >= 5) {
+      parts.push(`\n[Reminder] Your assigned directive: "${intentReminder}". Ensure your code aligns with this.`);
     }
 
     parts.push(`---\n${JSON.stringify(execResult)}`);
