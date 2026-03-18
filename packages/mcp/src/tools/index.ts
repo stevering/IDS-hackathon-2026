@@ -26,6 +26,7 @@ import { registerListPageChildrenTool } from "./list-page-children.js"
 import { registerGetConnectedClientsTool } from "./get-connected-clients.js"
 import { registerStartCollabTool } from "./start-collab.js"
 import { registerLookupFigmaDocsTool } from "./lookup-figma-docs.js"
+import { registerLLMInterceptTools } from "./llm-intercept.js"
 
 export function registerAllTools(server: McpServer, userId?: string): void {
   // Investigation tools
@@ -50,4 +51,7 @@ export function registerAllTools(server: McpServer, userId?: string): void {
 
   // Reference tools (no plugin needed)
   registerLookupFigmaDocsTool(server)
+
+  // Dev-only: LLM intercept tools (delegate LLM calls to Claude Code)
+  registerLLMInterceptTools(server, userId)
 }

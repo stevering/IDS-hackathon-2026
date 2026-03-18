@@ -99,6 +99,24 @@ export type LLMToolDefinition = {
 /** Purpose of the LLM call — used by the interceptor to decide overrides. */
 export type LLMCallPurpose = "agent" | "orchestrator" | "code_review" | "file_review";
 
+/** Tracing context for delegate intercepts — tells the responder where the request comes from. */
+export type LLMCallTracing = {
+  /** "classic" (single conversation) or "orchestration" (multi-agent) */
+  conversationType?: "classic" | "orchestration";
+  conversationId?: string;
+  orchestrationId?: string;
+  /** Which agent is making the request (e.g. "#Figma-Desktop-vopope") */
+  agentShortId?: string;
+  /** Current directive the agent is working on */
+  currentDirective?: string;
+  /** Agent step count */
+  stepCount?: number;
+  /** Execution stats */
+  execStats?: { success: number; fail: number };
+  /** User setting: enable LLM call delegation (dev-only) */
+  devLLMDelegation?: boolean;
+};
+
 export type LLMCallParams = {
   messages: LLMMessage[];
   tools?: LLMToolDefinition[];
@@ -110,6 +128,8 @@ export type LLMCallParams = {
   maxTokens?: number;
   /** Call purpose — enables the interceptor to apply per-purpose logic */
   purpose?: LLMCallPurpose;
+  /** Tracing context for delegate intercepts (dev-only) */
+  tracing?: LLMCallTracing;
 };
 
 export type LLMCallResult = {

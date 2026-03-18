@@ -40,7 +40,7 @@ export type OrchestrationSSEEvent =
   | { type: "agent_status_changed"; agentShortId: string; status: AgentViewState["status"] }
   | { type: "agent_report"; agentShortId: string; report: AgentViewState["lastReport"] }
   | { type: "orchestrator_brief"; content: string }
-  | { type: "orchestrator_thinking"; content: string; usage?: TokenUsage }
+  | { type: "orchestrator_thinking"; content: string; usage?: TokenUsage; intercepted?: { action: string; reason: string; originalModel?: string } }
   | { type: "orchestrator_tool_call"; toolName: string; args: Record<string, unknown> }
   | { type: "orchestrator_tool_result"; toolName: string; result: string; isError: boolean }
   | { type: "orchestrator_directive"; agentShortId: string; content: string }

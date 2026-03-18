@@ -265,6 +265,17 @@ async function handleReviewAndExecute(
   // Track execution attempts for progress awareness
   state.codeAttemptCount = (state.codeAttemptCount ?? 0) + 1;
 
+  // Build tracing context for delegate intercepts
+  const tracing = {
+    conversationType: "orchestration" as const,
+    orchestrationId: state.orchestratorWorkflowId,
+    agentShortId: state.agent.shortId,
+    currentDirective: state.lastDirectiveContent,
+    stepCount: state.stepCount,
+    execStats: state.execStats,
+    devLLMDelegation: state.devLLMDelegation,
+  };
+
   // Step 1: Review LLM call (same model, dedicated prompt, no tools)
   const reviewResult = await callLLM({
     messages: [
@@ -275,6 +286,7 @@ async function handleReviewAndExecute(
     model,
     maxTokens: 4096,
     purpose: "code_review",
+    tracing,
   });
 
   // Emit the raw review response with usage inline
@@ -547,6 +559,7 @@ return r;`;
         model,
         maxTokens: 256,
         purpose: "file_review",
+        tracing,
       });
 
       const review = parseFileReviewResponse(fileReviewResult.content);
@@ -767,6 +780,9 @@ export async function agentWorkflow(input: AgentWorkflowInput): Promise<void> {
   const state = createAgentState(input.agent);
   // Store original task for intent pinning (Phase 5 B2 + D1)
   state.taskDescription = input.task;
+  // Dev-only: delegate LLM calls to external responder (from user settings)
+  const userSettings = (input.context as Record<string, unknown>)?.userSettings as Record<string, unknown> | undefined;
+  state.devLLMDelegation = !!(userSettings?.devLLMDelegation);
   let directoryReceived = false;
 
   // ── Signal handlers (fill the mailboxes) ─────────────────────────────────
@@ -849,13 +865,24 @@ export async function agentWorkflow(input: AgentWorkflowInput): Promise<void> {
           tools: effect.tools,
           userId: input.userId,
           model: input.model,
+          purpose: "agent",
+          tracing: {
+            conversationType: "orchestration",
+            orchestrationId: state.orchestratorWorkflowId,
+            agentShortId: state.agent.shortId,
+            currentDirective: state.lastDirectiveContent,
+            stepCount: state.stepCount,
+            execStats: state.execStats,
+            devLLMDelegation: state.devLLMDelegation,
+          },
         });
         const responseEffects = processLLMResponse(
           state,
           llmResult.content,
           llmResult.toolCalls,
           llmResult.reasoning,
-          llmResult.usage
+          llmResult.usage,
+          llmResult.intercepted
         );
 
         // Emit activities first so tool_call events arrive before their pipeline children
@@ -911,8 +938,20 @@ async function executeLLMLoop(
   let maxIterations = 200;
 
   while (maxIterations-- > 0 && !state.completed) {
-    const llmResult = await callLLM({ messages, tools, userId, model });
-    const effects = processLLMResponse(state, llmResult.content, llmResult.toolCalls, llmResult.reasoning, llmResult.usage);
+    const llmResult = await callLLM({
+      messages, tools, userId, model,
+      purpose: "agent",
+      tracing: {
+        conversationType: "orchestration",
+        orchestrationId: state.orchestratorWorkflowId,
+        agentShortId: state.agent.shortId,
+        currentDirective: state.lastDirectiveContent,
+        stepCount: state.stepCount,
+        execStats: state.execStats,
+        devLLMDelegation: state.devLLMDelegation,
+      },
+    });
+    const effects = processLLMResponse(state, llmResult.content, llmResult.toolCalls, llmResult.reasoning, llmResult.usage, llmResult.intercepted);
 
     let needsContinue = false;
     let didExecuteTool = false;

@@ -67,13 +67,29 @@ export async function POST(request: Request) {
     const client = await getTemporalClient();
     const taskQueue = getTaskQueue();
 
+    // Fetch user settings to pass dev flags to the workflow
+    const sb = createServiceClient();
+    let userSettings: Record<string, unknown> = {};
+    try {
+      const { data: settingsRows } = await sb.from("user_settings").select("*").eq("user_id", userId).limit(1);
+      if (settingsRows?.[0]) {
+        userSettings = {
+          developerMode: settingsRows[0].developer_mode ?? false,
+          devLLMDelegation: settingsRows[0].dev_llm_delegation ?? false,
+        };
+      }
+    } catch { /* best-effort */ }
+
     const params: StartOrchestrationParams = {
       userId,
       task,
       targetAgents,
       model,
       maxDurationMs,
-      context,
+      context: {
+        ...context,
+        userSettings,
+      },
     };
 
     log.info("starting orchestration", {
@@ -99,7 +115,7 @@ export async function POST(request: Request) {
     let parentConversationId = conversationId ?? null;
     let orchConversationId: string | null = null;
 
-    const sb = createServiceClient();
+    // sb already created above for settings fetch
     const agentNames = targetAgents.map((a: AgentId) => a.shortId).join(", ");
 
     try {

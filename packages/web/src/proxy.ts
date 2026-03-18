@@ -28,6 +28,7 @@ const PUBLIC_AUTH_ROUTES = [
   "/api/orchestrations",   // Collaborative Agents orchestrations — protected by Supabase auth
   "/api/orchestration",    // Temporal orchestration API — protected by Supabase auth
   "/api/user/settings",    // User collaboration settings — protected by Supabase auth
+  "/api/intercept",        // LLM intercept stream (dev-only) — protected by MCP service key
 ];
 
 function getMcpCodeUrl(request: NextRequest): string | undefined {

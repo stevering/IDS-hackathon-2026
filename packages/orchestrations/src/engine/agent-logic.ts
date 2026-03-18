@@ -74,6 +74,8 @@ export type AgentWorkflowState = {
   consecutiveTextOnlyResponses?: number;
   /** Latest directive content from the orchestrator (used by file review for agent-specific context) */
   lastDirectiveContent?: string;
+  /** User setting: delegate LLM calls to external responder (dev-only) */
+  devLLMDelegation?: boolean;
 };
 
 // ---------------------------------------------------------------------------
@@ -384,7 +386,8 @@ export function processLLMResponse(
   content: string,
   toolCalls?: LLMToolCall[],
   reasoning?: string,
-  usage?: { promptTokens: number; completionTokens: number; totalTokens: number }
+  usage?: { promptTokens: number; completionTokens: number; totalTokens: number },
+  intercepted?: { action: string; reason: string; originalModel?: string }
 ): AgentEffect[] {
   state.messageHistory.push({
     role: "assistant",
@@ -401,13 +404,13 @@ export function processLLMResponse(
 
   // Emit reasoning activity (model internal thinking, e.g. kimi-k2.5)
   if (reasoning?.trim()) {
-    activities.push({ action: "reasoning", content: reasoning, usage });
+    activities.push({ action: "reasoning", content: reasoning, usage, intercepted });
     usageAttached = !!usage;
   }
 
   // Emit thinking activity if there's content
   if (content.trim()) {
-    activities.push({ action: "thinking", content, usage: !usageAttached ? usage : undefined });
+    activities.push({ action: "thinking", content, usage: !usageAttached ? usage : undefined, intercepted: !usageAttached ? intercepted : undefined });
     if (!usageAttached && usage) usageAttached = true;
   }
 

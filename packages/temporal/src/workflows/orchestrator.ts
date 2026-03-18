@@ -373,11 +373,18 @@ async function executeOrchestratorLLMLoop(
   let maxIterations = 10;
 
   while (maxIterations-- > 0) {
+    const userSettings = (state.context as Record<string, unknown>)?.userSettings as Record<string, unknown> | undefined;
     const llmResult = await callLLM({
       messages: currentMessages,
       tools: currentTools,
       userId: params.userId,
       model: params.model,
+      purpose: "orchestrator",
+      tracing: {
+        conversationType: "orchestration",
+        orchestrationId: state.orchestrationId,
+        devLLMDelegation: !!(userSettings?.devLLMDelegation),
+      },
     });
 
     const effects = processOrchestratorLLMResponse(
@@ -385,7 +392,8 @@ async function executeOrchestratorLLMLoop(
       llmResult.content,
       llmResult.toolCalls,
       llmResult.reasoning,
-      llmResult.usage
+      llmResult.usage,
+      llmResult.intercepted
     );
 
     // Separate continuation call_llm from other effects
