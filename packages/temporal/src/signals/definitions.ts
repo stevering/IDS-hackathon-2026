@@ -88,6 +88,9 @@ export const agentDirectorySignal = defineSignal<[AgentDirectoryPayload]>("agent
 /** Plugin disconnected notification */
 export const pluginDisconnectedSignal = defineSignal<[PluginDisconnectedPayload]>("pluginDisconnected");
 
+/** Terminate agent — sent by orchestrator via mark_agent_done */
+export const terminateAgentSignal = defineSignal("terminateAgent");
+
 // ---------------------------------------------------------------------------
 // Query definitions
 // ---------------------------------------------------------------------------

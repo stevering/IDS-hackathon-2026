@@ -75,6 +75,7 @@ export type OrchestratorEffect =
   | { type: "broadcast_to_agents"; excludeShortIds: string[]; content: string; fromAgentId: string }
   | { type: "save_state"; state: OrchestratorState }
   | { type: "cancel_agent"; agentWorkflowId: string }
+  | { type: "terminate_agent"; agentWorkflowId: string }
   | { type: "complete"; result: OrchestrationResult }
   | { type: "emit_event"; event: OrchestrationSSEEvent };
 
@@ -588,6 +589,14 @@ export function processOrchestratorLLMResponse(
         if (resolved) {
           const { key: shortId, agent: agentState } = resolved;
           agentState.status = "completed";
+          agentState.confirmedByAgent = true;
+          // Send terminate signal to the agent workflow so it exits cleanly
+          if (agentState.agent.workflowId) {
+            effects.push({
+              type: "terminate_agent",
+              agentWorkflowId: agentState.agent.workflowId,
+            });
+          }
           effects.push({
             type: "emit_event",
             event: {
@@ -601,7 +610,7 @@ export function processOrchestratorLLMResponse(
             agentShortId: shortId,
             status: "completed",
           });
-          const doneMsg = `Agent ${shortId} marked as done.`;
+          const doneMsg = `Agent ${shortId} marked as done and terminated.`;
           state.messageHistory.push({
             role: "tool",
             content: `${doneMsg}\n---\n${JSON.stringify({ success: true })}`,

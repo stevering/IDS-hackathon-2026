@@ -150,6 +150,15 @@ export function handlePluginDisconnected(state: AgentWorkflowState): void {
   state.disconnected = true;
 }
 
+/**
+ * Terminate the agent workflow. Called when the orchestrator decides
+ * this agent is done (via mark_agent_done). This is the ONLY way
+ * an agent workflow should terminate — agents cannot terminate themselves.
+ */
+export function handleTerminate(state: AgentWorkflowState): void {
+  state.completed = true;
+}
+
 // ---------------------------------------------------------------------------
 // Handle sub-conversation invite
 // ---------------------------------------------------------------------------
@@ -905,17 +914,31 @@ function processToolCall(
         break;
       }
 
-      state.completed = true;
-      activities.push({ action: "tool_call", toolName: tc.name, summary: args.summary ?? "Task completed." });
+      // STANDBY mode: report to orchestrator but do NOT terminate the workflow.
+      // The agent stays alive and can receive new directives.
+      // Only the orchestrator can terminate via mark_agent_done → terminate signal.
+      // Use "in_progress" status so the orchestrator knows the agent is still alive
+      // and can receive more directives (status "completed" would trigger the dead-letter guard).
+      activities.push({ action: "tool_call", toolName: tc.name, summary: args.summary ?? "Directive completed." });
       effects.push({
         type: "report_to_orchestrator",
         report: {
           agentShortId: state.agent.shortId,
-          status: "completed",
-          summary: args.summary ?? "Task completed.",
+          status: "in_progress",
+          summary: `[DIRECTIVE DONE] ${args.summary ?? "Directive completed."} Waiting for next directive.`,
         },
       });
-      effects.push({ type: "complete" });
+      // Reset counters for the next directive
+      state.consecutiveTextOnlyResponses = 0;
+      state.consecutivePipelineFailures = 0;
+      state.lastErrorSignatures = [];
+      // Inject standby message so the agent waits
+      injectToolResult(state, tc.id, JSON.stringify({
+        success: true,
+        message: "Report sent to orchestrator. You are now in STANDBY — wait silently for the next directive. Do NOT call signal_task_complete again until you receive and complete a new task.",
+      }));
+      // Do NOT set state.completed — agent stays alive
+      // Do NOT push { type: "complete" } — workflow continues
       break;
     }
 

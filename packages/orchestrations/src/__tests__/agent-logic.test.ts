@@ -263,7 +263,7 @@ describe("processLLMResponse", () => {
     }
   });
 
-  it("handles signal_task_complete tool call", () => {
+  it("handles signal_task_complete — enters standby (does NOT terminate)", () => {
     const state = createAgentState(makeAgentId());
 
     const effects = processLLMResponse(state, "Done!", [
@@ -274,9 +274,14 @@ describe("processLLMResponse", () => {
       },
     ]);
 
-    expect(state.completed).toBe(true);
+    // Agent stays alive (standby mode) — only orchestrator can terminate
+    expect(state.completed).toBe(false);
     expect(effects.some((e) => e.type === "report_to_orchestrator")).toBe(true);
-    expect(effects.some((e) => e.type === "complete")).toBe(true);
+    expect(effects.some((e) => e.type === "complete")).toBe(false);
+    // Standby message injected
+    const lastMsg = state.messageHistory[state.messageHistory.length - 1];
+    expect(lastMsg.role).toBe("tool");
+    expect(lastMsg.content).toContain("STANDBY");
   });
 
   it("handles send_peer_message tool call", () => {
@@ -354,7 +359,7 @@ describe("processLLMResponse", () => {
     expect(lastMsg.content).toContain("WARNING");
   });
 
-  it("allows signal_task_complete when successes >= failures", () => {
+  it("allows signal_task_complete when successes >= failures (standby)", () => {
     const state = createAgentState(makeAgentId());
     state.execStats = { success: 3, fail: 1 };
 
@@ -362,8 +367,10 @@ describe("processLLMResponse", () => {
       { id: "tc1", name: "signal_task_complete", arguments: { summary: "Done" } },
     ]);
 
-    expect(state.completed).toBe(true);
-    expect(effects.some((e) => e.type === "complete")).toBe(true);
+    // Standby mode — not terminated
+    expect(state.completed).toBe(false);
+    expect(effects.some((e) => e.type === "report_to_orchestrator")).toBe(true);
+    expect(effects.some((e) => e.type === "complete")).toBe(false);
   });
 
   it("handles start_sub_conversation tool call", () => {

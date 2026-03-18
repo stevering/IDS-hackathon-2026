@@ -193,10 +193,10 @@ export type AgentActivity =
   | { action: "code_review_passed"; codeSnippet: string }
   | { action: "code_review_llm_approved"; codeSnippet: string }
   | { action: "code_review_llm_rejected"; issues: string; codeSnippet: string }
-  | { action: "code_review_llm_response"; response: string; reasoning?: string; usage?: TokenUsage }
+  | { action: "code_review_llm_response"; response: string; reasoning?: string; usage?: TokenUsage; intercepted?: { action: string; reason: string; originalModel?: string } }
   | { action: "code_executed"; success: boolean; summary: string }
   | { action: "code_verified"; selection: string }
-  | { action: "file_review_llm_response"; verdict: string; status: "verified" | "issue"; code: string; diff: string; hasScreenshots: boolean; beforeScreenshot?: string; afterScreenshot?: string; rawResponse: string; usage?: TokenUsage }
+  | { action: "file_review_llm_response"; verdict: string; status: "verified" | "issue"; code: string; diff: string; hasScreenshots: boolean; beforeScreenshot?: string; afterScreenshot?: string; rawResponse: string; usage?: TokenUsage; intercepted?: { action: string; reason: string; originalModel?: string } }
   | { action: "guardian_message"; recipient: string; message: string };
 
 export type AgentActivityPayload = {

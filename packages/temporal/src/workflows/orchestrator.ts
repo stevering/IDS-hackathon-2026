@@ -55,6 +55,7 @@ import {
   agentActivitySignal,
   statusQuery,
   directiveSignal,
+  terminateAgentSignal,
   agentDirectorySignal,
   agentBroadcastSignal,
 } from "../signals/definitions.js";
@@ -432,6 +433,16 @@ async function executeEffects(
         try {
           const handle = getExternalWorkflowHandle(effect.agentWorkflowId);
           await handle.cancel();
+        } catch {
+          // Agent workflow may have already completed
+        }
+        break;
+      }
+
+      case "terminate_agent": {
+        try {
+          const handle = getExternalWorkflowHandle(effect.agentWorkflowId);
+          await handle.signal(terminateAgentSignal);
         } catch {
           // Agent workflow may have already completed
         }

@@ -12,6 +12,23 @@ import { FIGMA_API_QUICK_REFERENCE } from "./figma-api-reference.js";
 // Orchestrator system prompt
 // ---------------------------------------------------------------------------
 
+/**
+ * Agent-type-specific hints injected into the orchestrator prompt.
+ * Each hint teaches the orchestrator how to work with a specific agent type
+ * without coupling the generic orchestration logic to any domain.
+ */
+const FIGMA_PLUGIN_ORCHESTRATOR_HINTS = `
+### Figma plugin agents
+- These agents create visual elements in Figma step by step. Each step may return a node ID (e.g., "123:456").
+- Include SPECIFIC visual values in directives: dimensions, colors (hex), spacing, font sizes — do not leave visual decisions to the agent.
+- Reference node IDs from previous reports in follow-up directives so the agent can build on existing work.
+- NEVER write or execute Figma code yourself — agents do the work.
+- Example directive sequence:
+  1. "Create the root container frame: 1200x900, white, vertical auto-layout, 40px spacing"
+  2. (after report with ID) "Add a color palette to container 123:456 with Primary #2563EB, Secondary #7C3AED"`;
+
+// Future: add WEB_ORCHESTRATOR_HINTS, CLOUD_ORCHESTRATOR_HINTS, etc.
+
 export function buildOrchestratorSystemPrompt(
   task: string,
   agents: AgentId[]
@@ -19,6 +36,17 @@ export function buildOrchestratorSystemPrompt(
   const agentList = agents
     .map((a) => `- ${a.shortId} (${a.label}${a.fileName ? `, file: ${a.fileName}` : ""}, type: ${a.type})`)
     .join("\n");
+
+  // Build agent-type-specific hints based on which types are present
+  const agentTypes = new Set(agents.map((a) => a.type));
+  const typeHints: string[] = [];
+  if (agentTypes.has("figma-plugin")) {
+    typeHints.push(FIGMA_PLUGIN_ORCHESTRATOR_HINTS);
+  }
+  // Future: if (agentTypes.has("web")) typeHints.push(WEB_ORCHESTRATOR_HINTS);
+  const typeHintsSection = typeHints.length > 0
+    ? `\n## Agent-specific guidance\n${typeHints.join("\n")}`
+    : "";
 
   return `You are the orchestrator of a multi-agent collaboration session.
 
@@ -43,27 +71,28 @@ ${agentList}
 ## Directive sizing
 Each directive should describe ONE verifiable unit of work — not an entire project.
 
-For complex tasks (e.g., "create a design system"), use SEQUENTIAL directives:
-1. Send a first directive for the foundational element (e.g., "Create a root container frame for the design system: 1200x900, white background, vertical auto-layout, 40px item spacing, 32px padding on all sides")
-2. WAIT for the agent's report — it will include the created node ID
-3. Send the next directive referencing that ID: "Add a color palette section to container ID 123:456 with 5 theme colors: Primary #2563EB, Secondary #7C3AED, Success #22C55E, Warning #F59E0B, Error #EF4444"
-4. Continue this pattern for each section
+For complex tasks, use SEQUENTIAL directives:
+1. Send a first directive for the foundational step
+2. WAIT for the agent's report — it may include resource identifiers for follow-up
+3. Send the next directive, referencing outputs from the previous report
+4. Continue this pattern for each step
 
 Key principles:
-- Include SPECIFIC values in directives: dimensions, colors (hex), spacing, font sizes — do not leave visual decisions to the agent
-- One directive = one section or component. If the agent finishes it successfully, send the next one.
-- If the agent reports failure, send a SIMPLER version (fewer elements, basic layout) — do NOT repeat the same directive
+- Be SPECIFIC in directives: include concrete values, not vague instructions
+- One directive = one verifiable deliverable
+- If the agent reports failure, send a SIMPLER version — do NOT repeat the same directive
+${typeHintsSection}
 
 ## Rules
 - ALWAYS use tools to communicate — do NOT write [DIRECTIVE] or [AGENT_DONE] in text
 - Assign work to ALL agents when starting — each agent should have a clear, specific task
 - After sending initial directives to all agents, STOP calling tools and respond with a short acknowledgment. The system will notify you when agents report back. Do NOT re-send directives to agents that already received one.
 - Only send follow-up directives AFTER receiving an agent report that indicates the work is incomplete
-- NEVER execute Figma code yourself — agents do the work
+- NEVER perform agent-specific actions yourself — agents do the work
 - Be concise in your coordination messages — 1-2 SHORT sentences max. No emojis, no celebrations, no congratulations.
 - If an agent reports INTERRUPTED, acknowledge it and adjust the plan
-- When an agent reports completion, read their summary for created node IDs (e.g., "123:456"). Include these IDs in follow-up directives so the agent can reference existing nodes.
-- If an agent reports failure, send a simpler version of the task — fewer elements, basic structure only — rather than repeating the exact same directive
+- When an agent reports completion, read their summary for resource identifiers. Include these in follow-up directives so the agent can reference previous work.
+- If an agent reports failure, send a simpler version of the task rather than repeating the exact same directive
 - When an agent report says the work is done/complete/terminé/finished, IMMEDIATELY call mark_agent_done. Do NOT respond with text — use the tool.
 - If an agent sends 3+ consecutive "in_progress" reports without executing code, call mark_agent_done to unblock the orchestration.`;
 }
@@ -197,13 +226,17 @@ ${FIGMA_API_QUICK_REFERENCE}`
   const selfId = agent.shortId.startsWith("#") ? agent.shortId : `#${agent.shortId}`;
   const orchId = orchestratorShortId.startsWith("#") ? orchestratorShortId : `#${orchestratorShortId}`;
 
+  // NOTE: The full task is intentionally NOT included in the agent prompt.
+  // Agents should only work on directives sent by the orchestrator, not the global task.
+  // This prevents agents from reading ahead and executing steps before the orchestrator assigns them.
   const taskSection = task
     ? `
-## Collaboration task
-${task}
-
-The orchestrator will send you a specific directive for your part of this task.
-DO NOT start working until you receive a directive. Wait SILENTLY — do not broadcast status messages while waiting.`
+## Collaboration
+You are part of a multi-agent orchestration. The orchestrator will send you specific directives one at a time.
+- Do NOT start working until you receive a directive
+- Execute ONLY what the directive asks — nothing more
+- After completing a directive, call signal_task_complete and wait for the next one
+- Wait SILENTLY between directives — do not broadcast status messages`
     : "";
 
   return `You are agent ${selfId} in a multi-agent collaboration.

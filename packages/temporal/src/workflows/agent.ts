@@ -21,6 +21,7 @@ import {
   handleSubConvMessage,
   handleAgentDirectory,
   handlePluginDisconnected,
+  handleTerminate,
   handleSubConvInvite,
   handleSubConvClose,
   processQueues,
@@ -46,6 +47,7 @@ import {
   subConvResponseSignal,
   agentDirectorySignal,
   pluginDisconnectedSignal,
+  terminateAgentSignal,
   agentReportSignal,
   subConvNotifySignal,
   guardrailBlockedSignal,
@@ -154,6 +156,8 @@ IMPORTANT about the diff:
 - Do NOT report ISSUE just because you only see one frame added. Check the descendantCount to see if it contains the expected content.
 - A frame with descendantCount: 50 that the code intended to fill with sections, colors, text etc. is likely correct.
 - If the code ends with \`return node.id;\` or \`return frame.id;\`, this is a STEP 1 (container creation). An empty container with childCount:0 is EXPECTED — do NOT report ISSUE for this.
+- The "modified" array tracks property changes on existing nodes: name, size, fills, and child count. If the code modifies properties on a node and the modified array shows the changes, that confirms the code worked.
+- If the code modifies NESTED nodes (inside a frame), the top-level diff may show no changes. This is NORMAL — trust the execution success status. Do NOT report ISSUE just because the diff shows no top-level changes when the code operates on nested nodes.
 
 Your job:
 1. Assess whether the execution result looks correct based on what the code intended to do.
@@ -270,6 +274,7 @@ async function handleReviewAndExecute(
     userId,
     model,
     maxTokens: 4096,
+    purpose: "code_review",
   });
 
   // Emit the raw review response with usage inline
@@ -280,6 +285,7 @@ async function handleReviewAndExecute(
       response: reviewResult.content,
       reasoning: reviewResult.reasoning,
       usage: reviewResult.usage,
+      intercepted: reviewResult.intercepted,
     }],
   }, userId);
 
@@ -336,10 +342,26 @@ async function handleReviewAndExecute(
 
   // Step 2: Snapshot BEFORE — list all node IDs + their child counts + capture screenshot
   const clientId = effect.pluginClientId || state.agent.pluginClientId || "";
-  const snapshotCode = `return JSON.stringify(figma.currentPage.children.map(n => ({ id: n.id, childCount: 'children' in n ? n.children.length : 0 })));`;
+  const snapshotCode = `return JSON.stringify(figma.currentPage.children.map(n => ({
+  id: n.id,
+  name: n.name,
+  childCount: 'children' in n ? n.children.length : 0,
+  width: Math.round(n.width),
+  height: Math.round(n.height),
+  fillHash: 'fills' in n ? JSON.stringify(n.fills).slice(0, 100) : '',
+})));`;
   let beforeIds: string[] = [];
-  let beforeChildCounts: Record<string, number> = {};
+  let beforeNodeProps: Record<string, { name: string; childCount: number; width: number; height: number; fillHash: string }> = {};
   let beforeScreenshot: string | undefined;
+
+  // Determine screenshot target: parent node if code references one, otherwise full page
+  // This ensures before/after screenshots are always of the SAME node
+  const parentIdMatch = effect.code.match(/getNodeByIdAsync\s*\(\s*["'](\d+:\d+)["']\s*\)/);
+  const screenshotTargetId = parentIdMatch?.[1]; // e.g. "400:703" or undefined
+
+  // Detect if agent code uses scrollAndZoomIntoView (affects viewport, not node exports)
+  const codeHasScroll = /scrollAndZoomIntoView|scrollIntoView/.test(effect.code);
+
   try {
     const beforeResult = await executeFigmaCode({
       pluginClientId: clientId, userId, code: snapshotCode,
@@ -348,13 +370,21 @@ async function handleReviewAndExecute(
     if (beforeResult.success && beforeResult.result) {
       const parsed = JSON.parse(String(beforeResult.result));
       beforeIds = parsed.map((n: { id: string }) => n.id);
-      beforeChildCounts = Object.fromEntries(
-        parsed.map((n: { id: string; childCount: number }) => [n.id, n.childCount])
+      beforeNodeProps = Object.fromEntries(
+        parsed.map((n: { id: string; name: string; childCount: number; width: number; height: number; fillHash: string }) =>
+          [n.id, { name: n.name, childCount: n.childCount, width: n.width, height: n.height, fillHash: n.fillHash }]
+        )
       );
     }
-    // Capture screenshot only if page has content (avoid empty export)
-    if (beforeIds.length > 0) {
-      const screenshotCode = `const bytes = await figma.currentPage.exportAsync({ format: 'PNG', constraint: { type: 'SCALE', value: 0.25 } });
+    // Capture screenshot — on target node if known, otherwise full page
+    const canCapture = screenshotTargetId || beforeIds.length > 0;
+    if (canCapture) {
+      const exportTarget = screenshotTargetId
+        ? `await figma.getNodeByIdAsync("${screenshotTargetId}")`
+        : `figma.currentPage`;
+      const screenshotCode = `const target = ${exportTarget};
+if (!target) return null;
+const bytes = await target.exportAsync({ format: 'PNG', constraint: { type: 'SCALE', value: 0.25 } });
 const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
 let r = '';
 for (let i = 0; i < bytes.length; i += 3) {
@@ -398,9 +428,9 @@ return r;`;
   if (execResult.success) {
     try {
       const beforeSet = JSON.stringify(beforeIds);
-      const beforeCounts = JSON.stringify(beforeChildCounts);
+      const prevProps = JSON.stringify(beforeNodeProps);
       const diffCode = `const before = new Set(${beforeSet});
-const prevCounts = ${beforeCounts};
+const prevProps = ${prevProps};
 const children = figma.currentPage.children;
 const added = children.filter(n => !before.has(n.id));
 const removed = ${beforeSet}.filter(id => !children.find(n => n.id === id));
@@ -420,12 +450,18 @@ const describe = n => ({
 });
 const modified = [];
 for (const n of children) {
-  if (before.has(n.id) && 'children' in n) {
-    const prev = prevCounts[n.id] || 0;
-    const curr = n.children.length;
-    if (curr !== prev) {
-      modified.push({ id: n.id, name: n.name, childrenBefore: prev, childrenAfter: curr });
-    }
+  if (!before.has(n.id)) continue;
+  const prev = prevProps[n.id];
+  if (!prev) continue;
+  const changes = [];
+  const currChildCount = 'children' in n ? n.children.length : 0;
+  if (currChildCount !== prev.childCount) changes.push('children: ' + prev.childCount + '→' + currChildCount);
+  if (n.name !== prev.name) changes.push('name: ' + prev.name + '→' + n.name);
+  if (Math.round(n.width) !== prev.width || Math.round(n.height) !== prev.height) changes.push('size: ' + prev.width + 'x' + prev.height + '→' + Math.round(n.width) + 'x' + Math.round(n.height));
+  const currFillHash = 'fills' in n ? JSON.stringify(n.fills).slice(0, 100) : '';
+  if (currFillHash !== prev.fillHash) changes.push('fills changed');
+  if (changes.length > 0) {
+    modified.push({ id: n.id, name: n.name, changes: changes });
   }
 }
 return JSON.stringify({
@@ -455,11 +491,16 @@ return JSON.stringify({
 
   await notifyGuardrailIfBlocked(execResult, state);
 
-  // Step 5: Capture AFTER screenshot (best-effort)
+  // Step 5: Capture AFTER screenshot — same target node as BEFORE for reliable binary comparison
   let afterScreenshot: string | undefined;
   if (execResult.success) {
     try {
-      const screenshotCode = `const bytes = await figma.currentPage.exportAsync({ format: 'PNG', constraint: { type: 'SCALE', value: 0.25 } });
+      const exportTarget = screenshotTargetId
+        ? `await figma.getNodeByIdAsync("${screenshotTargetId}")`
+        : `figma.currentPage`;
+      const screenshotCode = `const target = ${exportTarget};
+if (!target) return null;
+const bytes = await target.exportAsync({ format: 'PNG', constraint: { type: 'SCALE', value: 0.25 } });
 const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
 let r = '';
 for (let i = 0; i < bytes.length; i += 3) {
@@ -505,6 +546,7 @@ return r;`;
         userId,
         model,
         maxTokens: 256,
+        purpose: "file_review",
       });
 
       const review = parseFileReviewResponse(fileReviewResult.content);
@@ -524,6 +566,7 @@ return r;`;
           afterScreenshot: afterScreenshot,
           rawResponse: fileReviewResult.content,
           usage: fileReviewResult.usage,
+          intercepted: fileReviewResult.intercepted,
         }],
       }, userId);
     } catch {
@@ -531,9 +574,74 @@ return r;`;
     }
   }
 
-  // Inject result as tool result — include file review verdict so the agent understands what happened
+  // ---------------------------------------------------------------------------
+  // Programmatic gate: detect "nothing happened" using diff + binary screenshot comparison
+  // This runs BEFORE trusting the LLM file review verdict.
+  // ---------------------------------------------------------------------------
+
+  let diffEmpty = false;
+  if (verificationSummary) {
+    try {
+      const diff = JSON.parse(verificationSummary);
+      diffEmpty = (!diff.added || diff.added.length === 0)
+        && (!diff.modified || diff.modified.length === 0)
+        && (diff.removedCount ?? 0) === 0;
+    } catch { /* best-effort */ }
+  } else {
+    diffEmpty = true;
+  }
+
+  const hasScreenshots = !!(beforeScreenshot && afterScreenshot);
+  // Binary comparison is reliable when: same target node AND no scrollAndZoomIntoView in code
+  const canBinaryCompare = hasScreenshots && !codeHasScroll;
+  const screenshotsIdentical = canBinaryCompare && beforeScreenshot === afterScreenshot;
+  const screenshotsDifferent = canBinaryCompare && beforeScreenshot !== afterScreenshot;
+
+  // Decision matrix (programmatic, no LLM involved):
+  // | Diff   | Screenshots         | Action                                    |
+  // |--------|---------------------|-------------------------------------------|
+  // | empty  | identical or N/A    | REJECT — nothing happened (pipeline fail) |
+  // | empty  | different           | Trust file review (nested changes likely)  |
+  // | filled | any                 | Trust file review                         |
+  const nothingHappened = execResult.success && diffEmpty && !screenshotsDifferent;
+
+  // Inject result as tool result
   let execResultJson: string;
-  if (execResult.success) {
+  if (nothingHappened) {
+    // REJECT: code ran without error but produced no visible change on canvas
+    const rejectParts = [
+      "Execution completed but NOTHING CHANGED on the canvas.",
+      "The diff is empty and the before/after screenshots are identical.",
+      "This usually means your code did an early return (e.g. a node was not found).",
+      "Check that all node IDs are correct and that you are creating/modifying nodes, not just looking them up.",
+    ];
+    if (verificationSummary) rejectParts.push(`\nCanvas diff:\n${verificationSummary}`);
+    if (fileReviewVerdict) rejectParts.push(`\nFile review said: ${fileReviewVerdict}`);
+
+    const escalation = recordPipelineFailure(state, "Nothing changed on canvas (empty diff + identical screenshots)");
+    if (escalation) rejectParts.push(`\n${escalation}`);
+
+    rejectParts.push(`---\n${JSON.stringify({ success: false, error: "No visible changes on canvas" })}`);
+    execResultJson = rejectParts.join("\n");
+
+    // Collect screenshots for the tool result
+    const toolImages: string[] = [];
+    if (beforeScreenshot) toolImages.push(beforeScreenshot);
+    if (afterScreenshot) toolImages.push(afterScreenshot);
+
+    await executeEffect(state, {
+      type: "emit_activity",
+      activities: [{
+        action: "guardian_message" as const,
+        recipient: `agent ${state.agent.shortId}`,
+        message: execResultJson,
+      }],
+    }, userId);
+
+    injectToolResult(state, effect.toolCallId, execResultJson, toolImages.length > 0 ? toolImages : undefined);
+    recordExecResult(state, false); // count as failure
+    return;
+  } else if (execResult.success) {
     const successCount = state.execStats.success + 1; // +1 because recordExecResult hasn't been called yet
     const parts = [
       `Execution succeeded. (${successCount} successful execution${successCount > 1 ? "s" : ""} so far)`,
@@ -544,7 +652,7 @@ return r;`;
     if (verificationSummary) {
       parts.push(`\nCanvas diff:\n${verificationSummary}`);
 
-      // Phase 6 (C3): Extract and expose created node IDs for inter-step references
+      // Extract and expose created node IDs for inter-step references
       try {
         const diff = JSON.parse(verificationSummary);
         if (diff.added?.length > 0) {
@@ -558,35 +666,33 @@ return r;`;
     if (fileReviewVerdict) {
       if (fileReviewStatus === "verified") {
         parts.push(`\nFile review: VERIFIED — ${fileReviewVerdict}`);
-        parts.push("If your task is complete, call signal_task_complete now.");
-        // Reset ALL failure tracking on verified success
+        parts.push("If this step completes your current directive, call signal_task_complete. The orchestrator may send you more work.");
         state.consecutiveFileReviewIssues = 0;
         resetPipelineFailures(state);
       } else {
-        // Track consecutive issues to detect loops
+        // File review ISSUE but content exists on canvas → warning only
         const consecutiveIssues = (state.consecutiveFileReviewIssues ?? 0) + 1;
         state.consecutiveFileReviewIssues = consecutiveIssues;
 
-        parts.push(`\nFile review: ISSUE — ${fileReviewVerdict}`);
+        parts.push(`\nFile review: WARNING — ${fileReviewVerdict}`);
 
-        // Circuit breaker for file review issues
-        const escalation = recordPipelineFailure(state, fileReviewVerdict);
-        if (escalation) {
-          parts.push(escalation);
-        } else if (consecutiveIssues >= 3) {
+        if (consecutiveIssues >= 3) {
           parts.push(
-            "WARNING: You have received the same ISSUE feedback multiple times. " +
-            "Do NOT retry the same code. Try a DIFFERENT approach, or if you believe " +
-            "the task is actually done, call signal_task_complete."
+            "The file reviewer has flagged your last 3 executions. " +
+            "Your code ran successfully each time, but the results may not match your directive. " +
+            "Re-read your directive carefully, or call signal_task_complete if you believe the work is done."
           );
         } else {
-          parts.push("Look at the before/after screenshots to understand what went wrong. Fix the issue and retry with different code.");
+          parts.push("Note: the code executed successfully. The reviewer flagged a possible mismatch with your directive. Check if this is expected, then continue with your plan.");
         }
+
+        // Execution succeeded with visible changes — reset pipeline failures
+        resetPipelineFailures(state);
       }
     } else {
       // No file review — still a success, reset pipeline failures
       resetPipelineFailures(state);
-      parts.push("If your task is complete, call signal_task_complete now.");
+      parts.push("If this step completes your current directive, call signal_task_complete. The orchestrator may send you more work.");
     }
 
     // Intent reminder — keep the directive visible after a few executions
@@ -698,6 +804,10 @@ export async function agentWorkflow(input: AgentWorkflowInput): Promise<void> {
 
   setHandler(subConvCloseSignal, (close) => {
     handleSubConvClose(state, close);
+  });
+
+  setHandler(terminateAgentSignal, () => {
+    handleTerminate(state);
   });
 
   // ── Wait for directory ───────────────────────────────────────────────────

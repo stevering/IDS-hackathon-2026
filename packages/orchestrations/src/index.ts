@@ -40,6 +40,7 @@ export {
   handleSubConvMessage,
   handleAgentDirectory,
   handlePluginDisconnected,
+  handleTerminate,
   handleSubConvInvite,
   handleSubConvClose,
   processQueues,

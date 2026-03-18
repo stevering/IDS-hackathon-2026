@@ -96,6 +96,9 @@ export type LLMToolDefinition = {
   parameters: Record<string, unknown>;
 };
 
+/** Purpose of the LLM call — used by the interceptor to decide overrides. */
+export type LLMCallPurpose = "agent" | "orchestrator" | "code_review" | "file_review";
+
 export type LLMCallParams = {
   messages: LLMMessage[];
   tools?: LLMToolDefinition[];
@@ -105,6 +108,8 @@ export type LLMCallParams = {
   userId: string;
   /** Max tokens for the response */
   maxTokens?: number;
+  /** Call purpose — enables the interceptor to apply per-purpose logic */
+  purpose?: LLMCallPurpose;
 };
 
 export type LLMCallResult = {
@@ -117,6 +122,12 @@ export type LLMCallResult = {
     promptTokens: number;
     completionTokens: number;
     totalTokens: number;
+  };
+  /** Set when the interceptor modified the call (e.g. changed model, auto-approved) */
+  intercepted?: {
+    action: string;
+    reason: string;
+    originalModel?: string;
   };
 };
 
