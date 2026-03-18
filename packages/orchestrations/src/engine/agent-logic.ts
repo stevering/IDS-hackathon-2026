@@ -78,6 +78,8 @@ export type AgentWorkflowState = {
   devLLMDelegation?: boolean;
   /** User setting: slow delegation mode with extended timeouts (dev-only) */
   devSlowDelegation?: boolean;
+  /** Agent is in standby — waiting for next directive, no LLM calls */
+  inStandby?: boolean;
 };
 
 // ---------------------------------------------------------------------------
@@ -128,6 +130,8 @@ export function createAgentState(agent: AgentId): AgentWorkflowState {
 
 export function handleDirective(state: AgentWorkflowState, directive: DirectivePayload): void {
   state.directiveQueue.push(directive);
+  // Exit standby when a new directive arrives
+  state.inStandby = false;
   // Store the latest directive content — used by file review instead of the global task
   // so the reviewer judges against what THIS agent was asked to do, not the full orchestration task
   state.lastDirectiveContent = directive.content;
@@ -522,8 +526,11 @@ export function processLLMResponse(
     effects.push({ type: "emit_activity", activities });
   }
 
+  // If in standby, wait silently for the next directive (no LLM call)
+  if (state.inStandby) {
+    effects.push({ type: "wait_for_input" });
   // If not completed and under step limit, continue LLM loop
-  if (!state.completed && state.stepCount < MAX_STEPS) {
+  } else if (!state.completed && state.stepCount < MAX_STEPS) {
     effects.push({
       type: "call_llm",
       messages: [...state.messageHistory],
@@ -741,7 +748,7 @@ export function findUndeclaredMemberAccess(ast: acorn.Node): Set<string> {
  * This is a structural gate — it catches known LLM mistakes early so
  * the agent doesn't waste steps on code that will always fail.
  */
-/** Maximum lines per figma_plugin_execute call. Enforced by the linter. */
+/** Default maximum lines per figma_plugin_execute call. Can be overridden per-call via reviewFigmaCode(code, maxLines). */
 export const MAX_CODE_LINES = 150;
 
 /** Known-invalid Figma properties that LLMs commonly hallucinate, with the correct alternative. */
@@ -760,15 +767,16 @@ export const INVALID_PROPERTY_FIXES: Record<string, string> = {
   backgrounds: "Use .fills instead (FrameNode has no .backgrounds property)",
 };
 
-export function reviewFigmaCode(code: string): string[] {
+export function reviewFigmaCode(code: string, maxLines?: number): string[] {
   const issues: string[] = [];
+  const effectiveMaxLines = maxLines ?? MAX_CODE_LINES;
 
   // Rule 0a: Code length enforcement — prevent monolithic code blocks
   {
     const lineCount = code.split("\n").length;
-    if (lineCount > MAX_CODE_LINES) {
+    if (lineCount > effectiveMaxLines) {
       issues.push(
-        `Code is ${lineCount} lines (max ${MAX_CODE_LINES}). ` +
+        `Code is ${lineCount} lines (max ${effectiveMaxLines}). ` +
         `Break this into multiple smaller figma_plugin_execute calls. ` +
         `Create the container first, then populate sections in separate calls ` +
         `using await figma.getNodeByIdAsync("node-id") to reference previously created nodes.`
@@ -899,7 +907,7 @@ function processToolCall(
 
   switch (tc.name) {
     case "signal_task_complete": {
-      const args = tc.arguments as { summary?: string };
+      const args = tc.arguments as { summary?: string; artifacts?: { nodeIds?: string[] } };
 
       // Guard: block completion if more failures than successes
       if (state.execStats.fail > 0 && state.execStats.fail > state.execStats.success) {
@@ -925,22 +933,27 @@ function processToolCall(
       // Use "in_progress" status so the orchestrator knows the agent is still alive
       // and can receive more directives (status "completed" would trigger the dead-letter guard).
       activities.push({ action: "tool_call", toolName: tc.name, summary: args.summary ?? "Directive completed." });
+      const artifactsSuffix = args.artifacts?.nodeIds?.length
+        ? ` [nodeIds: ${args.artifacts.nodeIds.join(", ")}]`
+        : "";
       effects.push({
         type: "report_to_orchestrator",
         report: {
           agentShortId: state.agent.shortId,
           status: "in_progress",
-          summary: `[DIRECTIVE DONE] ${args.summary ?? "Directive completed."} Waiting for next directive.`,
+          summary: `[DIRECTIVE DONE] ${args.summary ?? "Directive completed."}${artifactsSuffix} Waiting for next directive.`,
+          artifacts: args.artifacts,
         },
       });
       // Reset counters for the next directive
       state.consecutiveTextOnlyResponses = 0;
       state.consecutivePipelineFailures = 0;
       state.lastErrorSignatures = [];
-      // Inject standby message so the agent waits
+      // Enter standby — no more LLM calls until a new directive arrives
+      state.inStandby = true;
       injectToolResult(state, tc.id, JSON.stringify({
         success: true,
-        message: "Report sent to orchestrator. You are now in STANDBY — wait silently for the next directive. Do NOT call signal_task_complete again until you receive and complete a new task.",
+        message: "Report sent to orchestrator. Entering standby.",
       }));
       // Do NOT set state.completed — agent stays alive
       // Do NOT push { type: "complete" } — workflow continues
@@ -1111,11 +1124,18 @@ function getAgentTools(state: AgentWorkflowState): LLMToolDefinition[] {
   const tools: LLMToolDefinition[] = [
     {
       name: "signal_task_complete",
-      description: "Signal that you have completed your assigned task. Call this when your work is done.",
+      description: "Signal that you have completed your assigned task. Call this when your work is done. Include created node IDs in artifacts so the orchestrator can reference them in follow-up directives.",
       parameters: {
         type: "object",
         properties: {
           summary: { type: "string", description: "Summary of the work completed" },
+          artifacts: {
+            type: "object",
+            description: "Structured data about what was created — node IDs, resource identifiers, etc.",
+            properties: {
+              nodeIds: { type: "array", items: { type: "string" }, description: "Figma node IDs created (e.g. ['484:985'])" },
+            },
+          },
         },
       },
     },

@@ -107,6 +107,7 @@ async function delegateToExternal(
 ): Promise<LLMCallResult> {
   // Slow delegation: 30 min timeout for interactive use; normal: 120s
   const timeoutMs = params.tracing?.devSlowDelegation ? 30 * 60_000 : 120_000;
+  const tablePollMs = 2_000; // Poll the table every 2s for SQL-based responses
   const log = createLogger("llm-delegate", {
     u: params.userId.slice(0, 8),
     purpose: params.purpose ?? "unknown",
@@ -127,40 +128,119 @@ async function delegateToExternal(
 
   log.info("delegating LLM call to external responder", { req: requestId, model: params.model, timeout: timeoutMs });
 
+  // Step 1: INSERT into intercept_queue (persistent storage)
+  try {
+    await supabase.from("intercept_queue").insert({
+      request_id: requestId,
+      user_id: params.userId,
+      conversation_type: params.tracing?.conversationType ?? null,
+      conversation_id: params.tracing?.conversationId ?? null,
+      orchestration_id: params.tracing?.orchestrationId ?? null,
+      agent_short_id: params.tracing?.agentShortId ?? null,
+      agent_workflow_id: null, // TODO: pass from tracing when available
+      agent_type: null,
+      agent_label: null,
+      agent_file_name: null,
+      purpose: params.purpose ?? "unknown",
+      model: params.model ?? null,
+      current_directive: params.tracing?.currentDirective ?? null,
+      step_count: params.tracing?.stepCount ?? null,
+      exec_stats: params.tracing?.execStats ?? null,
+      status: "pending",
+      request_payload: {
+        messages: params.messages,
+        tools: params.tools,
+        maxTokens: params.maxTokens,
+      },
+    });
+  } catch (insertErr) {
+    log.warn("failed to INSERT into intercept_queue (non-fatal)", { error: String(insertErr) });
+    // Continue — the broadcast will still work for MCP/SSE responders
+  }
+
+  // Step 2: Subscribe to Realtime + broadcast request + poll table
   return new Promise<LLMCallResult>((resolve) => {
     let settled = false;
+    let tablePoller: ReturnType<typeof setInterval> | null = null;
+
+    function handleResponse(data: { content?: string; toolCalls?: unknown; respondedBy?: string }) {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      log.info("received delegate response", {
+        req: requestId,
+        contentLen: data.content?.length ?? 0,
+        hasToolCalls: !!data.toolCalls,
+        via: data.respondedBy ?? "realtime",
+      });
+      resolve({
+        content: data.content ?? "",
+        toolCalls: data.toolCalls as LLMCallResult["toolCalls"],
+        intercepted: {
+          action: "delegated",
+          reason: `Delegated to external responder (${params.purpose})`,
+          originalModel: params.model,
+        },
+      });
+    }
 
     const timer = setTimeout(() => {
       if (!settled) {
         settled = true;
         cleanup();
+        // Mark as expired in table
+        supabase.from("intercept_queue")
+          .update({ status: "expired", expired_at: new Date().toISOString() })
+          .eq("request_id", requestId)
+          .then(() => {});
         log.warn("delegate timed out — falling back to passthrough", { req: requestId });
-        // Fallback: call the LLM directly on timeout
         callLLMDirect(params).then(resolve);
       }
     }, timeoutMs);
 
     function cleanup() {
       clearTimeout(timer);
+      if (tablePoller) clearInterval(tablePoller);
       channel.unsubscribe();
     }
 
+    // Poll the table for SQL-based responses (e.g. from Claude Code execute_sql)
+    tablePoller = setInterval(async () => {
+      if (settled) return;
+      try {
+        const { data: rows } = await supabase
+          .from("intercept_queue")
+          .select("response_content, response_tool_calls, responded_by")
+          .eq("request_id", requestId)
+          .eq("status", "responded")
+          .limit(1);
+        if (rows?.[0]) {
+          handleResponse({
+            content: rows[0].response_content,
+            toolCalls: rows[0].response_tool_calls,
+            respondedBy: rows[0].responded_by ?? "sql",
+          });
+        }
+      } catch { /* best-effort polling */ }
+    }, tablePollMs);
+
+    // Listen for Realtime broadcast responses (from MCP tools)
     channel
       .on("broadcast", { event: "intercept_response" }, (payload) => {
         const data = payload.payload;
-        if (data?.requestId === requestId && !settled) {
-          settled = true;
-          cleanup();
-          log.info("received delegate response", { req: requestId, contentLen: data.content?.length ?? 0, hasToolCalls: !!data.toolCalls });
-          resolve({
-            content: data.content ?? "",
-            toolCalls: data.toolCalls,
-            intercepted: {
-              action: "delegated",
-              reason: `Delegated to external responder (${params.purpose})`,
-              originalModel: params.model,
-            },
-          });
+        if (data?.requestId === requestId) {
+          // Also update the table so it's consistent
+          supabase.from("intercept_queue")
+            .update({
+              status: "responded",
+              response_content: data.content,
+              response_tool_calls: data.toolCalls,
+              responded_by: "realtime",
+              responded_at: new Date().toISOString(),
+            })
+            .eq("request_id", requestId)
+            .then(() => {});
+          handleResponse({ content: data.content, toolCalls: data.toolCalls, respondedBy: "realtime" });
         }
       })
       .subscribe((status) => {

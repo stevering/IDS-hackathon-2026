@@ -68,6 +68,53 @@ export function registerLLMInterceptTools(server: McpServer, userId?: string): v
       }
 
       const supabase = createMcpSupabaseClient()
+
+      // First: check for already-pending intercepts in the table (catch up on missed broadcasts)
+      try {
+        const { data: pendingRows } = await supabase
+          .from("intercept_queue")
+          .select("request_id, purpose, agent_short_id, model, current_directive, step_count, exec_stats, request_payload, created_at, conversation_type, orchestration_id")
+          .eq("user_id", userId)
+          .eq("status", "pending")
+          .order("created_at", { ascending: true })
+          .limit(1)
+        if (pendingRows?.[0]) {
+          const row = pendingRows[0]
+          const llm = (row.request_payload as Record<string, unknown>) ?? {}
+          const messagesSummary = ((llm.messages as Array<{role: string; content: string}>) ?? []).map((m) => ({
+            role: m.role,
+            content: typeof m.content === "string"
+              ? m.content.slice(0, 500) + (m.content.length > 500 ? "..." : "")
+              : "[multimodal]",
+          }))
+          return formatToolResponse(
+            `Pending intercept found in queue! Purpose: ${row.purpose}, Agent: ${row.agent_short_id ?? "N/A"}, Model: ${row.model ?? "unknown"}. ` +
+            `Use respond_to_intercept with requestId "${row.request_id}" to submit your response.`,
+            {
+              requestId: row.request_id,
+              timestamp: row.created_at,
+              context: {
+                conversationType: row.conversation_type,
+                orchestrationId: row.orchestration_id,
+                agentShortId: row.agent_short_id,
+                purpose: row.purpose,
+                currentDirective: row.current_directive,
+                stepCount: row.step_count,
+                execStats: row.exec_stats,
+              },
+              llm: {
+                model: row.model,
+                maxTokens: llm.maxTokens,
+                messages: messagesSummary,
+                toolCount: (llm.tools as unknown[])?.length ?? 0,
+              },
+              source: "table",
+            }
+          )
+        }
+      } catch { /* best-effort table check */ }
+
+      // No pending in table — listen for broadcast
       const channelName = `guardian:intercept:${userId}`
       const channel = supabase.channel(channelName)
       const timeout = timeoutMs ?? 60_000
@@ -161,6 +208,18 @@ export function registerLLMInterceptTools(server: McpServer, userId?: string): v
       const channelName = `guardian:intercept:${userId}`
       const channel = supabase.channel(channelName)
 
+      // Update the table (for SQL-polling responders and persistence)
+      try {
+        await supabase.from("intercept_queue").update({
+          status: "responded",
+          response_content: content,
+          response_tool_calls: toolCalls ?? null,
+          responded_by: "mcp_tool",
+          responded_at: new Date().toISOString(),
+        }).eq("request_id", requestId)
+      } catch { /* best-effort table update */ }
+
+      // Broadcast on Realtime (for instant notification to interceptor)
       return new Promise((resolve) => {
         channel.subscribe((status) => {
           if (status === "SUBSCRIBED") {
@@ -170,7 +229,6 @@ export function registerLLMInterceptTools(server: McpServer, userId?: string): v
               payload: { requestId, content, toolCalls },
             })
 
-            // Give broadcast a moment to propagate, then cleanup
             setTimeout(() => {
               channel.unsubscribe()
               resolve(formatToolResponse(

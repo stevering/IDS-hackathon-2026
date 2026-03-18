@@ -76,6 +76,8 @@ export type AgentReportPayload = {
   screenshot?: string;
   /** List of changes made */
   changes?: AgentChange[];
+  /** Structured artifacts from the agent (node IDs, resource identifiers, etc.) */
+  artifacts?: { nodeIds?: string[]; [key: string]: unknown };
 };
 
 export type AgentChange = {

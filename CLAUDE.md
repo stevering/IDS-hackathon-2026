@@ -15,14 +15,57 @@ If you need a temprary directory for operations, create one here in the project 
 
 ## LLM call delegation (dev-only)
 
-When the user enables "LLM call delegation" in Account > Developers, orchestration code_review and file_review calls are delegated to you via Supabase Realtime. You act as the reviewer instead of the AI provider.
+When the user enables "LLM call delegation" in Account > Developers, orchestration LLM calls are delegated to you. You act as the LLM instead of the AI provider.
 
-To listen for intercepts, start a background SSE stream:
+### Fastest method: direct SQL via Supabase MCP (recommended)
+
+Intercepts are stored in the `intercept_queue` table. Use `mcp__supabase__execute_sql` to poll and respond:
+
+```sql
+-- Poll pending intercepts
+SELECT request_id, purpose, agent_short_id, model, current_directive, step_count,
+       request_payload->'messages' as messages, created_at
+FROM intercept_queue
+WHERE user_id = '<USER_ID>' AND status = 'pending'
+ORDER BY created_at;
+
+-- Respond to an intercept
+UPDATE intercept_queue
+SET status = 'responded',
+    response_content = 'APPROVED',
+    responded_by = 'claude_code_sql',
+    responded_at = now()
+WHERE request_id = '<REQUEST_ID>';
+
+-- Respond with toolCalls
+UPDATE intercept_queue
+SET status = 'responded',
+    response_content = 'Directives assigned.',
+    response_tool_calls = '[{"id":"tc-1","name":"send_agent_directive","arguments":{"agentShortId":"#agent","content":"..."}}]'::jsonb,
+    responded_by = 'claude_code_sql',
+    responded_at = now()
+WHERE request_id = '<REQUEST_ID>';
+```
+
+### Alternative: SSE stream (background listener)
+
 ```bash
 export $(grep -v '^#' .env.local | grep STORAGE_SUPABASE_SERVICE_ROLE_KEY | xargs) && \
 curl -s -N \
   -H "x-mcp-service-key: $STORAGE_SUPABASE_SERVICE_ROLE_KEY" \
   -H "x-mcp-user-id: <USER_ID>" \
-  "http://localhost:3000/api/intercept/stream"
+  "http://localhost:3000/api/intercept/stream?purpose=agent,orchestrator"
 ```
-Each `data:` line is a JSON request with `requestId`, `context.purpose`, and `llm.messages`. Respond with the `respond_to_intercept` MCP tool. Timeout: 120s.
+
+### Alternative: MCP tools
+
+- `watch_intercepts(timeoutMs?)` — checks table first, then listens for broadcast
+- `respond_to_intercept(requestId, content, toolCalls?)` — updates table + broadcasts
+
+### Response formats
+
+- code_review: `APPROVED` or `REJECTED: <reason>`
+- file_review: `VERIFIED: <description>` or `ISSUE: <description>`
+- agent/orchestrator: free-form text + optional toolCalls
+
+Timeout: 120s (normal) or 30 min (slow delegation mode).

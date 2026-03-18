@@ -278,10 +278,14 @@ describe("processLLMResponse", () => {
     expect(state.completed).toBe(false);
     expect(effects.some((e) => e.type === "report_to_orchestrator")).toBe(true);
     expect(effects.some((e) => e.type === "complete")).toBe(false);
-    // Standby message injected
+    // Standby: message injected + inStandby flag set
     const lastMsg = state.messageHistory[state.messageHistory.length - 1];
     expect(lastMsg.role).toBe("tool");
-    expect(lastMsg.content).toContain("STANDBY");
+    expect(lastMsg.content).toContain("standby");
+    expect(state.inStandby).toBe(true);
+    // Next effect should be wait_for_input (not call_llm)
+    expect(effects.some((e) => e.type === "wait_for_input")).toBe(true);
+    expect(effects.some((e) => e.type === "call_llm")).toBe(false);
   });
 
   it("handles send_peer_message tool call", () => {

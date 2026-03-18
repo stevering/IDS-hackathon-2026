@@ -67,6 +67,10 @@ export async function GET(request: NextRequest) {
     auth: { persistSession: false },
   });
 
+  // Optional purpose filter: ?purpose=code_review,agent (comma-separated)
+  const purposeParam = request.nextUrl.searchParams.get("purpose");
+  const purposeFilter = purposeParam ? new Set(purposeParam.split(",").map(s => s.trim())) : null;
+
   const channelName = `guardian:intercept:${userId}`;
   const channel = supabase.channel(channelName);
 
@@ -81,11 +85,13 @@ export async function GET(request: NextRequest) {
         }
       }, 15_000);
 
-      // Listen for intercept requests
+      // Listen for intercept requests (optionally filtered by purpose)
       channel
         .on("broadcast", { event: "intercept_request" }, (payload) => {
           if (!alive) return;
           const data = payload.payload;
+          // Filter by purpose if query param is set
+          if (purposeFilter && !purposeFilter.has(data?.context?.purpose)) return;
           controller.enqueue(
             encoder.encode(`data: ${JSON.stringify(data)}\n\n`)
           );
