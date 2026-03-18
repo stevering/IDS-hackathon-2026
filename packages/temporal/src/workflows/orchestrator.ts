@@ -43,6 +43,7 @@ import type {
   OrchestrationResult,
   AgentId,
   LLMToolDefinition,
+  LLMMessage,
 } from "@guardian/orchestrations";
 
 import {
@@ -64,10 +65,15 @@ import type { LLMActivities, PersistenceActivities } from "../activities/types.j
 
 import { agentWorkflow } from "./agent.js";
 
-// Proxy activities
-const { callLLM } = proxyActivities<LLMActivities>({
+// Proxy activities — normal timeouts
+const normalLLM = proxyActivities<LLMActivities>({
   startToCloseTimeout: "2 minutes",
   retry: { maximumAttempts: 3 },
+});
+// Proxy activities — slow delegation mode
+const slowLLM = proxyActivities<LLMActivities>({
+  startToCloseTimeout: "30 minutes",
+  retry: { maximumAttempts: 1 },
 });
 
 const { saveOrchestrationState } = proxyActivities<PersistenceActivities>({
@@ -85,6 +91,12 @@ export async function orchestratorWorkflow(
   const state = createOrchestratorState(params);
   const orchestratorWorkflowId = workflowInfo().workflowId;
   let cancelled = false;
+
+  // Choose activity proxy and idle nudge based on slow delegation mode
+  const userSettings = (params.context as Record<string, unknown>)?.userSettings as Record<string, unknown> | undefined;
+  const devSlowDelegation = !!(userSettings?.devSlowDelegation);
+  const { callLLM } = devSlowDelegation ? slowLLM : normalLLM;
+  const idleNudgeMs = devSlowDelegation ? 5 * 60_000 : IDLE_NUDGE_MS;
 
   // ── Signal handlers ──────────────────────────────────────────────────────
   setHandler(agentReportSignal, (report) => {
@@ -197,7 +209,8 @@ export async function orchestratorWorkflow(
       state,
       briefLLM.messages,
       briefLLM.tools ?? getOrchestratorTools(state),
-      params
+      params,
+      callLLM
     );
   }
 
@@ -211,7 +224,7 @@ export async function orchestratorWorkflow(
       state.pendingActivities.length > 0 ||
       cancelled;
 
-    await condition(hasWork, IDLE_NUDGE_MS);
+    await condition(hasWork, idleNudgeMs);
 
     // Check cancellation
     if (cancelled) {
@@ -241,7 +254,8 @@ export async function orchestratorWorkflow(
             state,
             effect.messages,
             effect.tools ?? getOrchestratorTools(state),
-            params
+            params,
+            callLLM
           );
         }
       }
@@ -262,7 +276,8 @@ export async function orchestratorWorkflow(
             state,
             effect.messages,
             effect.tools ?? getOrchestratorTools(state),
-            params
+            params,
+            callLLM
           );
         }
       }
@@ -364,16 +379,17 @@ export async function orchestratorWorkflow(
 
 async function executeOrchestratorLLMLoop(
   state: OrchestratorState,
-  messages: Parameters<typeof callLLM>[0]["messages"],
+  messages: LLMMessage[],
   tools: LLMToolDefinition[],
-  params: { userId: string; model?: string }
+  params: { userId: string; model?: string },
+  callLLM: LLMActivities["callLLM"]
 ): Promise<void> {
   let currentMessages = messages;
   let currentTools = tools;
   let maxIterations = 10;
 
   while (maxIterations-- > 0) {
-    const userSettings = (state.context as Record<string, unknown>)?.userSettings as Record<string, unknown> | undefined;
+    const loopUserSettings = (state.context as Record<string, unknown>)?.userSettings as Record<string, unknown> | undefined;
     const llmResult = await callLLM({
       messages: currentMessages,
       tools: currentTools,
@@ -383,7 +399,8 @@ async function executeOrchestratorLLMLoop(
       tracing: {
         conversationType: "orchestration",
         orchestrationId: state.orchestrationId,
-        devLLMDelegation: !!(userSettings?.devLLMDelegation),
+        devLLMDelegation: !!(loopUserSettings?.devLLMDelegation),
+        devSlowDelegation: !!(loopUserSettings?.devSlowDelegation),
       },
     });
 

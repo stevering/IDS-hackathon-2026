@@ -76,6 +76,8 @@ export type AgentWorkflowState = {
   lastDirectiveContent?: string;
   /** User setting: delegate LLM calls to external responder (dev-only) */
   devLLMDelegation?: boolean;
+  /** User setting: slow delegation mode with extended timeouts (dev-only) */
+  devSlowDelegation?: boolean;
 };
 
 // ---------------------------------------------------------------------------

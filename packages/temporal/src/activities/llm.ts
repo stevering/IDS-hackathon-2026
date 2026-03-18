@@ -45,7 +45,7 @@ type InterceptDecision =
 // ---------------------------------------------------------------------------
 
 /** Purposes that can be delegated when the user enables devLLMDelegation in settings. */
-const DELEGATABLE_PURPOSES: LLMCallPurpose[] = ["code_review", "file_review"];
+const DELEGATABLE_PURPOSES: LLMCallPurpose[] = ["code_review", "file_review", "agent", "orchestrator"];
 
 // ---------------------------------------------------------------------------
 // LLM Call Interceptor
@@ -104,8 +104,9 @@ function interceptLLMCall(params: LLMCallParams): InterceptDecision {
 
 async function delegateToExternal(
   params: LLMCallParams,
-  timeoutMs = 120_000
 ): Promise<LLMCallResult> {
+  // Slow delegation: 30 min timeout for interactive use; normal: 120s
+  const timeoutMs = params.tracing?.devSlowDelegation ? 30 * 60_000 : 120_000;
   const log = createLogger("llm-delegate", {
     u: params.userId.slice(0, 8),
     purpose: params.purpose ?? "unknown",
@@ -150,9 +151,10 @@ async function delegateToExternal(
         if (data?.requestId === requestId && !settled) {
           settled = true;
           cleanup();
-          log.info("received delegate response", { req: requestId, contentLen: data.content?.length ?? 0 });
+          log.info("received delegate response", { req: requestId, contentLen: data.content?.length ?? 0, hasToolCalls: !!data.toolCalls });
           resolve({
             content: data.content ?? "",
+            toolCalls: data.toolCalls,
             intercepted: {
               action: "delegated",
               reason: `Delegated to external responder (${params.purpose})`,

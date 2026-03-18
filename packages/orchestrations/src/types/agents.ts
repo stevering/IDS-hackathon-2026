@@ -115,6 +115,8 @@ export type LLMCallTracing = {
   execStats?: { success: number; fail: number };
   /** User setting: enable LLM call delegation (dev-only) */
   devLLMDelegation?: boolean;
+  /** User setting: slow delegation mode with extended timeouts (dev-only) */
+  devSlowDelegation?: boolean;
 };
 
 export type LLMCallParams = {

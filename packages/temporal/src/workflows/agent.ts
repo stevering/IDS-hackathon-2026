@@ -34,7 +34,7 @@ import {
   FIGMA_API_QUICK_REFERENCE,
 } from "@guardian/orchestrations";
 
-import type { AgentId, LLMMessage } from "@guardian/orchestrations";
+import type { AgentId, LLMMessage, LLMToolDefinition } from "@guardian/orchestrations";
 import type { AgentWorkflowInput } from "./types.js";
 
 import {
@@ -56,10 +56,15 @@ import {
 
 import type { LLMActivities, FigmaActivities, DocsActivities } from "../activities/types.js";
 
-// Proxy activities
-const { callLLM } = proxyActivities<LLMActivities>({
+// Proxy activities — normal timeouts
+const normalLLM = proxyActivities<LLMActivities>({
   startToCloseTimeout: "2 minutes",
   retry: { maximumAttempts: 3 },
+});
+// Proxy activities — slow delegation mode (extended timeouts for interactive use)
+const slowLLM = proxyActivities<LLMActivities>({
+  startToCloseTimeout: "30 minutes",
+  retry: { maximumAttempts: 1 },
 });
 
 const { executeFigmaCode } = proxyActivities<FigmaActivities>({
@@ -260,6 +265,7 @@ async function handleReviewAndExecute(
   state: AgentWorkflowState,
   effect: Extract<AgentEffect, { type: "review_and_execute_figma_code" }>,
   userId: string,
+  callLLM: LLMActivities["callLLM"],
   model?: string
 ): Promise<void> {
   // Track execution attempts for progress awareness
@@ -274,6 +280,7 @@ async function handleReviewAndExecute(
     stepCount: state.stepCount,
     execStats: state.execStats,
     devLLMDelegation: state.devLLMDelegation,
+    devSlowDelegation: state.devSlowDelegation,
   };
 
   // Step 1: Review LLM call (same model, dedicated prompt, no tools)
@@ -783,6 +790,11 @@ export async function agentWorkflow(input: AgentWorkflowInput): Promise<void> {
   // Dev-only: delegate LLM calls to external responder (from user settings)
   const userSettings = (input.context as Record<string, unknown>)?.userSettings as Record<string, unknown> | undefined;
   state.devLLMDelegation = !!(userSettings?.devLLMDelegation);
+  state.devSlowDelegation = !!(userSettings?.devSlowDelegation);
+
+  // Choose activity proxy based on slow delegation mode
+  const { callLLM } = state.devSlowDelegation ? slowLLM : normalLLM;
+
   let directoryReceived = false;
 
   // ── Signal handlers (fill the mailboxes) ─────────────────────────────────
@@ -897,7 +909,7 @@ export async function agentWorkflow(input: AgentWorkflowInput): Promise<void> {
         for (const rEffect of responseEffects) {
           if (rEffect.type === "emit_activity") continue;
           if (rEffect.type === "review_and_execute_figma_code") {
-            await handleReviewAndExecute(state, rEffect, input.userId, input.model);
+            await handleReviewAndExecute(state, rEffect, input.userId, callLLM, input.model);
             didExecTool = true;
           } else if (rEffect.type === "fetch_figma_docs") {
             await handleFetchFigmaDocs(state, rEffect);
@@ -912,7 +924,7 @@ export async function agentWorkflow(input: AgentWorkflowInput): Promise<void> {
         // Continue LLM loop with correct messages (including tool results)
         if (pendingLLM) {
           const msgs = didExecTool ? [...state.messageHistory] : pendingLLM.messages;
-          await executeLLMLoop(state, msgs, pendingLLM.tools, input.userId, input.model);
+          await executeLLMLoop(state, msgs, pendingLLM.tools, input.userId, callLLM, input.model);
         }
       } else if (effect.type === "wait_for_input") {
         // Continue to next loop iteration
@@ -931,8 +943,9 @@ export async function agentWorkflow(input: AgentWorkflowInput): Promise<void> {
 async function executeLLMLoop(
   state: AgentWorkflowState,
   messages: LLMMessage[],
-  tools: Parameters<typeof callLLM>[0]["tools"],
+  tools: LLMToolDefinition[] | undefined,
   userId: string,
+  callLLM: LLMActivities["callLLM"],
   model?: string
 ): Promise<void> {
   let maxIterations = 200;
@@ -966,7 +979,7 @@ async function executeLLMLoop(
     for (const effect of effects) {
       if (effect.type === "emit_activity") continue;
       if (effect.type === "review_and_execute_figma_code") {
-        await handleReviewAndExecute(state, effect, userId, model);
+        await handleReviewAndExecute(state, effect, userId, callLLM, model);
         didExecuteTool = true;
         needsContinue = true;
       } else if (effect.type === "fetch_figma_docs") {

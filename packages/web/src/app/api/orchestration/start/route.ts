@@ -76,16 +76,22 @@ export async function POST(request: Request) {
         userSettings = {
           developerMode: settingsRows[0].developer_mode ?? false,
           devLLMDelegation: settingsRows[0].dev_llm_delegation ?? false,
+          devSlowDelegation: settingsRows[0].dev_slow_delegation ?? false,
         };
       }
     } catch { /* best-effort */ }
+
+    // Slow delegation mode: extend orchestration duration to 4 hours
+    const effectiveMaxDuration = userSettings.devSlowDelegation
+      ? 4 * 60 * 60_000  // 4 hours
+      : maxDurationMs;
 
     const params: StartOrchestrationParams = {
       userId,
       task,
       targetAgents,
       model,
-      maxDurationMs,
+      maxDurationMs: effectiveMaxDuration,
       context: {
         ...context,
         userSettings,

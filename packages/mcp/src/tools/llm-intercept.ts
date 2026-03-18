@@ -142,8 +142,17 @@ export function registerLLMInterceptTools(server: McpServer, userId?: string): v
         "For code_review: 'APPROVED' or 'REJECTED: <reason>\\n1. issue...'. " +
         "For file_review: 'VERIFIED: <what was created>' or 'ISSUE: <what went wrong>'."
       ),
+      toolCalls: z.array(z.object({
+        id: z.string().describe("Tool call ID (e.g. 'tc-1')"),
+        name: z.string().describe("Tool name (e.g. 'send_agent_directive', 'figma_plugin_execute')"),
+        arguments: z.record(z.unknown()).describe("Tool call arguments"),
+      })).optional().describe(
+        "Structured tool calls (optional). Use this instead of text-based [Called tool: ...] format. " +
+        "For orchestrator: send_agent_directive, mark_agent_done, broadcast_to_agents. " +
+        "For agent: figma_plugin_execute, signal_task_complete, send_peer_message."
+      ),
     },
-    async ({ requestId, content }) => {
+    async ({ requestId, content, toolCalls }) => {
       if (!userId) {
         return formatToolResponse("No user ID available — cannot respond to intercepts.")
       }
@@ -158,7 +167,7 @@ export function registerLLMInterceptTools(server: McpServer, userId?: string): v
             channel.send({
               type: "broadcast",
               event: "intercept_response",
-              payload: { requestId, content },
+              payload: { requestId, content, toolCalls },
             })
 
             // Give broadcast a moment to propagate, then cleanup

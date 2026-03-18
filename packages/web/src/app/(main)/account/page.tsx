@@ -83,6 +83,7 @@ export default function AccountPage() {
   const [developerMode, setDeveloperMode] = useState(false);
   const [devShowAllEvents, setDevShowAllEvents] = useState(false);
   const [devLLMDelegation, setDevLLMDelegation] = useState(false);
+  const [devSlowDelegation, setDevSlowDelegation] = useState(false);
   const [savingDevSettings, setSavingDevSettings] = useState(false);
 
   const handleDropdownClose = useCallback(() => {
@@ -142,6 +143,7 @@ export default function AccountPage() {
         if (typeof settingsData.developerMode === "boolean") setDeveloperMode(settingsData.developerMode);
         if (typeof settingsData.devShowAllEvents === "boolean") setDevShowAllEvents(settingsData.devShowAllEvents);
         if (typeof settingsData.devLLMDelegation === "boolean") setDevLLMDelegation(settingsData.devLLMDelegation);
+        if (typeof settingsData.devSlowDelegation === "boolean") setDevSlowDelegation(settingsData.devSlowDelegation);
       }
 
       // Build dynamic provider list from Gateway catalog
@@ -822,6 +824,41 @@ export default function AccountPage() {
                   />
                 </button>
               </div>
+
+              {/* Slow delegation — nested under LLM delegation */}
+              {devLLMDelegation && (
+                <div className="flex items-center justify-between gap-3 p-3 rounded-lg border border-white/10 bg-white/[0.03] ml-3 border-l border-white/10">
+                  <div>
+                    <div className="text-sm font-medium">Slow delegation</div>
+                    <p className="text-[11px] text-white/40 mt-0.5">
+                      Extend all timeouts (30 min per call, 4 hours total) to allow interactive discussion at each step.
+                    </p>
+                  </div>
+                  <button
+                    onClick={async () => {
+                      const next = !devSlowDelegation;
+                      setDevSlowDelegation(next);
+                      setSavingDevSettings(true);
+                      await fetch("/api/user/settings", {
+                        method: "PATCH",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ devSlowDelegation: next }),
+                      }).catch(() => {});
+                      setSavingDevSettings(false);
+                    }}
+                    disabled={savingDevSettings}
+                    className={`relative shrink-0 w-10 h-5 rounded-full transition-colors cursor-pointer ${
+                      devSlowDelegation ? "bg-violet-600" : "bg-white/20"
+                    }`}
+                  >
+                    <span
+                      className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
+                        devSlowDelegation ? "translate-x-5" : ""
+                      }`}
+                    />
+                  </button>
+                </div>
+              )}
             )}
           </div>
         )}

@@ -20,6 +20,7 @@ export async function GET() {
     developerMode: row?.developer_mode ?? false,
     devShowAllEvents: row?.dev_show_all_events ?? false,
     devLLMDelegation: row?.dev_llm_delegation ?? false,
+    devSlowDelegation: row?.dev_slow_delegation ?? false,
   });
 }
 
@@ -34,7 +35,7 @@ export async function PATCH(req: Request) {
     return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
   }
 
-  const { autoAccept, defaultModel, approvalMode, guardEnabled, developerMode, devShowAllEvents, devLLMDelegation } = body;
+  const { autoAccept, defaultModel, approvalMode, guardEnabled, developerMode, devShowAllEvents, devLLMDelegation, devSlowDelegation } = body;
 
   // At least one field must be provided
   if (
@@ -44,7 +45,8 @@ export async function PATCH(req: Request) {
     typeof guardEnabled === "undefined" &&
     typeof developerMode === "undefined" &&
     typeof devShowAllEvents === "undefined" &&
-    typeof devLLMDelegation === "undefined"
+    typeof devLLMDelegation === "undefined" &&
+    typeof devSlowDelegation === "undefined"
   ) {
     return NextResponse.json(
       { error: "At least one setting is required" },
@@ -74,6 +76,9 @@ export async function PATCH(req: Request) {
   if (typeof devLLMDelegation !== "undefined" && typeof devLLMDelegation !== "boolean") {
     return NextResponse.json({ error: "devLLMDelegation must be a boolean" }, { status: 400 });
   }
+  if (typeof devSlowDelegation !== "undefined" && typeof devSlowDelegation !== "boolean") {
+    return NextResponse.json({ error: "devSlowDelegation must be a boolean" }, { status: 400 });
+  }
 
   // Build RPC params — only pass what was provided
   const params: Record<string, unknown> = {};
@@ -84,10 +89,11 @@ export async function PATCH(req: Request) {
   if (typeof developerMode !== "undefined") params.p_developer_mode = developerMode;
   if (typeof devShowAllEvents !== "undefined") params.p_dev_show_all_events = devShowAllEvents;
   if (typeof devLLMDelegation !== "undefined") params.p_dev_llm_delegation = devLLMDelegation;
+  if (typeof devSlowDelegation !== "undefined") params.p_dev_slow_delegation = devSlowDelegation;
 
   const { error } = await supabase.rpc("update_settings", params);
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
-  return NextResponse.json({ ok: true, autoAccept, defaultModel, approvalMode, guardEnabled, developerMode, devShowAllEvents, devLLMDelegation });
+  return NextResponse.json({ ok: true, autoAccept, defaultModel, approvalMode, guardEnabled, developerMode, devShowAllEvents, devLLMDelegation, devSlowDelegation });
 }
