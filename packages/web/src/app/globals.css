@@ -1,5 +1,13 @@
 @import "tailwindcss";
 
+@layer base {
+  button:not(:disabled),
+  a[href],
+  [role="button"]:not(:disabled) {
+    cursor: pointer;
+  }
+}
+
 @theme inline {
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
@@ -21,12 +29,6 @@ textarea,
 select {
   -webkit-text-fill-color: inherit;
   color: inherit;
-}
-
-button:not(:disabled),
-a[href],
-[role="button"]:not(:disabled) {
-  cursor: pointer;
 }
 
 .markdown-body {

@@ -80,6 +80,8 @@ export type AgentWorkflowState = {
   devSlowDelegation?: boolean;
   /** Agent is in standby — waiting for next directive, no LLM calls */
   inStandby?: boolean;
+  /** Number of successful tool executions since the last directive (reset per directive) */
+  directiveExecCount?: number;
 };
 
 // ---------------------------------------------------------------------------
@@ -132,6 +134,8 @@ export function handleDirective(state: AgentWorkflowState, directive: DirectiveP
   state.directiveQueue.push(directive);
   // Exit standby when a new directive arrives
   state.inStandby = false;
+  // Reset per-directive execution counter so signal_task_complete can verify work was done
+  state.directiveExecCount = 0;
   // Store the latest directive content — used by file review instead of the global task
   // so the reviewer judges against what THIS agent was asked to do, not the full orchestration task
   state.lastDirectiveContent = directive.content;
@@ -577,6 +581,7 @@ export function injectToolResult(
 export function recordExecResult(state: AgentWorkflowState, success: boolean): void {
   if (success) {
     state.execStats.success++;
+    state.directiveExecCount = (state.directiveExecCount ?? 0) + 1;
   } else {
     state.execStats.fail++;
   }
@@ -909,7 +914,26 @@ function processToolCall(
     case "signal_task_complete": {
       const args = tc.arguments as { summary?: string; artifacts?: { nodeIds?: string[] } };
 
-      // Guard: block completion if more failures than successes
+      // Guard 1: block completion if no executions since the last directive
+      if ((state.directiveExecCount ?? 0) === 0 && state.lastDirectiveContent) {
+        const warning =
+          `BLOCKED: You called signal_task_complete but have not executed any tool (e.g. figma_plugin_execute) ` +
+          `since receiving this directive. You must actually execute your plan before signaling completion. ` +
+          `Current directive: "${state.lastDirectiveContent.slice(0, 120)}..."`;
+        activities.push({ action: "tool_call", toolName: tc.name, summary: args.summary ?? "Task completed." });
+        activities.push({
+          action: "guardian_message",
+          recipient: `agent ${state.agent.shortId}`,
+          message: warning,
+        });
+        injectToolResult(state, tc.id, JSON.stringify({
+          success: false,
+          error: warning,
+        }));
+        break;
+      }
+
+      // Guard 2: block completion if more failures than successes
       if (state.execStats.fail > 0 && state.execStats.fail > state.execStats.success) {
         const warning =
           `WARNING: You have ${state.execStats.fail} failed executions vs ${state.execStats.success} successful. ` +

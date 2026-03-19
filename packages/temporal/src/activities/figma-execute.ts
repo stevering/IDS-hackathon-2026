@@ -74,6 +74,7 @@ export async function executeFigmaCode(params: ExecuteCodeParams): Promise<Execu
               requestId,
               targetClientId: params.pluginClientId,
               code: params.code,
+              timeout: Math.max(timeoutMs - 5000, 5000),
               ...(params.workflowId ? { workflowId: params.workflowId } : {}),
             },
           });

@@ -209,7 +209,7 @@ function GuardianWidget() {
           const requestId = msg.id ?? msg.requestId;
           try {
             const wrapped = `(async function() {\n${msg.code}\n})()`;
-            const timeoutMs = msg.timeout ?? 5000;
+            const timeoutMs = msg.timeout ?? 15000;
             const timeoutPromise = new Promise<never>((_, reject) =>
               setTimeout(() => reject(new Error(`Timeout after ${timeoutMs}ms`)), timeoutMs)
             );

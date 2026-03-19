@@ -461,7 +461,7 @@ ${codeBody}
     return { __guardian_exec_error: (__stk && __stk.includes(__msg) ? __stk : (__msg + (__stk ? '\\n' + __stk : ''))).trim() };
   }
 })()`;
-      const timeoutMs = msg.timeout ?? 5000;
+      const timeoutMs = msg.timeout ?? 15000;
       let timeoutTimer: ReturnType<typeof setTimeout> | null = null;
       let timedOut = false;
       const timeoutPromise = new Promise<{ __guardian_exec_error: string }>((resolve) => {

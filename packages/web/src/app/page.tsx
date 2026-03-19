@@ -3499,30 +3499,28 @@ export default function Home() {
                   return null;
                 })}
               </div>
-              {m.role === "assistant" && (
-                <div className="flex mt-1">
-                  <button
-                    onClick={() => {
-                      const text = m.parts
-                        ?.filter((p: { type: string; text?: string }) => p.type === "text" && p.text)
-                        .map((p: { type: string; text?: string }) => p.text)
-                        .join("\n")
-                        .replace(/\[MCP_STATUS:\w+\]/g, "")
-                        .replace(/\[MCP_ERROR_BLOCK\][\s\S]*?\[\/MCP_ERROR_BLOCK\]/g, "")
-                        .replace(/\[ORCHESTRATE:[^\]]+\]/g, "")
-                        .replace(/\[AGENT_DONE:[^\]]*\]/g, "")
-                        .replace(/\[CONTINUATION_AVAILABLE\]/g, "")
-                        .replace(/\[ANALYZE_BTN\]/g, "")
-                        .trim() || "";
-                      copyToClipboard(text);
-                    }}
-                    className="flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] text-white/15 hover:text-white/50 hover:bg-white/5 transition-colors cursor-pointer"
-                    title="Copy message"
-                  >
-                    <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="9" y="9" width="13" height="13" rx="2" /><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1" /></svg>
-                  </button>
-                </div>
-              )}
+              <div className={`flex mt-1 ${m.role === "user" ? "justify-end" : ""}`}>
+                <button
+                  onClick={() => {
+                    const text = m.parts
+                      ?.filter((p: { type: string; text?: string }) => p.type === "text" && p.text)
+                      .map((p: { type: string; text?: string }) => p.text)
+                      .join("\n")
+                      .replace(/\[MCP_STATUS:\w+\]/g, "")
+                      .replace(/\[MCP_ERROR_BLOCK\][\s\S]*?\[\/MCP_ERROR_BLOCK\]/g, "")
+                      .replace(/\[ORCHESTRATE:[^\]]+\]/g, "")
+                      .replace(/\[AGENT_DONE:[^\]]*\]/g, "")
+                      .replace(/\[CONTINUATION_AVAILABLE\]/g, "")
+                      .replace(/\[ANALYZE_BTN\]/g, "")
+                      .trim() || "";
+                    copyToClipboard(text);
+                  }}
+                  className="flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] text-white/15 hover:text-white/50 hover:bg-white/5 transition-colors cursor-pointer"
+                  title="Copy message"
+                >
+                  <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="9" y="9" width="13" height="13" rx="2" /><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1" /></svg>
+                </button>
+              </div>
               {m === messages[messages.length - 1] && m.role === "assistant" && !isLoading && m.parts?.some(part => part.type === "text" && part.text.includes("[CONTINUATION_AVAILABLE]")) && (
                 <button
                   onClick={() => {
