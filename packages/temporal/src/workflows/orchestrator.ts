@@ -323,17 +323,12 @@ export async function orchestratorWorkflow(
         }
 
         // Final drain: wait for any trailing agent activity signals.
-        // Use condition() which wakes instantly when a signal arrives,
-        // with a 2s timeout so we don't wait forever.
-        // Repeat up to 3 times to catch cascading signals.
         for (let drain = 0; drain < 3; drain++) {
-          // Wait up to 2s for new activities/guardrails to arrive
           await condition(
             () => state.pendingActivities.length > 0 || state.pendingGuardrails.length > 0,
             2000
           );
 
-          // Drain whatever arrived
           if (state.pendingActivities.length > 0) {
             const finalActivities = processAgentActivities(state);
             await executeEffects(state, finalActivities, params.userId);
@@ -343,32 +338,19 @@ export async function orchestratorWorkflow(
             await executeEffects(state, finalGuardrails, params.userId);
           }
 
-          // Also check for late reports (agent confirmed after grace period)
           if (state.pendingReports.length > 0) {
-            break; // Go back to main loop to process them
+            break;
           }
         }
 
-        state.eventLog.push({
-          type: "orchestration_completed",
-          status: completionEffect.result.status,
-        });
-
-        await saveOrchestrationState({
-          orchestrationId: state.orchestrationId,
-          status: completionEffect.result.status,
-          agentResults: completionEffect.result.agentResults,
-          durationMs: completionEffect.result.durationMs,
-          userId: params.userId,
-        });
-
-        return completionEffect.result;
+        // Fall through to final save below
+        break;
       }
     }
   }
 
-  // Final save — this path is reached when the while loop exits
-  // (either via status !== "active" after continue, or via cancellation)
+  // ── Final save ──────────────────────────────────────────────────────────
+  // Reached when: completion break, while exit (status !== active), or cancellation.
   const result: OrchestrationResult = {
     status: state.status === "active" ? "cancelled" : state.status,
     agentResults: Object.fromEntries(
@@ -384,18 +366,11 @@ export async function orchestratorWorkflow(
     durationMs: Date.now() - state.startedAt,
   };
 
-  // Push orchestration_completed if not already in eventLog
-  const hasCompletedEvent = state.eventLog.some(
-    (e) => (e as Record<string, unknown>).type === "orchestration_completed"
-  );
-  if (!hasCompletedEvent) {
-    state.eventLog.push({
-      type: "orchestration_completed",
-      status: result.status,
-    });
-  }
+  state.eventLog.push({
+    type: "orchestration_completed",
+    status: result.status,
+  });
 
-  // Flush remaining durable events (includes orchestration_completed)
   await flushDurableEvents();
 
   await saveOrchestrationState({
