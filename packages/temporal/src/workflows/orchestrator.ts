@@ -76,7 +76,7 @@ const slowLLM = proxyActivities<LLMActivities>({
   retry: { maximumAttempts: 1 },
 });
 
-const { saveOrchestrationState } = proxyActivities<PersistenceActivities>({
+const { saveOrchestrationState, persistDurableEvents } = proxyActivities<PersistenceActivities>({
   startToCloseTimeout: "10 seconds",
   retry: { maximumAttempts: 2 },
 });
@@ -91,6 +91,21 @@ export async function orchestratorWorkflow(
   const state = createOrchestratorState(params);
   const orchestratorWorkflowId = workflowInfo().workflowId;
   let cancelled = false;
+
+  // ── Durable event flush tracking ─────────────────────────────────────────
+  let lastFlushedIndex = 0;
+
+  /** Flush new durable events since last flush (micro-batch). */
+  async function flushDurableEvents() {
+    const newEvents = state.eventLog.slice(lastFlushedIndex);
+    lastFlushedIndex = state.eventLog.length;
+    if (newEvents.length === 0) return;
+    await persistDurableEvents({
+      workflowId: orchestratorWorkflowId,
+      events: newEvents as Array<Record<string, unknown>>,
+      userId: params.userId,
+    });
+  }
 
   // Choose activity proxy and idle nudge based on slow delegation mode
   const userSettings = (params.context as Record<string, unknown>)?.userSettings as Record<string, unknown> | undefined;
@@ -214,6 +229,9 @@ export async function orchestratorWorkflow(
     );
   }
 
+  // Flush durable events from phases 1-3 (started, brief, initial directives)
+  await flushDurableEvents();
+
   // ── Phase 4: Coordination loop ──────────────────────────────────────────
   while (state.status === "active" && !cancelled) {
     // Wait for signals or timeout
@@ -289,6 +307,9 @@ export async function orchestratorWorkflow(
       await executeEffects(state, midActivities, params.userId);
     }
 
+    // Flush durable events from this iteration (directives, reports, etc.)
+    await flushDurableEvents();
+
     // Check completion
     const completionEffect = checkCompletion(state);
     if (completionEffect) {
@@ -328,6 +349,11 @@ export async function orchestratorWorkflow(
           }
         }
 
+        state.eventLog.push({
+          type: "orchestration_completed",
+          status: completionEffect.result.status,
+        });
+
         await saveOrchestrationState({
           orchestrationId: state.orchestrationId,
           status: completionEffect.result.status,
@@ -336,17 +362,13 @@ export async function orchestratorWorkflow(
           userId: params.userId,
         });
 
-        state.eventLog.push({
-          type: "orchestration_completed",
-          status: completionEffect.result.status,
-        });
-
         return completionEffect.result;
       }
     }
   }
 
-  // Final save
+  // Final save — this path is reached when the while loop exits
+  // (either via status !== "active" after continue, or via cancellation)
   const result: OrchestrationResult = {
     status: state.status === "active" ? "cancelled" : state.status,
     agentResults: Object.fromEntries(
@@ -361,6 +383,20 @@ export async function orchestratorWorkflow(
     ),
     durationMs: Date.now() - state.startedAt,
   };
+
+  // Push orchestration_completed if not already in eventLog
+  const hasCompletedEvent = state.eventLog.some(
+    (e) => (e as Record<string, unknown>).type === "orchestration_completed"
+  );
+  if (!hasCompletedEvent) {
+    state.eventLog.push({
+      type: "orchestration_completed",
+      status: result.status,
+    });
+  }
+
+  // Flush remaining durable events (includes orchestration_completed)
+  await flushDurableEvents();
 
   await saveOrchestrationState({
     orchestrationId: state.orchestrationId,

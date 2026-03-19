@@ -53,6 +53,12 @@ export interface PersistenceActivities {
     durationMs: number;
     userId: string;
   }): Promise<void>;
+
+  persistDurableEvents(params: {
+    workflowId: string;
+    events: Array<Record<string, unknown>>;
+    userId: string;
+  }): Promise<void>;
 }
 
 // ---------------------------------------------------------------------------

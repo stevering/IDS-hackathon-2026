@@ -53,48 +53,13 @@ export function useOrchestrationStream(workflowId: string | null) {
 
   const eventSourceRef = useRef<EventSource | null>(null);
 
-  // ── Event persistence buffer ────────────────────────────────────────
-  const eventBuffer = useRef<Record<string, unknown>[]>([]);
-  const flushTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const workflowIdRef = useRef(workflowId);
-  workflowIdRef.current = workflowId;
-
-  const flushEvents = useCallback(() => {
-    const wfId = workflowIdRef.current;
-    const batch = eventBuffer.current;
-    if (!wfId || batch.length === 0) return;
-    eventBuffer.current = [];
-    // Fire-and-forget persistence
-    fetch(`/api/orchestration/${encodeURIComponent(wfId)}/events`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ events: batch }),
-    }).catch(() => {});
-  }, []);
-
-  const bufferEvent = useCallback((event: Record<string, unknown>) => {
-    eventBuffer.current.push(event);
-    // Flush every 5 events or after 2s
-    if (eventBuffer.current.length >= 5) {
-      flushEvents();
-    } else if (!flushTimer.current) {
-      flushTimer.current = setTimeout(() => {
-        flushTimer.current = null;
-        flushEvents();
-      }, 2000);
-    }
-  }, [flushEvents]);
-
   useEffect(() => {
     if (!workflowId) {
-      // Flush remaining events before reset
-      flushEvents();
       setState(INITIAL_STATE);
       return;
     }
     // Reset state for new workflow
     setState({ ...INITIAL_STATE });
-    eventBuffer.current = [];
 
     const es = new EventSource(`/api/orchestration/${workflowId}/stream`);
     eventSourceRef.current = es;
@@ -175,10 +140,8 @@ export function useOrchestrationStream(workflowId: string | null) {
           return next;
         });
 
-        // Persist event to DB (fire-and-forget, skip noisy timer ticks and replayed events)
-        if (data.type !== "timer_tick" && data.type !== "connected" && !data._replayed) {
-          bufferEvent(data);
-        }
+        // Durable events are now persisted server-side by Temporal activities.
+        // No client-side POST needed.
       } catch {
         // Ignore parse errors (e.g. keepalive comments)
       }
@@ -195,14 +158,8 @@ export function useOrchestrationStream(workflowId: string | null) {
     return () => {
       es.close();
       eventSourceRef.current = null;
-      // Flush remaining buffered events
-      flushEvents();
-      if (flushTimer.current) {
-        clearTimeout(flushTimer.current);
-        flushTimer.current = null;
-      }
     };
-  }, [workflowId, flushEvents]);
+  }, [workflowId]);
 
   const disconnect = useCallback(() => {
     eventSourceRef.current?.close();
