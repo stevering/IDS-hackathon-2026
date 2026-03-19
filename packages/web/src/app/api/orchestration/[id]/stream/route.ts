@@ -26,6 +26,8 @@ export async function GET(
 
   // Resolve user identity: MCP service-key (internal) OR Supabase session (browser)
   let userId: string;
+  // Supabase client — needed later to replay persisted events from the database
+  const supabase = await createSupabaseUserClient();
 
   const mcpServiceKey = request.headers.get("x-mcp-service-key");
   const mcpUserId = request.headers.get("x-mcp-user-id");
@@ -34,7 +36,6 @@ export async function GET(
   if (mcpServiceKey && mcpUserId && expectedKey && mcpServiceKey === expectedKey) {
     userId = mcpUserId;
   } else {
-    const supabase = await createSupabaseUserClient();
     const { data: { user } } = await supabase.auth.getUser();
 
     if (!user) {
@@ -47,38 +48,100 @@ export async function GET(
 
   const encoder = new TextEncoder();
 
+  // ── Helper: replay persisted events from Supabase ─────────────────────
+  async function replayFromDb(
+    controller: ReadableStreamDefaultController,
+    closed: { value: boolean },
+  ) {
+    const { data: persistedEvents } = await supabase
+      .from("orchestration_events")
+      .select("payload")
+      .eq("workflow_id", workflowId)
+      .order("created_at", { ascending: true });
+
+    if (persistedEvents && persistedEvents.length > 0) {
+      const replayable = persistedEvents.filter(
+        (row) => (row.payload as { type?: string })?.type !== "orchestration_completed"
+      );
+      log.info(`replaying ${replayable.length} persisted events from DB (${persistedEvents.length} total)`);
+      for (const row of replayable) {
+        if (closed.value) break;
+        const payload = { ...(row.payload as Record<string, unknown>), _replayed: true };
+        controller.enqueue(encoder.encode(`data: ${JSON.stringify(payload)}\n\n`));
+      }
+    }
+
+    controller.enqueue(
+      encoder.encode(
+        `data: ${JSON.stringify({ type: "orchestration_completed", status: "completed" })}\n\n`
+      )
+    );
+  }
+
+  // ── Check if orchestration is already completed in DB ─────────────────
+  const { count: completedCount } = await supabase
+    .from("orchestration_events")
+    .select("id", { count: "exact", head: true })
+    .eq("workflow_id", workflowId)
+    .eq("payload->>type", "orchestration_completed");
+
+  const alreadyCompleted = (completedCount ?? 0) > 0;
+
+  if (alreadyCompleted) {
+    log.info("orchestration already completed, replaying from DB");
+  }
+
   const stream = new ReadableStream({
     async start(controller) {
-      let closed = false;
+      const closed = { value: false };
 
-      // Handle client disconnect
       request.signal.addEventListener("abort", () => {
-        closed = true;
+        closed.value = true;
         log.info("client disconnected");
       });
 
       try {
-        const { getTemporalClient, statusQuery } = await import("@guardian/temporal/client");
-        const client = await getTemporalClient();
-        const handle = client.workflow.getHandle(workflowId);
-
-        log.info("SSE connected");
         controller.enqueue(
           encoder.encode(`data: ${JSON.stringify({ type: "connected", workflowId })}\n\n`)
         );
 
+        // ── Path 1: already completed → replay from DB directly ─────
+        if (alreadyCompleted) {
+          await replayFromDb(controller, closed);
+          return;
+        }
+
+        // ── Path 2: still active → stream from Temporal ─────────────
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        let handle: any;
+        let statusQuery: any;
+
+        try {
+          const temporal = await import("@guardian/temporal/client");
+          statusQuery = temporal.statusQuery;
+          const client = await temporal.getTemporalClient();
+          handle = client.workflow.getHandle(workflowId);
+        } catch (connErr) {
+          // Temporal down → fallback to DB
+          log.error(`Temporal unavailable: ${connErr}, falling back to DB`);
+          await replayFromDb(controller, closed);
+          return;
+        }
+
         let lastKeepalive = Date.now();
         let pollCount = 0;
         let lastCursor = 0;
+        let consecutiveErrors = 0;
+        const MAX_CONSECUTIVE_ERRORS = 5;
 
-        while (!closed) {
+        while (!closed.value) {
           try {
             const status: OrchestrationStatusResponse = await handle.query(statusQuery, lastCursor);
 
+            consecutiveErrors = 0;
             pollCount++;
             lastCursor = status.eventCursor;
 
-            // Stream new events
             if (status.events.length > 0) {
               log.info(`${status.events.length} new events`, {
                 poll: pollCount,
@@ -86,13 +149,10 @@ export async function GET(
               });
             }
             for (const event of status.events) {
-              if (closed) break;
-              controller.enqueue(
-                encoder.encode(`data: ${JSON.stringify(event)}\n\n`)
-              );
+              if (closed.value) break;
+              controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`));
             }
 
-            // Send timer tick
             if (status.timerRemainingMs !== null) {
               controller.enqueue(
                 encoder.encode(
@@ -105,7 +165,6 @@ export async function GET(
               );
             }
 
-            // Check if orchestration is done
             if (status.status !== "active") {
               log.info(`orchestration ended`, { status: status.status, polls: pollCount });
               controller.enqueue(
@@ -119,64 +178,34 @@ export async function GET(
               break;
             }
           } catch (queryError) {
-            // Workflow may have completed — check if it's a "not found" type error
             const msg = String(queryError);
+
+            // Workflow gone from Temporal → replay from DB
             if (msg.includes("not found") || msg.includes("completed")) {
-              log.info("workflow gone, treating as completed", { polls: pollCount });
-
-              // Replay persisted events from the database so the client can display
-              // the full orchestration history even after the Temporal workflow is gone
-              try {
-                const { data: persistedEvents } = await supabase
-                  .from("orchestration_events")
-                  .select("payload")
-                  .eq("workflow_id", workflowId)
-                  .order("created_at", { ascending: true });
-
-                if (persistedEvents && persistedEvents.length > 0) {
-                  // Filter out orchestration_completed to avoid duplicates
-                  // (we send our own after the replay)
-                  const replayable = persistedEvents.filter(
-                    (row) => (row.payload as { type?: string })?.type !== "orchestration_completed"
-                  );
-                  log.info(`replaying ${replayable.length} persisted events (${persistedEvents.length} total)`);
-                  for (const row of replayable) {
-                    if (closed) break;
-                    // Mark as replayed so the client skips re-persisting
-                    const payload = { ...(row.payload as Record<string, unknown>), _replayed: true };
-                    controller.enqueue(
-                      encoder.encode(`data: ${JSON.stringify(payload)}\n\n`)
-                    );
-                  }
-                }
-              } catch (replayErr) {
-                log.error(`failed to replay persisted events: ${replayErr}`);
-              }
-
-              controller.enqueue(
-                encoder.encode(
-                  `data: ${JSON.stringify({
-                    type: "orchestration_completed",
-                    status: "completed",
-                  })}\n\n`
-                )
-              );
+              log.info("workflow gone, replaying from DB", { polls: pollCount });
+              await replayFromDb(controller, closed);
               break;
             }
 
-            // Send keepalive on transient errors
+            // Temporal connection errors → fallback after N consecutive failures
+            consecutiveErrors++;
+            if (consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {
+              log.error(`${consecutiveErrors} consecutive Temporal errors, falling back to DB`);
+              await replayFromDb(controller, closed);
+              break;
+            }
+
             if (Date.now() - lastKeepalive > KEEPALIVE_MS) {
               controller.enqueue(encoder.encode(": keepalive\n\n"));
               lastKeepalive = Date.now();
             }
           }
 
-          // Wait before next poll
           await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
         }
       } catch (err) {
         log.error(`stream error: ${err}`);
-        if (!closed) {
+        if (!closed.value) {
           controller.enqueue(
             encoder.encode(
               `data: ${JSON.stringify({ type: "error", message: String(err) })}\n\n`
@@ -184,7 +213,7 @@ export async function GET(
           );
         }
       } finally {
-        if (!closed) {
+        if (!closed.value) {
           controller.close();
         }
       }

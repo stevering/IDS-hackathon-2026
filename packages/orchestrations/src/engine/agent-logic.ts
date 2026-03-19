@@ -463,9 +463,12 @@ export function processLLMResponse(
     const idleCount = state.consecutiveTextOnlyResponses ?? 0;
 
     if (idleCount >= 5 && !state.completed) {
-      // Force auto-complete after 5 consecutive text-only responses
-      const summary = content.slice(0, 500) || "Agent auto-completed after idle text loop.";
-      activities.push({ action: "tool_call", toolName: "signal_task_complete", summary: `(auto-completed: ${idleCount} text responses without tool calls)` });
+      // Agent stuck in text loop — report as error, not success
+      const summary = `Agent FAILED: ${idleCount} consecutive text responses without calling any tool. ` +
+        `The agent was stuck planning/narrating instead of executing. ` +
+        `Last directive: "${(state.lastDirectiveContent ?? "").slice(0, 120)}". ` +
+        `Last text: "${content.slice(0, 200)}"`;
+      activities.push({ action: "tool_call", toolName: "signal_task_complete", summary: `(FAILED: idle text loop — ${idleCount} text responses without tool calls)` });
       if (activities.length > 0) {
         effects.push({ type: "emit_activity", activities });
       }
@@ -474,7 +477,7 @@ export function processLLMResponse(
         type: "report_to_orchestrator",
         report: {
           agentShortId: state.agent.shortId,
-          status: "completed",
+          status: "failed",
           summary,
         },
       });

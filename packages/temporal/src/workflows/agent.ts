@@ -661,6 +661,55 @@ return r;`;
     injectToolResult(state, effect.toolCallId, execResultJson, toolImages.length > 0 ? toolImages : undefined);
     recordExecResult(state, false); // count as failure
     return;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Programmatic gate 2: detect "empty frames" — frames created with no children
+  // Skip this check on the FIRST successful execution (step 1 = container creation)
+  // ---------------------------------------------------------------------------
+  let emptyFramesCreated = false;
+  if (execResult.success && verificationSummary && state.execStats.success > 0) {
+    try {
+      const diff = JSON.parse(verificationSummary);
+      const emptyFrames = (diff.added || []).filter(
+        (n: { type?: string; childCount?: number; descendantCount?: number }) =>
+          n.type === "FRAME" && (n.childCount ?? 0) === 0 && (n.descendantCount ?? 0) === 0
+      );
+      if (emptyFrames.length > 0 && diff.added.length === emptyFrames.length) {
+        // ALL added nodes are empty frames — likely a failed population step
+        emptyFramesCreated = true;
+      }
+    } catch { /* best-effort */ }
+  }
+
+  if (emptyFramesCreated) {
+    const rejectParts = [
+      "Execution completed but ALL created frames are EMPTY (childCount=0).",
+      "You created frame containers but did not add any content inside them.",
+      "This usually means your code created the outer frame but the inner content (text nodes, rectangles, child frames) was not appended.",
+      "Re-check your code: make sure you call parent.appendChild(child) for every element.",
+    ];
+    if (verificationSummary) rejectParts.push(`\nCanvas diff:\n${verificationSummary}`);
+    if (fileReviewVerdict) rejectParts.push(`\nFile review said: ${fileReviewVerdict}`);
+
+    const escalation = recordPipelineFailure(state, "All created frames are empty (childCount=0)");
+    if (escalation) rejectParts.push(`\n${escalation}`);
+
+    rejectParts.push(`---\n${JSON.stringify({ success: false, error: "Created frames are empty — no children" })}`);
+    const rejectJson = rejectParts.join("\n");
+
+    await executeEffect(state, {
+      type: "emit_activity",
+      activities: [{
+        action: "guardian_message" as const,
+        recipient: `agent ${state.agent.shortId}`,
+        message: rejectJson,
+      }],
+    }, userId);
+
+    injectToolResult(state, effect.toolCallId, rejectJson);
+    recordExecResult(state, false);
+    return;
   } else if (execResult.success) {
     const successCount = state.execStats.success + 1; // +1 because recordExecResult hasn't been called yet
     const parts = [

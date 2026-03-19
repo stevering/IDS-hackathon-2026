@@ -589,6 +589,22 @@ export function processOrchestratorLLMResponse(
 
         if (resolved) {
           const { key: shortId, agent: agentState } = resolved;
+
+          // Pre-check: block mark_done if the agent's last report indicates failure
+          const lastReport = agentState.lastReport;
+          if (lastReport && (lastReport.status === "failed" || (lastReport.summary && lastReport.summary.includes("FAILED")))) {
+            const blockMsg = `Cannot mark agent ${shortId} as done — its last report indicates failure: "${(lastReport.summary ?? "").slice(0, 200)}". ` +
+              `Send a new directive to retry, or acknowledge the failure.`;
+            state.messageHistory.push({
+              role: "tool",
+              content: `${blockMsg}\n---\n${JSON.stringify({ success: false, reason: "agent_failed" })}`,
+              toolCallId: tc.id,
+            });
+            effects.push({ type: "emit_event", event: { type: "orchestrator_tool_result", toolName: tc.name, result: blockMsg, isError: true } });
+            state.eventLog.push({ type: "orchestrator_tool_result", toolName: tc.name, result: blockMsg, isError: true });
+            break;
+          }
+
           agentState.status = "completed";
           agentState.confirmedByAgent = true;
           // Send terminate signal to the agent workflow so it exits cleanly
