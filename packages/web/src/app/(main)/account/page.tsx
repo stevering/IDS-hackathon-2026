@@ -793,72 +793,74 @@ export default function AccountPage() {
 
             {/* LLM call delegation */}
             {process.env.NODE_ENV !== "production" && (
-              <div className="flex items-center justify-between gap-3 p-3 rounded-lg border border-white/10 bg-white/[0.03]">
-                <div>
-                  <div className="text-sm font-medium">LLM call delegation</div>
-                  <p className="text-[11px] text-white/40 mt-0.5">
-                    Delegate code review and file review LLM calls to an external responder (e.g. Claude Code) via Supabase Realtime.
-                  </p>
-                </div>
-                <button
-                  onClick={async () => {
-                    const next = !devLLMDelegation;
-                    setDevLLMDelegation(next);
-                    setSavingDevSettings(true);
-                    await fetch("/api/user/settings", {
-                      method: "PATCH",
-                      headers: { "Content-Type": "application/json" },
-                      body: JSON.stringify({ devLLMDelegation: next }),
-                    }).catch(() => {});
-                    setSavingDevSettings(false);
-                  }}
-                  disabled={savingDevSettings}
-                  className={`relative shrink-0 w-10 h-5 rounded-full transition-colors cursor-pointer ${
-                    devLLMDelegation ? "bg-violet-600" : "bg-white/20"
-                  }`}
-                >
-                  <span
-                    className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
-                      devLLMDelegation ? "translate-x-5" : ""
-                    }`}
-                  />
-                </button>
-              </div>
-
-              {/* Slow delegation — nested under LLM delegation */}
-              {devLLMDelegation && (
-                <div className="flex items-center justify-between gap-3 p-3 rounded-lg border border-white/10 bg-white/[0.03] ml-3 border-l border-white/10">
+              <>
+                <div className="flex items-center justify-between gap-3 p-3 rounded-lg border border-white/10 bg-white/[0.03]">
                   <div>
-                    <div className="text-sm font-medium">Slow delegation</div>
+                    <div className="text-sm font-medium">LLM call delegation</div>
                     <p className="text-[11px] text-white/40 mt-0.5">
-                      Extend all timeouts (30 min per call, 4 hours total) to allow interactive discussion at each step.
+                      Delegate code review and file review LLM calls to an external responder (e.g. Claude Code) via Supabase Realtime.
                     </p>
                   </div>
                   <button
                     onClick={async () => {
-                      const next = !devSlowDelegation;
-                      setDevSlowDelegation(next);
+                      const next = !devLLMDelegation;
+                      setDevLLMDelegation(next);
                       setSavingDevSettings(true);
                       await fetch("/api/user/settings", {
                         method: "PATCH",
                         headers: { "Content-Type": "application/json" },
-                        body: JSON.stringify({ devSlowDelegation: next }),
+                        body: JSON.stringify({ devLLMDelegation: next }),
                       }).catch(() => {});
                       setSavingDevSettings(false);
                     }}
                     disabled={savingDevSettings}
                     className={`relative shrink-0 w-10 h-5 rounded-full transition-colors cursor-pointer ${
-                      devSlowDelegation ? "bg-violet-600" : "bg-white/20"
+                      devLLMDelegation ? "bg-violet-600" : "bg-white/20"
                     }`}
                   >
                     <span
                       className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
-                        devSlowDelegation ? "translate-x-5" : ""
+                        devLLMDelegation ? "translate-x-5" : ""
                       }`}
                     />
                   </button>
                 </div>
-              )}
+
+                {/* Slow delegation — nested under LLM delegation */}
+                {devLLMDelegation && (
+                  <div className="flex items-center justify-between gap-3 p-3 rounded-lg border border-white/10 bg-white/[0.03] ml-3 border-l border-white/10">
+                    <div>
+                      <div className="text-sm font-medium">Slow delegation</div>
+                      <p className="text-[11px] text-white/40 mt-0.5">
+                        Extend all timeouts (30 min per call, 4 hours total) to allow interactive discussion at each step.
+                      </p>
+                    </div>
+                    <button
+                      onClick={async () => {
+                        const next = !devSlowDelegation;
+                        setDevSlowDelegation(next);
+                        setSavingDevSettings(true);
+                        await fetch("/api/user/settings", {
+                          method: "PATCH",
+                          headers: { "Content-Type": "application/json" },
+                          body: JSON.stringify({ devSlowDelegation: next }),
+                        }).catch(() => {});
+                        setSavingDevSettings(false);
+                      }}
+                      disabled={savingDevSettings}
+                      className={`relative shrink-0 w-10 h-5 rounded-full transition-colors cursor-pointer ${
+                        devSlowDelegation ? "bg-violet-600" : "bg-white/20"
+                      }`}
+                    >
+                      <span
+                        className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
+                          devSlowDelegation ? "translate-x-5" : ""
+                        }`}
+                      />
+                    </button>
+                  </div>
+                )}
+              </>
             )}
           </div>
         )}

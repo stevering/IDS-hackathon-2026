@@ -10,24 +10,65 @@ BASE="https://ookghxkvzdnqicjdslej.supabase.co/rest/v1/intercept_queue"
 STREAM="http://localhost:3000/api/intercept/stream"
 HDRS=(-H "apikey: $KEY" -H "Authorization: Bearer $KEY")
 
+POLL_SELECT="request_id,purpose,agent_short_id,step_count,current_directive,request_payload,exec_stats"
+TMP_DIR="$SCRIPT_DIR/tmp"
+mkdir -p "$TMP_DIR"
+
+# Shared Python formatter for poll/pollwait output
+# - Prints enriched summary line to stdout
+# - Writes full request_payload to tmp/<request_id>.payload.json
+FORMAT_PY='
+import json,sys,os
+tmp_dir=os.environ.get("TMP_DIR","tmp")
+data=json.load(sys.stdin)
+if not data:
+    print("0 pending")
+    sys.exit(0)
+for r in data:
+    rid=r["request_id"]; p=r["purpose"]; a=r.get("agent_short_id") or "-"
+    st=r.get("step_count"); st=str(st) if st is not None else "-"
+    payload=r.get("request_payload") or {}
+    msgs=payload.get("messages") or []
+    directive=r.get("current_directive") or ""
+    stats=r.get("exec_stats") or {}
+    # Write full payload to file for Claude Code to read
+    payload_file=os.path.join(tmp_dir, f"{rid}.payload.json")
+    with open(payload_file,"w") as f:
+        json.dump({"purpose":p,"agent":a,"step":st,"directive":directive,"exec_stats":stats,"messages":msgs,"tools":payload.get("tools",[])},f,indent=2)
+    # Extract last message summary for stdout preview
+    last=""
+    if msgs:
+        lm=msgs[-1]
+        c=lm.get("content","")
+        if isinstance(c,str):
+            last=c[:200].replace("\n"," ")
+        elif isinstance(c,list):
+            for part in reversed(c):
+                if isinstance(part,dict):
+                    if part.get("type")=="text":
+                        last=part["text"][:200].replace("\n"," "); break
+                    elif part.get("type")=="tool_result":
+                        last="[tool_result] "+str(part.get("content",""))[:150].replace("\n"," "); break
+    # Print enriched summary line
+    line=f"{rid} | {p} | {a} | step {st}"
+    if directive:
+        line+=f" | directive: {directive[:120]}"
+    if last:
+        line+=f" | last_msg: {last[:200]}"
+    print(line)
+print(f"[PAYLOADS] Full payloads written to {tmp_dir}/<request_id>.payload.json — read these before responding")
+if len(data) > 1:
+    print(f"[PERF] {len(data)} pending — Write JSON files in parallel, then: ./scripts/intercept.sh batch \"send id1 tmp/f1.json\" \"ack id2 msg\"")
+'
+
 cmd="${1:-help}"
 shift || true
 
 case "$cmd" in
   # Poll pending intercepts
   poll)
-    curl -s "$BASE?user_id=eq.$USER_ID&status=eq.pending&select=request_id,purpose,agent_short_id,step_count&order=created_at" "${HDRS[@]}" \
-      | python3 -c "
-import json,sys
-data=json.load(sys.stdin)
-if not data:
-    print('0 pending')
-else:
-    for r in data:
-        print(f'{r[\"request_id\"]} | {r[\"purpose\"]} | {r.get(\"agent_short_id\") or \"-\"} | step {r.get(\"step_count\") if r.get(\"step_count\") is not None else \"-\"}')
-    if len(data) > 1:
-        print(f'[PERF] {len(data)} pending — Write JSON files in parallel, then: ./scripts/intercept.sh batch \"send id1 tmp/f1.json\" \"ack id2 msg\"')
-"
+    curl -s "$BASE?user_id=eq.$USER_ID&status=eq.pending&select=$POLL_SELECT&order=created_at" "${HDRS[@]}" \
+      | TMP_DIR="$TMP_DIR" python3 -c "$FORMAT_PY"
     ;;
 
   # Respond to an intercept: ./intercept.sh respond <request_id> <json_file_or_content>
@@ -75,18 +116,11 @@ else:
   # Poll-wait: check DB first (catch gap), then SSE push (no polling)
   pollwait)
     # Step 1: check DB for already-pending intercepts (SSE gap)
-    result=$(curl -s "$BASE?user_id=eq.$USER_ID&status=eq.pending&select=request_id,purpose,agent_short_id,step_count&order=created_at" "${HDRS[@]}")
+    result=$(curl -s "$BASE?user_id=eq.$USER_ID&status=eq.pending&select=$POLL_SELECT&order=created_at" "${HDRS[@]}")
     count=$(echo "$result" | python3 -c "import json,sys; print(len(json.load(sys.stdin)))")
     if [ "$count" -gt 0 ]; then
-      echo "$result" | python3 -c "
-import json,sys
-data=json.load(sys.stdin)
-for r in data:
-    print(f'{r[\"request_id\"]} | {r[\"purpose\"]} | {r.get(\"agent_short_id\") or \"-\"} | step {r.get(\"step_count\") if r.get(\"step_count\") is not None else \"-\"}')
-if len(data) > 1:
-    print(f'[PERF] {len(data)} pending — Write JSON files in parallel, then: ./scripts/intercept.sh batch \"send id1 tmp/f1.json\" \"ack id2 msg\"')
-"
-      echo "[ACTION] Read output above. Write JSON responses in tmp/, then: ./scripts/intercept.sh batch \"send id tmp/f.json\" \"ack id msg\""
+      echo "$result" | TMP_DIR="$TMP_DIR" python3 -c "$FORMAT_PY"
+      echo "[ACTION] Read payload files in tmp/<id>.payload.json, then write responses and: ./scripts/intercept.sh batch \"send id tmp/f.json\" \"approve id\""
       exit 0
     fi
     # Step 2: nothing pending — wait for SSE push (no polling)
@@ -96,16 +130,9 @@ if len(data) > 1:
       -H "x-mcp-user-id: $USER_ID" \
       "$STREAM" 2>/dev/null | grep -m 1 '^data:' | sed 's/^data: //' || true)
     # Step 3: SSE event received — re-check DB (event may have peers)
-    result=$(curl -s "$BASE?user_id=eq.$USER_ID&status=eq.pending&select=request_id,purpose,agent_short_id,step_count&order=created_at" "${HDRS[@]}")
-    echo "$result" | python3 -c "
-import json,sys
-data=json.load(sys.stdin)
-for r in data:
-    print(f'{r[\"request_id\"]} | {r[\"purpose\"]} | {r.get(\"agent_short_id\") or \"-\"} | step {r.get(\"step_count\") if r.get(\"step_count\") is not None else \"-\"}')
-if len(data) > 1:
-    print(f'[PERF] {len(data)} pending — Write JSON files in parallel, then: ./scripts/intercept.sh batch \"send id1 tmp/f1.json\" \"ack id2 msg\"')
-"
-    echo "[ACTION] Read output above. Write JSON responses in tmp/, then: ./scripts/intercept.sh batch \"send id tmp/f.json\" \"ack id msg\""
+    result=$(curl -s "$BASE?user_id=eq.$USER_ID&status=eq.pending&select=$POLL_SELECT&order=created_at" "${HDRS[@]}")
+    echo "$result" | TMP_DIR="$TMP_DIR" python3 -c "$FORMAT_PY"
+    echo "[ACTION] Read payload files in tmp/<id>.payload.json, then write responses and: ./scripts/intercept.sh batch \"send id tmp/f.json\" \"approve id\""
     ;;
 
   # Signal task complete: ./intercept.sh done <id> "summary text"
