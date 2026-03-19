@@ -60,3 +60,4 @@ electron.vite.config.*.mjs
 
 # dev logs
 logs/
+tmp/

@@ -17,50 +17,42 @@ If you need a temprary directory for operations, create one here in the project 
 
 When the user enables "LLM call delegation" in Account > Developers, orchestration LLM calls are delegated to you. You act as the LLM instead of the AI provider.
 
-### Fastest method: direct SQL via Supabase MCP (recommended)
+### Method: `scripts/intercept.sh` (direct curl PostgREST — ~0.1s per call)
 
-Intercepts are stored in the `intercept_queue` table. Use `mcp__supabase__execute_sql` to poll and respond:
+**NEVER use `mcp__supabase__execute_sql` for intercepts** — it goes through the Management API (~5s). The script uses direct curl to PostgREST (~0.1s).
 
-```sql
--- Poll pending intercepts
-SELECT request_id, purpose, agent_short_id, model, current_directive, step_count,
-       request_payload->'messages' as messages, created_at
-FROM intercept_queue
-WHERE user_id = '<USER_ID>' AND status = 'pending'
-ORDER BY created_at;
+### Flow
 
--- Respond to an intercept
-UPDATE intercept_queue
-SET status = 'responded',
-    response_content = 'APPROVED',
-    responded_by = 'claude_code_sql',
-    responded_at = now()
-WHERE request_id = '<REQUEST_ID>';
+1. Launch `./scripts/intercept.sh pollwait` in background (`run_in_background=true`, `timeout=600000`)
+2. When notified, read the output file — it lists pending intercepts
+3. Write response JSON files in `tmp/` using the Write tool (multiple files in parallel)
+4. Respond using `batch` (runs all sub-commands in parallel internally):
+   ```bash
+   ./scripts/intercept.sh batch "send id1 tmp/f1.json" "ack id2 msg" "done id3 summary"
+   ```
+5. Repeat from step 1
 
--- Respond with toolCalls
-UPDATE intercept_queue
-SET status = 'responded',
-    response_content = 'Directives assigned.',
-    response_tool_calls = '[{"id":"tc-1","name":"send_agent_directive","arguments":{"agentShortId":"#agent","content":"..."}}]'::jsonb,
-    responded_by = 'claude_code_sql',
-    responded_at = now()
-WHERE request_id = '<REQUEST_ID>';
+### Rules
+
+- **Use `batch`** for all responses: one tool call, parallel internally. Never use `&` in bash (triggers security prompt).
+- **Write JSON files in parallel** too (multiple Write tool calls in same message).
+- **`pollwait`** replaces `poll` and `listen`. It checks DB first (catches SSE gap), then waits for SSE push (no polling).
+- **Always relaunch `pollwait`** after responding.
+- **Temp files in `tmp/`** (repo), never `/tmp/` (system).
+
+### Script commands
+
 ```
-
-### Alternative: SSE stream (background listener)
-
-```bash
-export $(grep -v '^#' .env.local | grep STORAGE_SUPABASE_SERVICE_ROLE_KEY | xargs) && \
-curl -s -N \
-  -H "x-mcp-service-key: $STORAGE_SUPABASE_SERVICE_ROLE_KEY" \
-  -H "x-mcp-user-id: <USER_ID>" \
-  "http://localhost:3000/api/intercept/stream?purpose=agent,orchestrator"
+pollwait                     — block until pending (DB check + SSE push). Use this.
+approve <id> [<id>...]       — APPROVED (code_review, batch)
+verify <id> [<id>...]        — VERIFIED (file_review, batch)
+done <id> "summary"          — signal_task_complete
+markdone <id> #agent         — mark_agent_done
+ack <id> "message"           — orchestrator text-only ack
+send <id> <file.json>        — respond with JSON file (for toolCalls)
+poll                         — instant check (no wait)
+status                       — recent intercept timeline
 ```
-
-### Alternative: MCP tools
-
-- `watch_intercepts(timeoutMs?)` — checks table first, then listens for broadcast
-- `respond_to_intercept(requestId, content, toolCalls?)` — updates table + broadcasts
 
 ### Response formats
 
@@ -68,4 +60,6 @@ curl -s -N \
 - file_review: `VERIFIED: <description>` or `ISSUE: <description>`
 - agent/orchestrator: free-form text + optional toolCalls
 
-Timeout: 120s (normal) or 30 min (slow delegation mode).
+### Timeout
+
+120s (normal) or 30 min (slow delegation mode).
