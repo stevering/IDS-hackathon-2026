@@ -1,0 +1,40 @@
+{
+  "_match": {
+    "purpose": "orchestrator",
+    "messageCount": 2,
+    "comment": "First orchestrator call: system + user 'New orchestration started'"
+  },
+  "status": "responded",
+  "response_content": "Assigning tasks to all three agents now.",
+  "response_tool_calls": [
+    {
+      "id": "tc1",
+      "name": "send_agent_directive",
+      "arguments": {
+        "agentShortId": "{{AGENT_A}}",
+        "content": "Create TWO frames on the current page:\n\n1. **Color Palette** frame:\n- Horizontal auto-layout, gap 24px, padding 24px\n- Contains 5 swatch groups, each is a vertical auto-layout (gap 8px, center-aligned):\n  - 80x80 rounded rectangle (cornerRadius 12) filled with the color\n  - Text label below: color name + hex value, Inter Regular 12px, color #374151\n- The 5 swatches:\n  - \"Primary\" #2563EB\n  - \"Secondary\" #7C3AED\n  - \"Success\" #16A34A\n  - \"Warning\" #F59E0B\n  - \"Danger\" #DC2626\n\n2. **Typography Scale** frame (placed below Color Palette):\n- Vertical auto-layout, gap 16px, padding 24px\n- Contains 6 text samples, each showing its name and size:\n  - \"Heading 1 — 48px\" in Inter Bold 48px, color #111827\n  - \"Heading 2 — 36px\" in Inter Bold 36px, color #111827\n  - \"Heading 3 — 28px\" in Inter Semi Bold 28px, color #111827\n  - \"Heading 4 — 22px\" in Inter Semi Bold 22px, color #111827\n  - \"Body — 16px\" in Inter Regular 16px, color #111827\n  - \"Caption — 12px\" in Inter Regular 12px, color #6B7280\n\nUse figma_plugin_execute for each step. Load Inter fonts before setting text. Return node IDs of created frames.",
+        "expectedResult": "Two frames created: Color Palette with 5 swatches and Typography Scale with 6 text samples"
+      }
+    },
+    {
+      "id": "tc2",
+      "name": "send_agent_directive",
+      "arguments": {
+        "agentShortId": "{{AGENT_B}}",
+        "content": "Create TWO frames on the current page:\n\n1. **Buttons** frame:\n- Vertical auto-layout container, gap 24px, padding 24px\n- Inside, 4 rows (one per variant), each row is horizontal auto-layout, gap 16px\n- Each row has 2 buttons: Default (140x44) and Small (100x32)\n- All buttons: cornerRadius 8, text centered, font Inter Semi Bold\n- Default size: fontSize 15px. Small size: fontSize 13px.\n- Variants:\n  - **Primary**: fill #2563EB, text white\n  - **Secondary**: fill #7C3AED, text white\n  - **Outline**: fill white (#FFFFFF), stroke #2563EB 2px, text #2563EB\n  - **Ghost**: no fill (transparent), no stroke, text #2563EB\n- Button labels: \"Primary\", \"Secondary\", \"Outline\", \"Ghost\" (same for both sizes)\n\n2. **Inputs** frame (placed below Buttons):\n- Vertical auto-layout, gap 24px, padding 24px\n- 4 input field groups stacked vertically. Each group is vertical auto-layout (gap 6px):\n  - Label text above: Inter Medium 14px, color #111827\n  - Input rectangle: 320x44, cornerRadius 8, white fill\n  - Placeholder text inside: Inter Regular 14px, color #9CA3AF\n- Variants:\n  - **Default**: label \"Full Name\", placeholder \"Enter your name\", stroke #D1D5DB 1px\n  - **Focus**: label \"Email\", placeholder \"Enter your email\", stroke #2563EB 2px\n  - **Error**: label \"Password\", placeholder \"Enter password\", stroke #DC2626 2px + helper text below \"This field is required\" in Inter Regular 12px color #DC2626\n  - **Disabled**: label \"Phone\", placeholder \"Not available\", fill #F3F4F6, text color #9CA3AF, no stroke\n\nUse figma_plugin_execute for each step. Load Inter fonts before setting text.",
+        "expectedResult": "Two frames created: Buttons with 8 buttons (4 variants x 2 sizes) and Inputs with 4 input field states"
+      }
+    },
+    {
+      "id": "tc3",
+      "name": "send_agent_directive",
+      "arguments": {
+        "agentShortId": "{{AGENT_C}}",
+        "content": "Create a **Dashboard Card** frame on the current page:\n\n- Root frame: 400x480, white fill (#FFFFFF), cornerRadius 16\n- Vertical auto-layout, padding 20px all sides, gap 16px\n\nChildren (in order):\n\na. **Header row**: horizontal auto-layout, width fill-parent (set AFTER appendChild), items spaced between\n   - Left: text \"Monthly Revenue\", Inter Semi Bold 28px, color #111827\n   - Right: badge frame with text \"↑ 12%\", Inter Semi Bold 12px, white text, fill #16A34A, cornerRadius 12, padding top/bottom 4px left/right 10px\n\nb. **Big number**: text \"$48,250\", Inter Bold 40px, color #111827\n\nc. **Bar chart**: horizontal auto-layout, gap 8px, center-aligned\n   - 7 column groups, each is vertical auto-layout (gap 4px, center-aligned):\n     - Vertical bar: width 32px, cornerRadius 6 (top corners only: topLeftRadius=6, topRightRadius=6, bottomLeftRadius=0, bottomRightRadius=0)\n     - Day label below: Inter Regular 10px, color #6B7280\n   - Bar data (name, height, color):\n     - Mon: 60px, #2563EB\n     - Tue: 85px, #DBEAFE\n     - Wed: 45px, #2563EB\n     - Thu: 95px, #DBEAFE\n     - Fri: 70px, #2563EB\n     - Sat: 110px, #DBEAFE\n     - Sun: 80px, #2563EB\n\nd. **Divider**: frame, width fill-parent, height 1px, fill #E5E7EB\n\ne. **Stats row**: horizontal auto-layout, gap 16px, width fill-parent, space-between\n   - 3 stat blocks, each vertical auto-layout (gap 4px):\n     - Label: Inter Regular 12px, #6B7280\n     - Value: Inter Semi Bold 16px, #111827\n   - Data: \"Avg Order\" / \"$125\", \"Orders\" / \"386\", \"Growth\" / \"12%\"\n\nf. **CTA button**: frame, width fill-parent, height 44px, fill #2563EB, cornerRadius 8\n   - Text centered: \"View Full Report\", Inter Semi Bold 15px, white\n\nIMPORTANT: Do NOT use effects/DROP_SHADOW (causes validation errors). Set layoutSizingHorizontal='FILL' AFTER appendChild to parent.\n\nUse figma_plugin_execute step by step. Load Inter fonts before setting text.",
+        "expectedResult": "Dashboard Card frame created with header, big number, bar chart, divider, stats row, and CTA button"
+      }
+    }
+  ],
+  "responded_by": "replay_script",
+  "responded_at": "{{TIMESTAMP}}"
+}

@@ -1,0 +1,15 @@
+{
+  "name": "mini-design-system",
+  "description": "Build a mini design system across 3 Figma files: Foundations (A), Core Components (B), Dashboard Card (C)",
+  "agentRoles": {
+    "A": { "label": "Foundations (Color Palette + Typography)" },
+    "B": { "label": "Core Components (Buttons + Inputs)" },
+    "C": { "label": "Dashboard Card Composite" }
+  },
+  "agentMapping": "auto",
+  "options": {
+    "autoApproveCodeReview": true,
+    "autoVerifyFileReview": true,
+    "maxRetries": 2
+  }
+}

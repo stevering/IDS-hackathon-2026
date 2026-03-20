@@ -1,0 +1,24 @@
+{
+  "_match": {
+    "purpose": "agent",
+    "role": "A",
+    "comment": "Agent A — both frames done, signal_task_complete"
+  },
+  "_dynamic": "signal_task_complete_with_node_ids",
+  "status": "responded",
+  "response_content": "Both frames created successfully. Signaling task complete.",
+  "response_tool_calls": [
+    {
+      "id": "tc1",
+      "name": "signal_task_complete",
+      "arguments": {
+        "summary": "Created Color Palette frame with 5 color swatches (Primary, Secondary, Success, Warning, Danger) and Typography Scale frame with 6 text samples (H1-H4, Body, Caption).",
+        "artifacts": {
+          "nodeIds": []
+        }
+      }
+    }
+  ],
+  "responded_by": "replay_script",
+  "responded_at": "{{TIMESTAMP}}"
+}

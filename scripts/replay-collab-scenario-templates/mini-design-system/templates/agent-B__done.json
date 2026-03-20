@@ -1,0 +1,24 @@
+{
+  "_match": {
+    "purpose": "agent",
+    "role": "B",
+    "comment": "Agent B — both frames done, signal_task_complete"
+  },
+  "_dynamic": "signal_task_complete_with_node_ids",
+  "status": "responded",
+  "response_content": "Both Buttons and Inputs frames created. Task complete.",
+  "response_tool_calls": [
+    {
+      "id": "tc1",
+      "name": "signal_task_complete",
+      "arguments": {
+        "summary": "Created Buttons frame with 8 buttons (4 variants x 2 sizes: Primary, Secondary, Outline, Ghost) and Inputs frame with 4 input states (Default, Focus, Error, Disabled).",
+        "artifacts": {
+          "nodeIds": []
+        }
+      }
+    }
+  ],
+  "responded_by": "replay_script",
+  "responded_at": "{{TIMESTAMP}}"
+}

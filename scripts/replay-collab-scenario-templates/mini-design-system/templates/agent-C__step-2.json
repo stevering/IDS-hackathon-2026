@@ -1,0 +1,21 @@
+{
+  "_match": {
+    "purpose": "agent",
+    "role": "C",
+    "step": "2",
+    "comment": "Agent C step 2 — bar chart done, add divider + stats + CTA. Uses {{NODE_C_0}} for parent ID."
+  },
+  "status": "responded",
+  "response_content": "Bar chart added. Adding divider, stats row, and CTA button.",
+  "response_tool_calls": [
+    {
+      "id": "tc1",
+      "name": "figma_plugin_execute",
+      "arguments": {
+        "code": "await figma.loadFontAsync({ family: 'Inter', style: 'Regular' });\nawait figma.loadFontAsync({ family: 'Inter', style: 'Semi Bold' });\nconst card = await figma.getNodeByIdAsync('{{NODE_C_0}}');\n\nconst divider = figma.createFrame();\ndivider.name = 'Divider';\ndivider.resize(360, 1);\ndivider.fills = [{ type: 'SOLID', color: { r: 0xE5/255, g: 0xE7/255, b: 0xEB/255 } }];\ncard.appendChild(divider);\ndivider.layoutSizingHorizontal = 'FILL';\n\nconst statsRow = figma.createFrame();\nstatsRow.name = 'Stats Row';\nstatsRow.layoutMode = 'HORIZONTAL';\nstatsRow.primaryAxisAlignItems = 'SPACE_BETWEEN';\nstatsRow.counterAxisAlignItems = 'MIN';\nstatsRow.primaryAxisSizingMode = 'AUTO';\nstatsRow.counterAxisSizingMode = 'AUTO';\nstatsRow.fills = [];\n\nconst stats = [\n  { label: 'Avg Order', value: '$125' },\n  { label: 'Orders', value: '386' },\n  { label: 'Growth', value: '12%' }\n];\n\nfor (const s of stats) {\n  const block = figma.createFrame();\n  block.name = s.label;\n  block.layoutMode = 'VERTICAL';\n  block.itemSpacing = 4;\n  block.primaryAxisSizingMode = 'AUTO';\n  block.counterAxisSizingMode = 'AUTO';\n  block.fills = [];\n\n  const lbl = figma.createText();\n  lbl.characters = s.label;\n  lbl.fontSize = 12;\n  lbl.fills = [{ type: 'SOLID', color: { r: 0x6B/255, g: 0x72/255, b: 0x80/255 } }];\n  block.appendChild(lbl);\n\n  const val = figma.createText();\n  val.characters = s.value;\n  val.fontSize = 16;\n  val.fontName = { family: 'Inter', style: 'Semi Bold' };\n  val.fills = [{ type: 'SOLID', color: { r: 0x11/255, g: 0x18/255, b: 0x27/255 } }];\n  block.appendChild(val);\n\n  statsRow.appendChild(block);\n}\n\ncard.appendChild(statsRow);\nstatsRow.layoutSizingHorizontal = 'FILL';\n\nconst cta = figma.createFrame();\ncta.name = 'CTA Button';\ncta.resize(360, 44);\ncta.cornerRadius = 8;\ncta.fills = [{ type: 'SOLID', color: { r: 0x25/255, g: 0x63/255, b: 0xEB/255 } }];\ncta.layoutMode = 'HORIZONTAL';\ncta.primaryAxisAlignItems = 'CENTER';\ncta.counterAxisAlignItems = 'CENTER';\n\nconst ctaText = figma.createText();\nctaText.characters = 'View Full Report';\nctaText.fontSize = 15;\nctaText.fontName = { family: 'Inter', style: 'Semi Bold' };\nctaText.fills = [{ type: 'SOLID', color: { r: 1, g: 1, b: 1 } }];\ncta.appendChild(ctaText);\n\ncard.appendChild(cta);\ncta.layoutSizingHorizontal = 'FILL';\n\nreturn 'done';"
+      }
+    }
+  ],
+  "responded_by": "replay_script",
+  "responded_at": "{{TIMESTAMP}}"
+}

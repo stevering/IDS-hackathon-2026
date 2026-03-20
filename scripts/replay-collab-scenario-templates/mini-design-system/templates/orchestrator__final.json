@@ -1,0 +1,11 @@
+{
+  "_match": {
+    "purpose": "orchestrator",
+    "comment": "Final orchestrator summary after all agents done"
+  },
+  "status": "responded",
+  "response_content": "All 3 agents completed successfully. Mini design system built across 3 files:\n- File A: Color Palette + Typography Scale\n- File B: Buttons + Inputs\n- File C: Dashboard Card with header, chart, stats, and CTA",
+  "response_tool_calls": [],
+  "responded_by": "replay_script",
+  "responded_at": "{{TIMESTAMP}}"
+}

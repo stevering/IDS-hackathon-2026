@@ -1,0 +1,11 @@
+{
+  "_match": {
+    "purpose": "agent",
+    "comment": "Generic ack for agents that receive broadcasts — no action needed"
+  },
+  "status": "responded",
+  "response_content": "Task already completed. Waiting silently.",
+  "response_tool_calls": [],
+  "responded_by": "replay_script",
+  "responded_at": "{{TIMESTAMP}}"
+}

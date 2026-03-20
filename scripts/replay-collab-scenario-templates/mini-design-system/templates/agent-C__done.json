@@ -1,0 +1,24 @@
+{
+  "_match": {
+    "purpose": "agent",
+    "role": "C",
+    "comment": "Agent C — Dashboard Card complete, signal_task_complete"
+  },
+  "_dynamic": "signal_task_complete_with_node_ids",
+  "status": "responded",
+  "response_content": "Dashboard Card complete with all 6 sections. Signaling task complete.",
+  "response_tool_calls": [
+    {
+      "id": "tc1",
+      "name": "signal_task_complete",
+      "arguments": {
+        "summary": "Created Dashboard Card with 6 sections: header row with title and badge, big number $48,250, bar chart (Mon-Sun), divider, stats row (Avg Order $125, Orders 386, Growth 12%), and CTA button 'View Full Report'.",
+        "artifacts": {
+          "nodeIds": []
+        }
+      }
+    }
+  ],
+  "responded_by": "replay_script",
+  "responded_at": "{{TIMESTAMP}}"
+}

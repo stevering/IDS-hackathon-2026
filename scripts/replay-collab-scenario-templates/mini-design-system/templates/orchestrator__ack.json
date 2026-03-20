@@ -1,0 +1,11 @@
+{
+  "_match": {
+    "purpose": "orchestrator",
+    "comment": "Generic orchestrator ack — no agent report to act on"
+  },
+  "status": "responded",
+  "response_content": "Waiting for agent reports.",
+  "response_tool_calls": [],
+  "responded_by": "replay_script",
+  "responded_at": "{{TIMESTAMP}}"
+}
