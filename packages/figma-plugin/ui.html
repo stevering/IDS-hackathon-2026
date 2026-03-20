@@ -1247,6 +1247,31 @@
 
         }
 
+        // ── Proxy RPC results — route to FigmaProxy client ────────────────
+        if (msg.type === 'PROXY_RESULT') {
+            if (typeof FigmaProxy !== 'undefined') FigmaProxy._handleResult(msg);
+            return; // internal message, don't forward to webview
+        }
+
+        // ── Cache variables data for FC Bridge handshake & GET_VARIABLES_DATA ──
+        if (msg.type === 'VARIABLES_DATA') {
+            window.__cachedVariablesData = msg.data || msg;
+        }
+
+        // ── Forward EXECUTE_CODE_RESULT to Proxy client (for executeCode calls) ──
+        if (msg.type === 'EXECUTE_CODE_RESULT' && typeof FigmaProxy !== 'undefined') {
+            FigmaProxy._handleResult(msg);
+        }
+
+        // ── Broadcast Figma events to connected FC MCP servers ──
+        if (typeof _fcBroadcast === 'function') {
+            if (msg.type === 'DOCUMENT_CHANGE') _fcBroadcast({ type: 'DOCUMENT_CHANGE', data: msg.data });
+            if (msg.type === 'CONSOLE_CAPTURE') _fcBroadcast(msg);
+            if (msg.type === 'selection-changed') _fcBroadcast({ type: 'SELECTION_CHANGE', data: msg.data });
+            if (msg.type === 'page-changed') _fcBroadcast({ type: 'PAGE_CHANGE', data: msg.data });
+            if (msg.type === 'VARIABLES_DATA') _fcBroadcast({ type: 'VARIABLES_DATA', data: msg.data || msg });
+        }
+
         // Always relay every code.js message to the webview iframe (catch-all)
         // This covers: response, selection-changed, ai-response, typing,
         // EXECUTE_CODE_RESULT, VARIABLES_DATA, figpal-init, and any future types.
@@ -1274,6 +1299,559 @@
             parent.postMessage({ pluginMessage: event.data }, '*');
         }
     });
+
+    // ── Figma Proxy Client ─────────────────────────────────────────────────────
+    // Async wrapper around postMessage-based RPC to the Proxy Handler in code.ts.
+    // Used by the FC WS Bridge adapters and available for Guardian internal use.
+    // ───────────────────────────────────────────────────────────────────────────
+    var FigmaProxy = (function () {
+        var pending = {};
+        var counter = 0;
+
+        function send(msgType, data, timeout) {
+            timeout = timeout || 10000;
+            return new Promise(function (resolve, reject) {
+                var requestId = '__proxy_' + (++counter);
+                var timer = setTimeout(function () {
+                    delete pending[requestId];
+                    reject(new Error('Proxy timeout after ' + timeout + 'ms'));
+                }, timeout);
+                pending[requestId] = { resolve: resolve, reject: reject, timer: timer };
+                parent.postMessage({ pluginMessage: Object.assign({ type: msgType, requestId: requestId }, data) }, '*');
+            });
+        }
+
+        function handleResult(msg) {
+            var id = msg.requestId || msg.id;
+            var p = pending[id];
+            if (!p) return false;
+            clearTimeout(p.timer);
+            delete pending[id];
+            if (msg.error) { p.reject(new Error(msg.error)); }
+            else { p.resolve(msg.value !== undefined ? msg.value : msg.result); }
+            return true;
+        }
+
+        return {
+            _handleResult: handleResult,
+            call: function (target, method, args) { return send('PROXY_CALL', { target: target, method: method, args: args || [] }); },
+            get: function (handle, prop) { return send('PROXY_GET', { handle: handle, prop: prop }); },
+            set: function (handle, prop, value) { return send('PROXY_SET', { handle: handle, prop: prop, value: value }); },
+            snapshot: function (handle, props) { return send('PROXY_SNAPSHOT', { handle: handle, props: props }); },
+            iterate: function (handle, props) { return send('PROXY_ITERATE', { handle: handle, props: props }); },
+            callForEach: function (handle, method, argSets) { return send('PROXY_CALL_EACH', { handle: handle, method: method, argSets: argSets }); },
+            release: function () {
+                var handles = Array.prototype.slice.call(arguments);
+                if (handles.length === 0) return Promise.resolve();
+                return send('PROXY_RELEASE', { handles: handles });
+            },
+            executeCode: function (code, timeout) {
+                return new Promise(function (resolve, reject) {
+                    var requestId = '__proxy_' + (++counter);
+                    var timer = setTimeout(function () {
+                        delete pending[requestId];
+                        reject(new Error('Execute timeout'));
+                    }, timeout || 15000);
+                    pending[requestId] = { resolve: resolve, reject: reject, timer: timer };
+                    parent.postMessage({ pluginMessage: { type: 'EXECUTE_CODE', requestId: requestId, code: code, timeout: timeout } }, '*');
+                });
+            }
+        };
+    })();
+
+    // ── Figma Console MCP Bridge ─────────────────────────────────────────────
+    // Connects to Figma Console MCP servers on ports 9223-9232 and translates
+    // their WebSocket protocol into Proxy calls against Guardian's code.ts.
+    // ─────────────────────────────────────────────────────────────────────────
+    var _fcBroadcast = null; // set by the bridge IIFE, used by onmessage for event forwarding
+
+    (function initFigmaConsoleBridge() {
+        var FC_PORT_START = 9223;
+        var FC_PORT_END = 9232;
+        var activeConnections = [];
+        var isScanning = false;
+        var reconnectDelay = 500;
+        var maxReconnectDelay = 30000;
+        var reconnectAttempts = 0;
+        var maxReconnectAttempts = 50;
+
+        // ── hex → Figma RGB (0-1) helper ──────────────────────────────────
+        function hexToFigmaRGB(hex) {
+            hex = hex.replace('#', '');
+            if (hex.length === 3) hex = hex.split('').map(function (c) { return c + c; }).join('');
+            if (hex.length === 4) hex = hex.split('').map(function (c) { return c + c; }).join('');
+            var r = parseInt(hex.slice(0, 2), 16) / 255;
+            var g = parseInt(hex.slice(2, 4), 16) / 255;
+            var b = parseInt(hex.slice(4, 6), 16) / 255;
+            if (hex.length >= 8) {
+                var a = parseInt(hex.slice(6, 8), 16) / 255;
+                return { r: r, g: g, b: b, a: a };
+            }
+            return { r: r, g: g, b: b };
+        }
+
+        // Helper: get node by ID via Proxy, throw if not found.
+        // ISO Figma Console plugin — error message must be "Node not found: <id>"
+        async function getNode(px, nodeId) {
+            var n = await px.call('figma', 'getNodeByIdAsync', [nodeId]);
+            if (!n || (typeof n !== 'string')) throw new Error('Node not found: ' + nodeId);
+            return n;
+        }
+
+        // ── Method adapters ───────────────────────────────────────────────
+        // Each adapter is an async function(proxy, params) → result.
+        //
+        // ISO FIGMA CONSOLE PLUGIN — Response formats and error messages
+        // must match the Figma Console Desktop Bridge plugin exactly.
+        // The MCP server parses specific fields (success, node, variable,
+        // collection, deleted, image, result, propertyName) and specific
+        // error messages (e.g. "Node not found: <id>"). Do not change
+        // return shapes or error wording without verifying against the
+        // native plugin behavior.
+        var fcMethods = {
+            // ── Simple property operations ──────────────────────────────
+            RESIZE_NODE: async function (px, p) {
+                var n = await getNode(px, p.nodeId);
+                var method = p.withConstraints !== false ? 'resize' : 'resizeWithoutConstraints';
+                await px.call(n, method, [p.width, p.height]);
+                var r = await px.snapshot(n, ['id', 'name', 'width', 'height']);
+                px.release(n); return { success: true, node: r };
+            },
+            MOVE_NODE: async function (px, p) {
+                var n = await getNode(px, p.nodeId);
+                await px.set(n, 'x', p.x); await px.set(n, 'y', p.y);
+                var r = await px.snapshot(n, ['id', 'name', 'x', 'y']);
+                px.release(n); return { success: true, node: r };
+            },
+            CLONE_NODE: async function (px, p) {
+                var n = await getNode(px, p.nodeId);
+                var clone = await px.call(n, 'clone', []);
+                var r = await px.snapshot(clone, ['id', 'name', 'x', 'y', 'width', 'height']);
+                px.release(n, clone); return { success: true, node: r };
+            },
+            DELETE_NODE: async function (px, p) {
+                var n = await getNode(px, p.nodeId);
+                await px.call(n, 'remove', []);
+                return { success: true, deleted: true, id: p.nodeId };
+            },
+            RENAME_NODE: async function (px, p) {
+                var n = await getNode(px, p.nodeId);
+                await px.set(n, 'name', p.newName);
+                var r = await px.snapshot(n, ['id', 'name']);
+                px.release(n); return { success: true, node: r };
+            },
+            SET_NODE_OPACITY: async function (px, p) {
+                var n = await getNode(px, p.nodeId);
+                await px.set(n, 'opacity', p.opacity);
+                var r = await px.snapshot(n, ['id', 'name', 'opacity']);
+                px.release(n); return { success: true, node: r };
+            },
+            SET_NODE_CORNER_RADIUS: async function (px, p) {
+                var n = await getNode(px, p.nodeId);
+                await px.set(n, 'cornerRadius', p.radius);
+                var r = await px.snapshot(n, ['id', 'name', 'cornerRadius']);
+                px.release(n); return { success: true, node: r };
+            },
+            SET_NODE_DESCRIPTION: async function (px, p) {
+                var n = await getNode(px, p.nodeId);
+                await px.set(n, 'description', p.description || '');
+                var r = await px.snapshot(n, ['id', 'name', 'description']);
+                px.release(n); return { success: true, node: r };
+            },
+            GET_COMPONENT: async function (px, p) {
+                var n = await getNode(px, p.nodeId);
+                var r = await px.snapshot(n, ['id', 'name', 'type', 'key', 'description']);
+                px.release(n); return { success: true, data: r };
+            },
+            EDIT_COMPONENT_PROPERTY: async function (px, p) {
+                var n = await getNode(px, p.nodeId);
+                await px.call(n, 'editComponentProperty', [p.propertyName, { defaultValue: p.newValue }]);
+                var r = await px.snapshot(n, ['id', 'name']);
+                px.release(n); return { success: true, propertyName: p.propertyName, node: r };
+            },
+            DELETE_COMPONENT_PROPERTY: async function (px, p) {
+                var n = await getNode(px, p.nodeId);
+                await px.call(n, 'deleteComponentProperty', [p.propertyName]);
+                px.release(n); return { success: true, propertyName: p.propertyName };
+            },
+
+            // ── Variable operations ─────────────────────────────────────
+            DELETE_VARIABLE: async function (px, p) {
+                var v = await px.call('figma.variables', 'getVariableByIdAsync', [p.variableId]);
+                await px.call(v, 'remove', []);
+                return { success: true, deleted: true };
+            },
+            RENAME_VARIABLE: async function (px, p) {
+                var v = await px.call('figma.variables', 'getVariableByIdAsync', [p.variableId]);
+                var oldName = await px.get(v, 'name');
+                await px.set(v, 'name', p.newName);
+                var r = await px.snapshot(v, ['id', 'name', 'key']);
+                px.release(v); return { success: true, variable: r, oldName: oldName };
+            },
+            SET_VARIABLE_DESCRIPTION: async function (px, p) {
+                var v = await px.call('figma.variables', 'getVariableByIdAsync', [p.variableId]);
+                await px.set(v, 'description', p.description || '');
+                var r = await px.snapshot(v, ['id', 'name', 'description']);
+                px.release(v); return { success: true, variable: r };
+            },
+            ADD_MODE: async function (px, p) {
+                var c = await px.call('figma.variables', 'getVariableCollectionByIdAsync', [p.collectionId]);
+                await px.call(c, 'addMode', [p.modeName]);
+                var r = await px.snapshot(c, ['id', 'name', 'modes']);
+                px.release(c); return { success: true, collection: r };
+            },
+            RENAME_MODE: async function (px, p) {
+                var c = await px.call('figma.variables', 'getVariableCollectionByIdAsync', [p.collectionId]);
+                await px.call(c, 'renameMode', [p.modeId, p.newName]);
+                var r = await px.snapshot(c, ['id', 'name', 'modes']);
+                px.release(c); return { success: true, collection: r };
+            },
+
+            // ── Medium complexity — logic in ui.html + proxy ────────────
+            SET_NODE_FILLS: async function (px, p) {
+                var n = await getNode(px, p.nodeId);
+                var fills = (p.fills || []).map(function (f) {
+                    if (f.type === 'SOLID' && typeof f.color === 'string') {
+                        return { type: 'SOLID', color: hexToFigmaRGB(f.color), opacity: f.opacity !== undefined ? f.opacity : 1 };
+                    }
+                    return f;
+                });
+                await px.set(n, 'fills', fills);
+                var r = await px.snapshot(n, ['id', 'name']);
+                px.release(n); return { success: true, node: r };
+            },
+            SET_NODE_STROKES: async function (px, p) {
+                var n = await getNode(px, p.nodeId);
+                var strokes = (p.strokes || []).map(function (s) {
+                    if (s.type === 'SOLID' && typeof s.color === 'string') {
+                        return { type: 'SOLID', color: hexToFigmaRGB(s.color), opacity: s.opacity !== undefined ? s.opacity : 1 };
+                    }
+                    return s;
+                });
+                await px.set(n, 'strokes', strokes);
+                if (p.strokeWeight !== undefined) await px.set(n, 'strokeWeight', p.strokeWeight);
+                var r = await px.snapshot(n, ['id', 'name']);
+                px.release(n); return { success: true, node: r };
+            },
+            CREATE_VARIABLE: async function (px, p) {
+                // dynamic-page mode requires collection object, not ID string
+                var c = await px.call('figma.variables', 'getVariableCollectionByIdAsync', [p.collectionId]);
+                var v = await px.call('figma.variables', 'createVariable', [p.name, c, p.resolvedType]);
+                if (p.values || p.valuesByMode) {
+                    var vals = p.values || p.valuesByMode;
+                    var argSets = Object.entries(vals).map(function (entry) {
+                        var val = (p.resolvedType === 'COLOR' && typeof entry[1] === 'string') ? hexToFigmaRGB(entry[1]) : entry[1];
+                        return [entry[0], val];
+                    });
+                    await px.callForEach(v, 'setValueForMode', argSets);
+                }
+                var r = await px.snapshot(v, ['id', 'name', 'key', 'resolvedType']);
+                px.release(c, v); return { success: true, variable: r };
+            },
+            UPDATE_VARIABLE: async function (px, p) {
+                var v = await px.call('figma.variables', 'getVariableByIdAsync', [p.variableId]);
+                var resolvedType = await px.get(v, 'resolvedType');
+                var val = (resolvedType === 'COLOR' && typeof p.value === 'string') ? hexToFigmaRGB(p.value) : p.value;
+                await px.call(v, 'setValueForMode', [p.modeId, val]);
+                var r = await px.snapshot(v, ['id', 'name', 'key', 'resolvedType', 'valuesByMode']);
+                px.release(v); return { success: true, variable: r };
+            },
+            CREATE_VARIABLE_COLLECTION: async function (px, p) {
+                var c = await px.call('figma.variables', 'createVariableCollection', [p.name]);
+                if (p.modes && p.modes.length > 0) {
+                    var argSets = p.modes.map(function (m) { return [m]; });
+                    await px.callForEach(c, 'addMode', argSets);
+                }
+                var r = await px.snapshot(c, ['id', 'name', 'key', 'modes']);
+                px.release(c); return { success: true, collection: r };
+            },
+            ADD_COMPONENT_PROPERTY: async function (px, p) {
+                var n = await getNode(px, p.nodeId);
+                await px.call(n, 'addComponentProperty', [p.propertyName, p.propertyType, p.defaultValue]);
+                px.release(n); return { success: true, propertyName: p.propertyName };
+            },
+
+            // ── Complex — proxy + iterate/snapshot ──────────────────────
+            // ISO: must check node type and throw "Node must be a TEXT node. Got: <type>"
+            SET_TEXT_CONTENT: async function (px, p) {
+                var n = await getNode(px, p.nodeId);
+                var nodeType = await px.get(n, 'type');
+                if (nodeType !== 'TEXT') { px.release(n); throw new Error('Node must be a TEXT node. Got: ' + nodeType); }
+                var fontName = await px.get(n, 'fontName');
+                var font = (fontName === '__FIGMA_MIXED__') ? { family: 'Inter', style: 'Regular' } : fontName;
+                await px.call('figma', 'loadFontAsync', [font]);
+                await px.set(n, 'characters', p.text);
+                var r = await px.snapshot(n, ['id', 'name', 'characters']);
+                px.release(n); return { success: true, node: r };
+            },
+            GET_LOCAL_COMPONENTS: async function (px) {
+                var arr = await px.call('figma.root', 'findAllWithCriteria', [{ types: ['COMPONENT'] }]);
+                var data = await px.iterate(arr, ['id', 'name', 'key', 'description']);
+                px.release(arr); return { success: true, data: data };
+            },
+            INSTANTIATE_COMPONENT: async function (px, p) {
+                var comp = await px.call('figma', 'importComponentByKeyAsync', [p.componentKey]);
+                if (p.variant) {
+                    var parentH = await px.get(comp, 'parent');
+                    if (typeof parentH === 'string' && parentH.startsWith('h_')) {
+                        var parentType = await px.get(parentH, 'type');
+                        if (parentType === 'COMPONENT_SET') {
+                            var childrenH = await px.get(parentH, 'children');
+                            var childrenData = await px.iterate(childrenH, ['id', 'variantProperties']);
+                            var match = childrenData.find(function (c) {
+                                return Object.entries(p.variant).every(function (kv) {
+                                    return c.variantProperties && c.variantProperties[kv[0]] === kv[1];
+                                });
+                            });
+                            if (match) {
+                                var vNode = await px.call('figma', 'getNodeByIdAsync', [match.id]);
+                                var inst = await px.call(vNode, 'createInstance', []);
+                                var r = await px.snapshot(inst, ['id', 'name', 'width', 'height']);
+                                px.release(comp, parentH, childrenH, vNode, inst);
+                                return { success: true, instance: r };
+                            }
+                            px.release(childrenH);
+                        }
+                        px.release(parentH);
+                    }
+                }
+                var inst2 = await px.call(comp, 'createInstance', []);
+                var r2 = await px.snapshot(inst2, ['id', 'name', 'width', 'height']);
+                px.release(comp, inst2); return { success: true, instance: r2 };
+            },
+            REFRESH_VARIABLES: async function (px) {
+                var vars = await px.call('figma.variables', 'getLocalVariablesAsync', []);
+                var cols = await px.call('figma.variables', 'getLocalVariableCollectionsAsync', []);
+                var varsData = await px.iterate(vars, ['id', 'name', 'key', 'resolvedType', 'valuesByMode', 'variableCollectionId', 'scopes', 'description', 'hiddenFromPublishing']);
+                var colsData = await px.iterate(cols, ['id', 'name', 'key', 'modes', 'defaultModeId', 'variableIds']);
+                px.release(vars, cols);
+                return { success: true, data: { variables: varsData, variableCollections: colsData } };
+            },
+            CAPTURE_SCREENSHOT: async function (px, p) {
+                var n = await getNode(px, p.nodeId);
+                var scale = (p.scale !== undefined) ? p.scale : 1;
+                var bytes = await px.call(n, 'exportAsync', [{ format: 'PNG', constraint: { type: 'SCALE', value: scale } }]);
+                var base64 = await px.call('figma', 'base64Encode', [bytes]);
+                px.release(n, bytes); return { success: true, image: base64 };
+            },
+            SET_INSTANCE_PROPERTIES: async function (px, p) {
+                var n = await getNode(px, p.nodeId);
+                var argSets = Object.entries(p.properties || {}).map(function (kv) { return [kv[0], kv[1]]; });
+                if (argSets.length > 0) {
+                    // setProperties takes a single object, not per-prop calls
+                    await px.call(n, 'setProperties', [p.properties]);
+                }
+                var r = await px.snapshot(n, ['id', 'name']);
+                px.release(n); return { success: true, instance: r };
+            },
+            CREATE_CHILD_NODE: async function (px, p) {
+                var parentN = await getNode(px, p.parentId);
+                var createMethod = 'createFrame';
+                var nodeType = (p.nodeType || 'FRAME').toUpperCase();
+                if (nodeType === 'RECTANGLE') createMethod = 'createRectangle';
+                else if (nodeType === 'ELLIPSE') createMethod = 'createEllipse';
+                else if (nodeType === 'TEXT') createMethod = 'createText';
+                else if (nodeType === 'LINE') createMethod = 'createLine';
+                else if (nodeType === 'POLYGON') createMethod = 'createPolygon';
+                else if (nodeType === 'STAR') createMethod = 'createStar';
+                else if (nodeType === 'VECTOR') createMethod = 'createVector';
+                var child = await px.call('figma', createMethod, []);
+                await px.call(parentN, 'appendChild', [child]);
+                var props = p.properties || {};
+                if (props.name) await px.set(child, 'name', props.name);
+                if (props.width && props.height) await px.call(child, 'resize', [props.width, props.height]);
+                if (props.x !== undefined) await px.set(child, 'x', props.x);
+                if (props.y !== undefined) await px.set(child, 'y', props.y);
+                if (props.fills) {
+                    var fills = props.fills.map(function (f) {
+                        if (f.type === 'SOLID' && typeof f.color === 'string') {
+                            return { type: 'SOLID', color: hexToFigmaRGB(f.color), opacity: f.opacity !== undefined ? f.opacity : 1 };
+                        }
+                        return f;
+                    });
+                    await px.set(child, 'fills', fills);
+                }
+                var r = await px.snapshot(child, ['id', 'name', 'type', 'width', 'height']);
+                px.release(parentN, child); return { success: true, node: r };
+            },
+
+            // ── Passthrough / local handlers ────────────────────────────
+            // ISO: EXECUTE_CODE errors must resolve (not reject) with { success: false, error }
+            EXECUTE_CODE: async function (px, p) {
+                try {
+                    var result = await px.executeCode(p.code, p.timeout);
+                    return { success: true, result: result };
+                } catch (e) {
+                    return { success: false, error: e.message || String(e) };
+                }
+            },
+            GET_VARIABLES_DATA: async function () {
+                if (window.__cachedVariablesData) return window.__cachedVariablesData;
+                throw new Error('Variables data not ready');
+            },
+            GET_FILE_INFO: async function () {
+                if (cachedFigmaContext) return { success: true, fileInfo: cachedFigmaContext };
+                throw new Error('File info not ready');
+            },
+            CLEAR_CONSOLE: async function () { return { success: true, cleared: true }; },
+            RELOAD_UI: async function () { return { success: true }; }
+        };
+
+        // ── Port scanner ──────────────────────────────────────────────
+        function isPortConnected(port) {
+            return activeConnections.some(function (c) { return c.port === port && c.ws.readyState === 1; });
+        }
+
+        function removeConnection(port) {
+            activeConnections = activeConnections.filter(function (c) { return c.port !== port; });
+        }
+
+        function broadcastToAll(message) {
+            var json = JSON.stringify(message);
+            activeConnections.forEach(function (conn) {
+                if (conn.ws.readyState === 1) {
+                    try { conn.ws.send(json); } catch (e) { /* ignore */ }
+                }
+            });
+        }
+        _fcBroadcast = broadcastToAll;
+
+        function initializeConnection(connWs) {
+            // Send cached variables if available
+            if (window.__cachedVariablesData) {
+                connWs.send(JSON.stringify({ type: 'VARIABLES_DATA', data: window.__cachedVariablesData }));
+            }
+            // Send file info
+            if (cachedFigmaContext) {
+                connWs.send(JSON.stringify({ type: 'FILE_INFO', data: cachedFigmaContext }));
+            }
+        }
+
+        function attachWsHandlers(activeWs, port) {
+            activeWs.onmessage = function (event) {
+                try {
+                    var message = JSON.parse(event.data);
+                    if (!message.id || !message.method) return;
+
+                    var adapter = fcMethods[message.method];
+                    if (!adapter) {
+                        activeWs.send(JSON.stringify({ id: message.id, error: 'Unknown method: ' + message.method }));
+                        return;
+                    }
+
+                    Promise.resolve(adapter(FigmaProxy, message.params || {}))
+                        .then(function (result) {
+                            if (activeWs.readyState === 1) activeWs.send(JSON.stringify({ id: message.id, result: result }));
+                        })
+                        .catch(function (err) {
+                            if (activeWs.readyState === 1) activeWs.send(JSON.stringify({ id: message.id, error: err.message || String(err) }));
+                        });
+                } catch (e) {
+                    console.error('[FC Bridge] Failed to process message from port ' + port, e);
+                }
+            };
+
+            activeWs.onclose = function (event) {
+                removeConnection(port);
+                console.log('[FC Bridge] Disconnected from port ' + port + ' (' + activeConnections.length + ' remaining)');
+                var wasReplaced = (event.code === 1000 && (event.reason === 'Replaced by new connection' || event.reason === 'Replaced by same file reconnection'));
+                if (wasReplaced) return;
+                reconnectAttempts++;
+                if (reconnectAttempts <= maxReconnectAttempts) {
+                    setTimeout(function () { reconnectPort(port); }, reconnectDelay);
+                    reconnectDelay = Math.min(reconnectDelay * 1.5, maxReconnectDelay);
+                }
+            };
+
+            activeWs.onerror = function () { /* onclose will fire */ };
+        }
+
+        function reconnectPort(port) {
+            try {
+                var testWs = new WebSocket('ws://localhost:' + port);
+                var timeout = setTimeout(function () {
+                    if (testWs.readyState !== 1) { testWs.close(); scanAndConnect(); }
+                }, 2000);
+                testWs.onopen = function () {
+                    clearTimeout(timeout);
+                    activeConnections.push({ port: port, ws: testWs });
+                    console.log('[FC Bridge] Reconnected to port ' + port);
+                    attachWsHandlers(testWs, port);
+                    initializeConnection(testWs);
+                };
+                testWs.onerror = function () { clearTimeout(timeout); scanAndConnect(); };
+            } catch (e) { scanAndConnect(); }
+        }
+
+        function scanAndConnect() {
+            if (isScanning) return;
+            isScanning = true;
+
+            var portsToTry = [];
+            for (var p = FC_PORT_START; p <= FC_PORT_END; p++) {
+                if (!isPortConnected(p)) portsToTry.push(p);
+            }
+            if (portsToTry.length === 0) { isScanning = false; return; }
+
+            console.log('[FC Bridge] Scanning ports ' + FC_PORT_START + '-' + FC_PORT_END + '...');
+            var foundAny = false;
+            var pendingCount = portsToTry.length;
+
+            portsToTry.forEach(function (port) {
+                try {
+                    var testWs = new WebSocket('ws://localhost:' + port);
+                    var timeout = setTimeout(function () {
+                        if (testWs.readyState !== 1) testWs.close();
+                    }, 3000);
+
+                    testWs.onopen = function () {
+                        clearTimeout(timeout);
+                        foundAny = true;
+                        activeConnections.push({ port: port, ws: testWs });
+                        console.log('[FC Bridge] Connected to MCP server on port ' + port + ' (' + activeConnections.length + ' total)');
+                        attachWsHandlers(testWs, port);
+                        initializeConnection(testWs);
+                        pendingCount--;
+                        if (pendingCount <= 0) {
+                            isScanning = false;
+                            if (foundAny) { reconnectDelay = 500; reconnectAttempts = 0; }
+                        }
+                    };
+
+                    testWs.onerror = function () {
+                        clearTimeout(timeout);
+                        pendingCount--;
+                        if (pendingCount <= 0) {
+                            isScanning = false;
+                            if (!foundAny && activeConnections.length === 0) {
+                                reconnectAttempts++;
+                                if (reconnectAttempts <= maxReconnectAttempts) {
+                                    setTimeout(scanAndConnect, reconnectDelay);
+                                    reconnectDelay = Math.min(reconnectDelay * 1.5, maxReconnectDelay);
+                                }
+                            }
+                        }
+                    };
+
+                    testWs.onclose = function () {
+                        clearTimeout(timeout);
+                        pendingCount--;
+                        if (pendingCount <= 0 && !foundAny && activeConnections.length === 0) {
+                            isScanning = false;
+                            reconnectAttempts++;
+                            if (reconnectAttempts <= maxReconnectAttempts) {
+                                setTimeout(scanAndConnect, reconnectDelay);
+                                reconnectDelay = Math.min(reconnectDelay * 1.5, maxReconnectDelay);
+                            }
+                        }
+                    };
+                } catch (e) { pendingCount--; }
+            });
+        }
+
+        // Start scanning
+        scanAndConnect();
+    })();
 
     // ── Guardian Bridge Client ──────────────────────────────────────────────────
     // Connects to the BridgeServer running in the Electron overlay (ws://localhost:3002).

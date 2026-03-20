@@ -35,6 +35,12 @@ if (figma.command === 'guardian-analyze') {
 // Stores credentials in memory so they persist while the plugin is open.
 const MEMORY: Record<string, string> = {};
 
+// ─── PROXY HANDLE STORE ─────────────────────────────────────────
+// Stores non-serializable Figma objects (nodes, arrays) by handle ID.
+// ui.html references them via string IDs in subsequent Proxy messages.
+const _proxyHandles = new Map<string, unknown>();
+let _proxyHandleCounter = 0;
+
 // ─── TYPES ───────────────────────────────────────────────────────────
 
 interface AutoLayoutInfo {
@@ -534,6 +540,128 @@ ${codeBody}
     }
   }
 
+  // ============================================================================
+  // FIGMA PROXY — Handle-based RPC for structured Figma API access
+  // ============================================================================
+  if (type === 'PROXY_CALL' || type === 'PROXY_GET' || type === 'PROXY_SET' ||
+      type === 'PROXY_SNAPSHOT' || type === 'PROXY_ITERATE' || type === 'PROXY_CALL_EACH' ||
+      type === 'PROXY_RELEASE') {
+    const proxyMsg = msg as unknown as { type: string; requestId: string; [k: string]: unknown };
+    const requestId = proxyMsg.requestId;
+
+    const postProxyResult = (value: unknown): void => {
+      try {
+        figma.ui.postMessage({ type: 'PROXY_RESULT', requestId, value });
+      } catch {
+        figma.ui.postMessage({ type: 'PROXY_RESULT', requestId, value: '[non-serializable]' });
+      }
+    };
+    const postProxyError = (error: string): void => {
+      figma.ui.postMessage({ type: 'PROXY_RESULT', requestId, error });
+    };
+
+    try {
+      if (type === 'PROXY_CALL') {
+        const { target, method, args } = proxyMsg as unknown as { target: string; method: string; args: unknown[] };
+        if (!target) { postProxyError('PROXY_CALL: target is null/undefined'); return; }
+        // Resolve target: "figma", "figma.variables", or a handle ID
+        let obj: unknown;
+        if (target.startsWith('figma')) {
+          const parts = target.split('.');
+          obj = figma as unknown;
+          for (let i = 1; i < parts.length; i++) obj = (obj as Record<string, unknown>)[parts[i]];
+        } else {
+          obj = _proxyHandles.get(target);
+          if (!obj) { postProxyError('Handle not found: ' + target); return; }
+        }
+        // Resolve handle references in args
+        const resolvedArgs = (args || []).map((a: unknown) =>
+          typeof a === 'string' && _proxyHandles.has(a as string) ? _proxyHandles.get(a as string) : a
+        );
+        const raw = await (obj as Record<string, (...a: unknown[]) => unknown>)[method](...resolvedArgs);
+        // Serialize result: always store objects as handles (Figma nodes pass
+        // JSON.stringify but lose their methods when sent through postMessage)
+        if (raw === null || raw === undefined) { postProxyResult(null); return; }
+        if (typeof raw === 'symbol') { postProxyResult('__FIGMA_MIXED__'); return; }
+        if (typeof raw !== 'object' && typeof raw !== 'function') { postProxyResult(raw); return; }
+        const handleId = 'h_' + (++_proxyHandleCounter);
+        _proxyHandles.set(handleId, raw);
+        postProxyResult(handleId);
+      }
+
+      else if (type === 'PROXY_GET') {
+        const { handle, prop } = proxyMsg as unknown as { handle: string; prop: string };
+        const obj = _proxyHandles.get(handle);
+        if (!obj) { postProxyError('Handle not found: ' + handle); return; }
+        const val = (obj as Record<string, unknown>)[prop];
+        if (val === null || val === undefined) { postProxyResult(val); return; }
+        if (typeof val === 'symbol') { postProxyResult('__FIGMA_MIXED__'); return; }
+        if (typeof val !== 'object' && typeof val !== 'function') { postProxyResult(val); return; }
+        // Store objects as handles (parent nodes, arrays, etc.)
+        const handleId = 'h_' + (++_proxyHandleCounter);
+        _proxyHandles.set(handleId, val);
+        postProxyResult(handleId);
+      }
+
+      else if (type === 'PROXY_SET') {
+        const { handle, prop, value } = proxyMsg as unknown as { handle: string; prop: string; value: unknown };
+        const obj = _proxyHandles.get(handle);
+        if (!obj) { postProxyError('Handle not found: ' + handle); return; }
+        (obj as Record<string, unknown>)[prop] = value;
+        postProxyResult(true);
+      }
+
+      else if (type === 'PROXY_SNAPSHOT') {
+        const { handle, props } = proxyMsg as unknown as { handle: string; props: string[] };
+        const obj = _proxyHandles.get(handle);
+        if (!obj) { postProxyError('Handle not found: ' + handle); return; }
+        const result: Record<string, unknown> = {};
+        for (const p of props) {
+          const val = (obj as Record<string, unknown>)[p];
+          result[p] = (typeof val === 'symbol') ? '__FIGMA_MIXED__' : val;
+        }
+        postProxyResult(result);
+      }
+
+      else if (type === 'PROXY_ITERATE') {
+        const { handle, props } = proxyMsg as unknown as { handle: string; props: string[] };
+        const arr = _proxyHandles.get(handle);
+        if (!arr) { postProxyError('Handle not found: ' + handle); return; }
+        const result = Array.from(arr as Iterable<unknown>).map((item: unknown) => {
+          const obj: Record<string, unknown> = {};
+          for (const p of props) {
+            const val = (item as Record<string, unknown>)[p];
+            obj[p] = (typeof val === 'symbol') ? '__FIGMA_MIXED__' : val;
+          }
+          return obj;
+        });
+        postProxyResult(result);
+      }
+
+      else if (type === 'PROXY_CALL_EACH') {
+        const { handle, method, argSets } = proxyMsg as unknown as { handle: string; method: string; argSets: unknown[][] };
+        const obj = _proxyHandles.get(handle);
+        if (!obj) { postProxyError('Handle not found: ' + handle); return; }
+        for (const args of argSets) {
+          const resolvedArgs = args.map((a: unknown) =>
+            typeof a === 'string' && _proxyHandles.has(a as string) ? _proxyHandles.get(a as string) : a
+          );
+          await (obj as Record<string, (...a: unknown[]) => unknown>)[method](...resolvedArgs);
+        }
+        postProxyResult(true);
+      }
+
+      else if (type === 'PROXY_RELEASE') {
+        const { handles } = proxyMsg as unknown as { handles: string[] };
+        for (const h of handles) _proxyHandles.delete(h);
+        postProxyResult(true);
+      }
+    } catch (err) {
+      postProxyError(err instanceof Error ? err.message : String(err));
+    }
+    return;
+  }
+
   if (type === 'storage-get') {
     const { key } = msg.data;
     figma.clientStorage.getAsync(key).then((value: unknown) => {
@@ -612,6 +740,48 @@ figma.on('selectionchange', () => {
 });
 
 setupPageChangeListener();
+
+// ─── CONSOLE CAPTURE ─────────────────────────────────────────────
+// Intercept console.* in the QuickJS sandbox and forward to ui.html
+// so the WS bridge can relay them to connected MCP servers.
+((): void => {
+  const levels: Array<'log' | 'info' | 'warn' | 'error' | 'debug'> = ['log', 'info', 'warn', 'error', 'debug'];
+  const originals: Record<string, (...args: unknown[]) => void> = {};
+  for (const level of levels) originals[level] = console[level];
+
+  for (const level of levels) {
+    console[level] = (...args: unknown[]): void => {
+      originals[level].apply(console, args);
+      try {
+        const messageParts = args.map(a => typeof a === 'string' ? a : String(a));
+        figma.ui.postMessage({
+          type: 'CONSOLE_CAPTURE',
+          level,
+          message: messageParts.join(' '),
+          timestamp: Date.now()
+        });
+      } catch { /* ignore serialization errors */ }
+    };
+  }
+})();
+
+// ─── DOCUMENT CHANGE LISTENER ────────────────────────────────────
+// Forward document changes to ui.html for MCP cache invalidation.
+// Requires loadAllPagesAsync first when using dynamic-page documentAccess.
+figma.loadAllPagesAsync().then(() => {
+  figma.on('documentchange', (event) => {
+    const changes = event.documentChanges;
+    figma.ui.postMessage({
+      type: 'DOCUMENT_CHANGE',
+      data: {
+        hasStyleChanges: changes.some(c => c.type === 'STYLE_CREATE' || c.type === 'STYLE_DELETE' || c.type === 'STYLE_PROPERTY_CHANGE'),
+        hasNodeChanges: changes.some(c => c.type === 'PROPERTY_CHANGE' || c.type === 'CREATE' || c.type === 'DELETE'),
+        changedNodeIds: changes.filter(c => 'id' in c).map(c => (c as { id: string }).id).slice(0, 50),
+        timestamp: Date.now()
+      }
+    });
+  });
+}).catch(() => { /* loadAllPages not supported or failed — skip document change tracking */ });
 
 // ─── UTILS ───────────────────────────────────────────────────────────
 

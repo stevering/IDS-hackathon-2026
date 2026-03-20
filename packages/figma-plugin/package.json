@@ -7,6 +7,8 @@
   "scripts": {
     "build": "node build.mjs",
     "dev": "node build.mjs --watch",
+    "test:fc-compat": "node tests/fc-compat.test.mjs --watch",
+    "test:fc-compat:once": "node tests/fc-compat.test.mjs",
     "lint": "eslint --ext .ts,.tsx --ignore-pattern node_modules .",
     "lint:fix": "eslint --ext .ts,.tsx --ignore-pattern node_modules --fix ."
   },
