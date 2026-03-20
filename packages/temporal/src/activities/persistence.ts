@@ -102,10 +102,11 @@ export async function saveOrchestrationState(params: {
 }
 
 /**
- * Persist durable orchestration events + corresponding messages.
+ * Persist orchestration events as a micro-batch.
  *
- * Called as a micro-batch at the end of each orchestrator loop iteration.
- * Only events whose type is in DURABLE_EVENT_TYPES are persisted.
+ * Called at the end of each orchestrator loop iteration.
+ * ALL events are persisted to orchestration_events (durable flag set accordingly).
+ * Only durable events also get written to the messages table.
  */
 export async function persistDurableEvents(params: {
   workflowId: string;
@@ -114,24 +115,19 @@ export async function persistDurableEvents(params: {
 }): Promise<void> {
   const supabase = getSupabase();
   if (!supabase) {
-    console.warn("[persistence] Supabase credentials not configured, skipping durable events");
+    console.warn("[persistence] Supabase credentials not configured, skipping events");
     return;
   }
 
-  // Filter to durable events only
-  const durableEvents = params.events.filter(
-    (e) => DURABLE_EVENT_TYPES.has(e.type as string)
-  );
+  if (params.events.length === 0) return;
 
-  if (durableEvents.length === 0) return;
-
-  // 1. Insert into orchestration_events with durable = true
-  const eventRows = durableEvents.map((e) => ({
+  // 1. Insert ALL events into orchestration_events (durable flag per type)
+  const eventRows = params.events.map((e) => ({
     workflow_id: params.workflowId,
     event_type: (e.type as string) ?? "unknown",
     agent_id: (e.agentShortId as string) ?? null,
     payload: e,
-    durable: true,
+    durable: DURABLE_EVENT_TYPES.has(e.type as string),
   }));
 
   const { error: eventsError } = await supabase
@@ -139,10 +135,16 @@ export async function persistDurableEvents(params: {
     .insert(eventRows);
 
   if (eventsError) {
-    console.error("[persistence] Failed to persist durable events:", eventsError.message);
+    console.error("[persistence] Failed to persist events:", eventsError.message);
   }
 
-  // 2. Find the conversation for this workflow (lookup once)
+  // 2. For durable events only: also write to messages table
+  const durableEvents = params.events.filter(
+    (e) => DURABLE_EVENT_TYPES.has(e.type as string)
+  );
+
+  if (durableEvents.length === 0) return;
+
   const { data: conv } = await supabase
     .from("conversations")
     .select("id")
@@ -150,12 +152,8 @@ export async function persistDurableEvents(params: {
     .limit(1)
     .single();
 
-  if (!conv) {
-    // No conversation linked yet — skip message persistence
-    return;
-  }
+  if (!conv) return;
 
-  // 3. Insert messages for each durable event
   const messageRows = durableEvents
     .map((e) => {
       const role = eventToMessageRole(e.type as string);
