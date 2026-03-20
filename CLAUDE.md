@@ -35,10 +35,13 @@ When the user enables "LLM call delegation" in Account > Developers, orchestrati
 ### Rules
 
 - **Use `batch`** for all responses: one tool call, parallel internally. Never use `&` in bash (triggers security prompt).
+- **MANDATORY: Use the Write tool** for ALL JSON response files. **NEVER use `cat`, heredoc (`<<`), or `echo`** in Bash to create JSON files — heredocs with JSON braces trigger security prompts ("expansion obfuscation") that the user must manually approve every time. The Write tool creates files silently with no approval needed.
 - **Write JSON files in parallel** too (multiple Write tool calls in same message).
+- **Unique test directory**: at the START of each interception session, create a unique directory `tmp/<orchestration-id>/` (e.g. `tmp/orch-6285962c-1773965776732/`). Write ALL response JSON files and payload files into this directory. This keeps tests isolated and avoids "File has not been read yet" errors from leftover files.
+- **Unique file names per intercept**: name each response file after the intercept ID it responds to: `tmp/<orch-id>/<intercept-id>.json` (e.g. `tmp/orch-xxx/intercept-1773966111373-spkl.json`). NEVER reuse a filename within a session — each intercept gets its own file. This prevents Write tool errors from file-already-exists and makes debugging easier.
 - **`pollwait`** replaces `poll` and `listen`. It checks DB first (catches SSE gap), then waits for SSE push (no polling).
 - **Always relaunch `pollwait`** after responding.
-- **Temp files in `tmp/`** (repo), never `/tmp/` (system).
+- **Temp files in `tmp/<orch-id>/`** (repo), never `/tmp/` (system).
 
 ### Script commands
 
