@@ -7,6 +7,7 @@ import { parsePresenceState, type ClientType, type PresenceClient } from "@/type
 
 
 const CHANNEL_BASE = "guardian:execute";
+const PRESENCE_KEEPALIVE_MS = 30 * 1000; // Re-track presence every 30 seconds
 
 export type ClientInfo = {
   type: ClientType;
@@ -36,6 +37,7 @@ export function useFigmaExecuteChannel(
   executeCodeRef.current = executeCode;
   const [userId, setUserId] = useState<string | null>(null);
   const [clients, setClients] = useState<PresenceClient[]>([]);
+  const [reconnectKey, setReconnectKey] = useState(0); // Increment to force full channel recreation
 
   // Self-generated stable client ID.
   // - Webapp (top-level): localStorage → same ID across tabs/refreshes in the same browser.
@@ -188,16 +190,50 @@ export function useFigmaExecuteChannel(
       .subscribe(async (status) => {
         if (status === "SUBSCRIBED") {
           await retrackPresence();
+        } else if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") {
+          // Channel failed to join — the keepalive timer will detect the dead WS
+          // and trigger a full reconnect via reconnectKey increment.
+          console.warn(`[ExecuteChannel] Channel ${status}, keepalive will handle reconnect`);
         }
       });
 
     channelRef.current = channel;
 
+    // Presence keepalive: periodically check connection health and re-track.
+    // If the WebSocket is dead, increment reconnectKey to force a full channel recreation
+    // (the useEffect will re-run, creating a new Supabase client + channel from scratch).
+    const keepaliveTimer = setInterval(async () => {
+      const ch = channelRef.current;
+      if (!ch) return;
+
+      // Check the actual WebSocket connection, not just the channel state.
+      // channel.state stays "joined" even after silent WS disconnect.
+      const socket = (ch as unknown as { socket?: { isConnected?: () => boolean } }).socket;
+      const wsConnected = socket?.isConnected?.() ?? true;
+
+      if (!wsConnected) {
+        console.warn("[ExecuteChannel] WebSocket dead, clearing clients and forcing full reconnect...");
+        setClients([]);
+        setReconnectKey((k) => k + 1); // Triggers useEffect cleanup + re-run
+        return;
+      }
+
+      // WS is alive — just re-track presence
+      try {
+        await retrackPresence();
+      } catch {
+        console.warn("[ExecuteChannel] Presence re-track failed, forcing full reconnect...");
+        setClients([]);
+        setReconnectKey((k) => k + 1);
+      }
+    }, PRESENCE_KEEPALIVE_MS);
+
     return () => {
+      clearInterval(keepaliveTimer);
       channelRef.current = null;
       channel.unsubscribe();
     };
-  }, [enabled, userId, handlePresenceSync, retrackPresence]);
+  }, [enabled, userId, reconnectKey, handlePresenceSync, retrackPresence]);
 
   // Re-sync presence when the tab becomes visible after being hidden (e.g. overnight idle).
   // The Supabase Realtime WebSocket may have silently disconnected; even if it auto-reconnects,
