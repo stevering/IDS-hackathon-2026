@@ -323,21 +323,18 @@ def detect_done_agent(payload):
 
 # ─── Intercept Runner ────────────────────────────────────────────────────────
 
-def run_intercept(*args):
+def run_intercept(*args, timeout=None):
     """Run intercept.sh with given arguments."""
     cmd = [str(INTERCEPT_SH)] + list(args)
-    result = subprocess.run(cmd, capture_output=True, text=True, cwd=str(SCRIPT_DIR))
-    return result.stdout.strip(), result.stderr.strip(), result.returncode
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, cwd=str(SCRIPT_DIR), timeout=timeout)
+        return result.stdout.strip(), result.stderr.strip(), result.returncode
+    except subprocess.TimeoutExpired:
+        return "", "timeout", -1
 
 
-def pollwait():
-    """Run pollwait and return list of intercept IDs."""
-    stdout, stderr, rc = run_intercept("pollwait")
-    if rc != 0:
-        print(f"  [WARN] pollwait exited {rc}: {stderr}")
-        return []
-
-    # Parse intercept IDs from output lines
+def parse_intercept_ids(stdout):
+    """Parse intercept IDs from pollwait/poll output."""
     intercept_ids = []
     for line in stdout.split("\n"):
         line = line.strip()
@@ -346,8 +343,29 @@ def pollwait():
             intercept_ids.append(rid)
         elif "0 pending" in line:
             return []
-
     return intercept_ids
+
+
+def pollwait():
+    """Run pollwait with 15s timeout, fallback to poll if SSE blocks."""
+    stdout, stderr, rc = run_intercept("pollwait", timeout=15)
+
+    if rc == -1:  # timeout — SSE blocked, fallback to instant poll
+        print("  [SSE timeout] Falling back to poll...")
+        stdout, stderr, rc = run_intercept("poll")
+        if rc != 0:
+            return []
+        ids = parse_intercept_ids(stdout)
+        if not ids:
+            # Nothing pending even after timeout — wait a bit and retry
+            time.sleep(2)
+        return ids
+
+    if rc != 0:
+        print(f"  [WARN] pollwait exited {rc}: {stderr}")
+        return []
+
+    return parse_intercept_ids(stdout)
 
 
 def read_payload(intercept_id):
@@ -355,8 +373,12 @@ def read_payload(intercept_id):
     payload_file = TMP_DIR / f"{intercept_id}.payload.json"
     if not payload_file.exists():
         return None
-    with open(payload_file) as f:
-        return json.load(f)
+    try:
+        with open(payload_file) as f:
+            return json.load(f)
+    except json.JSONDecodeError as e:
+        print(f"  [WARN] Corrupt payload for {intercept_id}: {e}")
+        return None
 
 
 # ─── Main Loop ───────────────────────────────────────────────────────────────
