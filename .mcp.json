@@ -3,6 +3,10 @@
     "guardian-mcp": {
       "type": "http",
       "url": "http://127.0.0.1:3847/mcp"
+    },
+    "figma-local": {
+      "command": "npx",
+      "args": ["figma-console-mcp@latest"]
     }
   }
 }

@@ -3,28 +3,31 @@
  *
  * Discovers tools from user-connected MCP servers (Supabase Vault)
  * and executes individual MCP tool calls.
+ *
+ * Supports both remote (HTTP + OAuth) and local (stdio) MCP servers.
  */
 
 import { createClient } from "@supabase/supabase-js";
 import { createMCPClient } from "@ai-sdk/mcp";
+import { Experimental_StdioMCPTransport } from "@ai-sdk/mcp/mcp-stdio";
 import type { LLMToolDefinition } from "@guardian/orchestrations";
 import { createLogger } from "../lib/log.js";
 
 // ---------------------------------------------------------------------------
-// MCP Server Registry (duplicated from web for bundle isolation)
+// MCP Server Registry
 // ---------------------------------------------------------------------------
 
-type MCPServerDef = {
-  id: string;
-  serverUrl: string;
-  toolPrefix: string;
-  transport: "sse" | "http";
-};
+type MCPServerDef =
+  | { id: string; toolPrefix: string; transport: "http" | "sse"; serverUrl: string }
+  | { id: string; toolPrefix: string; transport: "stdio"; command: string; args: string[] };
 
 const MCP_SERVERS: MCPServerDef[] = [
+  // Remote servers (OAuth token from Vault)
   { id: "figma_console", serverUrl: "https://figma-console-mcp.southleft.com/mcp", toolPrefix: "figmaconsole_", transport: "http" },
   { id: "github", serverUrl: "https://api.githubcopilot.com/mcp", toolPrefix: "github_", transport: "http" },
   { id: "figma_mcp", serverUrl: "https://mcp.figma.com/mcp", toolPrefix: "figma_", transport: "http" },
+  // Local server (stdio, no auth needed — connects to Guardian plugin via WebSocket)
+  { id: "figma_console_local", toolPrefix: "figmaconsole_", transport: "stdio", command: "npx", args: ["figma-console-mcp@latest"] },
 ];
 
 function getServerDef(serverId: string): MCPServerDef | undefined {
@@ -55,6 +58,28 @@ function createServiceClient() {
 }
 
 // ---------------------------------------------------------------------------
+// MCP Client creation — supports both remote (HTTP) and local (stdio)
+// ---------------------------------------------------------------------------
+
+async function connectMCP(serverDef: MCPServerDef, accessToken?: string) {
+  if (serverDef.transport === "stdio") {
+    const transport = new Experimental_StdioMCPTransport({
+      command: serverDef.command,
+      args: serverDef.args,
+    });
+    return createMCPClient({ transport });
+  }
+  // HTTP/SSE remote transport
+  return createMCPClient({
+    transport: {
+      type: serverDef.transport,
+      url: serverDef.serverUrl,
+      headers: accessToken ? { Authorization: `Bearer ${accessToken}` } : undefined,
+    },
+  });
+}
+
+// ---------------------------------------------------------------------------
 // discoverMCPTools — called once at agent workflow startup
 // ---------------------------------------------------------------------------
 
@@ -74,33 +99,31 @@ export async function discoverMCPTools(params: {
     }
 
     try {
-      // Get token from Vault via service-role RPC
-      const { data: tokensJson, error } = await supabase.rpc("get_mcp_connection_service", {
-        p_user_id: params.userId,
-        p_server_id: serverId,
-      });
+      let accessToken: string | undefined;
 
-      if (error || !tokensJson) {
-        log.warn(`No token for ${serverId}`, { error: error?.message });
-        continue;
+      // Stdio servers don't need OAuth tokens
+      if (serverDef.transport !== "stdio") {
+        const { data: tokensJson, error } = await supabase.rpc("get_mcp_connection_service", {
+          p_user_id: params.userId,
+          p_server_id: serverId,
+        });
+
+        if (error || !tokensJson) {
+          log.warn(`No token for ${serverId}`, { error: error?.message });
+          continue;
+        }
+
+        const tokens = JSON.parse(tokensJson);
+        if (!tokens.access_token) {
+          log.warn(`Token for ${serverId} has no access_token`);
+          continue;
+        }
+        accessToken = tokens.access_token;
       }
 
-      const tokens = JSON.parse(tokensJson);
-      if (!tokens.access_token) {
-        log.warn(`Token for ${serverId} has no access_token`);
-        continue;
-      }
+      log.info(`Connecting to ${serverId} (${serverDef.transport})...`);
 
-      log.info(`Connecting to ${serverId}...`);
-
-      const client = await createMCPClient({
-        transport: {
-          type: serverDef.transport,
-          url: serverDef.serverUrl,
-          headers: { Authorization: `Bearer ${tokens.access_token}` },
-        },
-      });
-
+      const client = await connectMCP(serverDef, accessToken);
       const mcpTools = await client.tools();
       let count = 0;
       for (const [name, tool] of Object.entries(mcpTools)) {
@@ -140,32 +163,31 @@ export async function executeMCPTool(params: {
     return { success: false, error: `Unknown MCP server: ${params.serverId}` };
   }
 
-  const supabase = createServiceClient();
-
   try {
-    const { data: tokensJson, error } = await supabase.rpc("get_mcp_connection_service", {
-      p_user_id: params.userId,
-      p_server_id: params.serverId,
-    });
+    let accessToken: string | undefined;
 
-    if (error || !tokensJson) {
-      return { success: false, error: `No token for ${params.serverId}: ${error?.message ?? "not found"}` };
+    // Stdio servers don't need OAuth tokens
+    if (serverDef.transport !== "stdio") {
+      const supabase = createServiceClient();
+      const { data: tokensJson, error } = await supabase.rpc("get_mcp_connection_service", {
+        p_user_id: params.userId,
+        p_server_id: params.serverId,
+      });
+
+      if (error || !tokensJson) {
+        return { success: false, error: `No token for ${params.serverId}: ${error?.message ?? "not found"}` };
+      }
+
+      const tokens = JSON.parse(tokensJson);
+      if (!tokens.access_token) {
+        return { success: false, error: `Token for ${params.serverId} has no access_token` };
+      }
+      accessToken = tokens.access_token;
     }
 
-    const tokens = JSON.parse(tokensJson);
-    if (!tokens.access_token) {
-      return { success: false, error: `Token for ${params.serverId} has no access_token` };
-    }
+    log.info(`Connecting to execute ${params.toolName} (${serverDef.transport})...`);
 
-    log.info(`Connecting to execute ${params.toolName}...`);
-
-    const client = await createMCPClient({
-      transport: {
-        type: serverDef.transport,
-        url: serverDef.serverUrl,
-        headers: { Authorization: `Bearer ${tokens.access_token}` },
-      },
-    });
+    const client = await connectMCP(serverDef, accessToken);
 
     // Get tools with execute functions, then call the target tool
     const mcpTools = await client.tools();

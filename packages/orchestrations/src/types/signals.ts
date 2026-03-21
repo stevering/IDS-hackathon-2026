@@ -200,6 +200,7 @@ export type AgentActivity =
   | { action: "code_review_llm_rejected"; issues: string; codeSnippet: string }
   | { action: "code_review_llm_response"; response: string; reasoning?: string; usage?: TokenUsage; intercepted?: InterceptedInfo }
   | { action: "code_executed"; success: boolean; summary: string }
+  | { action: "external_tool_result"; success: boolean; summary: string }
   | { action: "code_verified"; selection: string }
   | { action: "file_review_llm_response"; verdict: string; status: "verified" | "issue"; code: string; diff: string; hasScreenshots: boolean; beforeScreenshot?: string; afterScreenshot?: string; rawResponse: string; usage?: TokenUsage; intercepted?: InterceptedInfo }
   | { action: "guardian_message"; recipient: string; message: string };

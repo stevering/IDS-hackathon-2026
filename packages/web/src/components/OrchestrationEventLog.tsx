@@ -644,6 +644,13 @@ function AgentActivityItem({ activity, agentShortId }: { activity: AgentActivity
             ? "bg-emerald-500/5 border-emerald-500/10 text-emerald-400/60 hover:bg-emerald-500/10"
             : "bg-red-500/5 border-red-500/10 text-red-400/60 hover:bg-red-500/10"} />
       );
+    case "external_tool_result":
+      return (
+        <ActivityRow pill={pill} label={`${agentShortId} ${activity.success ? "MCP Tool OK" : "MCP Tool Failed"}`} detail={activity.summary}
+          colorClass={activity.success
+            ? "bg-blue-500/5 border-blue-500/10 text-blue-400/60 hover:bg-blue-500/10"
+            : "bg-red-500/5 border-red-500/10 text-red-400/60 hover:bg-red-500/10"} />
+      );
     case "code_verified": {
       let formatted: string;
       try {
@@ -855,7 +862,7 @@ function ActivityRow({
 
 const PIPELINE_CHILD_ACTIONS = new Set([
   "code_review_llm_response", "code_review_llm_approved", "code_review_llm_rejected",
-  "code_executed", "code_verified", "file_review_llm_response", "guardian_message",
+  "code_executed", "external_tool_result", "code_verified", "file_review_llm_response", "guardian_message",
   "code_review_passed", "code_review_rejected",
 ]);
 

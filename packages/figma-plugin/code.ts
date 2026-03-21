@@ -951,3 +951,5 @@ function extractText(node: SceneNode): string {
 
 // Suppress unused variable warning — MEMORY is reserved for future credential storage
 void MEMORY;
+// FC Bridge compat build marker
+// build 1774095805

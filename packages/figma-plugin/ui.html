@@ -1180,7 +1180,7 @@
             }
         }
 
-        if (msg.type === 'response' && msg.id === 'figma-context-init') {
+        if (msg.type === 'response' && (msg.id === 'figma-context-init' || msg.id === 'fc-bridge-init')) {
             const { name, fileKey, currentPage, pages, currentUser } = msg.data || {};
             const currentName = name || 'Untitled';
 
@@ -1209,6 +1209,8 @@
             sendToWebview(cachedFigmaContext);
             try { window.top.postMessage({ source: 'figpal-plugin', ...cachedFigmaContext }, '*'); } catch (e) {}
             if (configPanel.classList.contains('open')) updateContextDisplay();
+            // Broadcast FILE_INFO to FC MCP servers so they recognize the connection
+            if (typeof _fcBroadcast === 'function') _fcBroadcast({ type: 'FILE_INFO', data: cachedFigmaContext });
             return;
         }
 
@@ -1463,16 +1465,25 @@
                 var r = await px.snapshot(n, ['id', 'name', 'type', 'key', 'description']);
                 px.release(n); return { success: true, data: r };
             },
+            // ISO: editComponentProperty(name, { defaultValue }) — newValue must be wrapped in object
             EDIT_COMPONENT_PROPERTY: async function (px, p) {
                 var n = await getNode(px, p.nodeId);
-                await px.call(n, 'editComponentProperty', [p.propertyName, { defaultValue: p.newValue }]);
-                var r = await px.snapshot(n, ['id', 'name']);
-                px.release(n); return { success: true, propertyName: p.propertyName, node: r };
+                var nodeType = await px.get(n, 'type');
+                if (nodeType !== 'COMPONENT' && nodeType !== 'COMPONENT_SET') {
+                    px.release(n); throw new Error('Node must be a COMPONENT or COMPONENT_SET. Got: ' + nodeType);
+                }
+                var newValue = (typeof p.newValue === 'object' && p.newValue !== null) ? p.newValue : { defaultValue: p.newValue };
+                var propertyName = await px.call(n, 'editComponentProperty', [p.propertyName, newValue]);
+                px.release(n); return { success: true, propertyName: propertyName };
             },
             DELETE_COMPONENT_PROPERTY: async function (px, p) {
                 var n = await getNode(px, p.nodeId);
+                var nodeType = await px.get(n, 'type');
+                if (nodeType !== 'COMPONENT' && nodeType !== 'COMPONENT_SET') {
+                    px.release(n); throw new Error('Node must be a COMPONENT or COMPONENT_SET. Got: ' + nodeType);
+                }
                 await px.call(n, 'deleteComponentProperty', [p.propertyName]);
-                px.release(n); return { success: true, propertyName: p.propertyName };
+                px.release(n); return { success: true };
             },
 
             // ── Variable operations ─────────────────────────────────────
@@ -1565,10 +1576,11 @@
                 var r = await px.snapshot(c, ['id', 'name', 'key', 'modes']);
                 px.release(c); return { success: true, collection: r };
             },
+            // ISO: addComponentProperty returns the full name with #nodeId suffix
             ADD_COMPONENT_PROPERTY: async function (px, p) {
                 var n = await getNode(px, p.nodeId);
-                await px.call(n, 'addComponentProperty', [p.propertyName, p.propertyType, p.defaultValue]);
-                px.release(n); return { success: true, propertyName: p.propertyName };
+                var resultName = await px.call(n, 'addComponentProperty', [p.propertyName, p.propertyType, p.defaultValue]);
+                px.release(n); return { success: true, propertyName: resultName };
             },
 
             // ── Complex — proxy + iterate/snapshot ──────────────────────
@@ -1581,6 +1593,8 @@
                 var font = (fontName === '__FIGMA_MIXED__') ? { family: 'Inter', style: 'Regular' } : fontName;
                 await px.call('figma', 'loadFontAsync', [font]);
                 await px.set(n, 'characters', p.text);
+                // ISO: apply fontSize if provided
+                if (p.fontSize) await px.set(n, 'fontSize', p.fontSize);
                 var r = await px.snapshot(n, ['id', 'name', 'characters']);
                 px.release(n); return { success: true, node: r };
             },
@@ -1627,12 +1641,28 @@
                 px.release(vars, cols);
                 return { success: true, data: { variables: varsData, variableCollections: colsData } };
             },
+            // ISO: image must be an object { base64, format, scale, byteLength, node, bounds }
+            // The MCP server reads result.image.base64 for the content block
             CAPTURE_SCREENSHOT: async function (px, p) {
                 var n = await getNode(px, p.nodeId);
-                var scale = (p.scale !== undefined) ? p.scale : 1;
-                var bytes = await px.call(n, 'exportAsync', [{ format: 'PNG', constraint: { type: 'SCALE', value: scale } }]);
+                var scale = (p.scale !== undefined) ? p.scale : 2;
+                var format = (p.format || 'PNG').toUpperCase();
+                var nodeInfo = await px.snapshot(n, ['id', 'name', 'type', 'absoluteBoundingBox']);
+                var bytes = await px.call(n, 'exportAsync', [{ format: format, constraint: { type: 'SCALE', value: scale } }]);
                 var base64 = await px.call('figma', 'base64Encode', [bytes]);
-                px.release(n, bytes); return { success: true, image: base64 };
+                var byteLen = await px.get(bytes, 'length');
+                px.release(n, bytes);
+                return {
+                    success: true,
+                    image: {
+                        base64: base64,
+                        format: format,
+                        scale: scale,
+                        byteLength: byteLen,
+                        node: { id: nodeInfo.id, name: nodeInfo.name, type: nodeInfo.type },
+                        bounds: nodeInfo.absoluteBoundingBox
+                    }
+                };
             },
             SET_INSTANCE_PROPERTIES: async function (px, p) {
                 var n = await getNode(px, p.nodeId);
@@ -1675,6 +1705,35 @@
                 px.release(parentN, child); return { success: true, node: r };
             },
 
+            // ISO: SET_IMAGE_FILL decodes base64 in ui.html (atob available here),
+            // sends raw bytes to code.ts where figma.createImage() is called.
+            SET_IMAGE_FILL: async function (px, p) {
+                var nodeIds = p.nodeIds || (p.nodeId ? [p.nodeId] : []);
+                if (!p.imageData) throw new Error('imageData (base64) is required');
+                if (nodeIds.length === 0) throw new Error('nodeIds or nodeId is required');
+                // Decode base64 to byte array in browser context (atob available here, not in QuickJS)
+                var binaryStr = atob(p.imageData);
+                var bytes = new Uint8Array(binaryStr.length);
+                for (var i = 0; i < binaryStr.length; i++) bytes[i] = binaryStr.charCodeAt(i);
+                // Create image in Figma via EXECUTE_CODE (figma.createImage needs raw bytes, not a handle)
+                var code = 'var bytes = new Uint8Array(' + JSON.stringify(Array.from(bytes)) + ');'
+                    + 'var image = figma.createImage(bytes);'
+                    + 'var imageHash = image.hash;'
+                    + 'var fill = { type: "IMAGE", scaleMode: "' + (p.scaleMode || 'FILL') + '", imageHash: imageHash };'
+                    + 'var nodeIds = ' + JSON.stringify(nodeIds) + ';'
+                    + 'var updatedNodes = [];'
+                    + 'for (var i = 0; i < nodeIds.length; i++) {'
+                    + '  var node = await figma.getNodeByIdAsync(nodeIds[i]);'
+                    + '  if (node && "fills" in node) { node.fills = [fill]; updatedNodes.push({ id: node.id, name: node.name }); }'
+                    + '}'
+                    + 'return { imageHash: imageHash, updatedCount: updatedNodes.length, nodes: updatedNodes };';
+                var result = await px.executeCode(code, 60000);
+                if (result && result.imageHash) {
+                    return { success: true, imageHash: result.imageHash, updatedCount: result.updatedCount, nodes: result.nodes };
+                }
+                throw new Error(result?.error || 'Failed to set image fill');
+            },
+
             // ── Passthrough / local handlers ────────────────────────────
             // ISO: EXECUTE_CODE errors must resolve (not reject) with { success: false, error }
             EXECUTE_CODE: async function (px, p) {
@@ -1689,12 +1748,36 @@
                 if (window.__cachedVariablesData) return window.__cachedVariablesData;
                 throw new Error('Variables data not ready');
             },
-            GET_FILE_INFO: async function () {
-                if (cachedFigmaContext) return { success: true, fileInfo: cachedFigmaContext };
-                throw new Error('File info not ready');
+            // ISO: GET_FILE_INFO must return { success, fileInfo: { fileName, fileKey, currentPage, currentPageId, selectionCount } }
+            GET_FILE_INFO: async function (px) {
+                try {
+                    var result = await px.executeCode(
+                        'var sel = figma.currentPage.selection;'
+                        + 'return { fileName: figma.root.name, fileKey: figma.fileKey || null,'
+                        + ' currentPage: figma.currentPage.name, currentPageId: figma.currentPage.id,'
+                        + ' selectionCount: sel ? sel.length : 0 };',
+                        5000
+                    );
+                    if (result && result.fileName !== undefined) {
+                        return { success: true, fileInfo: result };
+                    }
+                } catch (e) { /* fallback below */ }
+                // Fallback to cached context
+                if (cachedFigmaContext) {
+                    return { success: true, fileInfo: {
+                        fileName: cachedFigmaContext.fileName,
+                        fileKey: cachedFigmaContext.fileKey,
+                        currentPage: cachedFigmaContext.currentPage?.name || null,
+                        currentPageId: cachedFigmaContext.currentPage?.id || null,
+                        selectionCount: 0
+                    }};
+                }
+                throw new Error('File info not available');
             },
             CLEAR_CONSOLE: async function () { return { success: true, cleared: true }; },
-            RELOAD_UI: async function () { return { success: true }; }
+            RELOAD_UI: async function () { return { success: true }; },
+            // LINT_DESIGN — not implemented (native FC plugin has ~500 lines of WCAG accessibility audit)
+            LINT_DESIGN: async function () { throw new Error('LINT_DESIGN is not implemented in Guardian. Use the native Figma Console plugin for design linting.'); }
         };
 
         // ── Port scanner ──────────────────────────────────────────────
@@ -1721,7 +1804,11 @@
             if (window.__cachedVariablesData) {
                 connWs.send(JSON.stringify({ type: 'VARIABLES_DATA', data: window.__cachedVariablesData }));
             }
-            // Send file info
+            // Actively request file info from code.ts (like the native plugin does)
+            // so the MCP server recognizes the connection even if cache isn't ready yet
+            FigmaProxy.call('figma', 'getFileKey', []).catch(function() { return null; });
+            parent.postMessage({ pluginMessage: { type: 'get-file-info', id: 'fc-bridge-init' } }, '*');
+            // Send cached file info immediately if available, fresh one arrives via onmessage later
             if (cachedFigmaContext) {
                 connWs.send(JSON.stringify({ type: 'FILE_INFO', data: cachedFigmaContext }));
             }
@@ -1849,8 +1936,9 @@
             });
         }
 
-        // Start scanning
+        // Start scanning + periodic rescan to discover new servers
         scanAndConnect();
+        setInterval(function () { scanAndConnect(); }, 15000);
     })();
 
     // ── Guardian Bridge Client ──────────────────────────────────────────────────

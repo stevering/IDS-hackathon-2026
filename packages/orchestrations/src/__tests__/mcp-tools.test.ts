@@ -181,16 +181,17 @@ describe("External MCP tools in agent engine", () => {
       const state = makeStateWithExternalTools(MOCK_MCP_TOOLS);
       // Add a directive to the queue so processQueues triggers call_llm
       state.directiveQueue.push({
-        fromAgentId: "orchestrator",
+        directiveId: "test-directive-1",
         content: "Create a frame",
       });
 
       const effects = processQueues(state);
 
-      const callLlmEffect = effects.find((e: { type: string }) => e.type === "call_llm");
+      const callLlmEffect = effects.find((e) => e.type === "call_llm");
       expect(callLlmEffect).toBeDefined();
+      if (callLlmEffect?.type !== "call_llm") throw new Error("Wrong type");
 
-      const toolNames = callLlmEffect.tools.map((t: { name: string }) => t.name);
+      const toolNames = callLlmEffect.tools.map((t) => t.name);
       expect(toolNames).toContain("figmaconsole_create_child");
       expect(toolNames).toContain("figmaconsole_set_fills");
       expect(toolNames).toContain("github_search_code");

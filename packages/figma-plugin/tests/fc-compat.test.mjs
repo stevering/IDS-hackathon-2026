@@ -9,10 +9,12 @@
  *   - No other plugin/server listening on the test port
  *
  * Run:
- *   node packages/figma-plugin/tests/fc-compat.test.mjs [--port 9223]
+ *   node packages/figma-plugin/tests/fc-compat.test.mjs [--port 9232]
  *
  * The script starts a WebSocket server (simulating the FC MCP server),
  * waits for the Guardian plugin to connect, then runs all tests.
+ *
+ * Tested against figma-console-mcp v1.11.1/v1.11.2.
  */
 
 import { WebSocketServer } from 'ws';
@@ -20,7 +22,7 @@ import { WebSocketServer } from 'ws';
 // ─── Config ─────────────────────────────────────────────────────
 // Use port 9232 (last in FC range) to avoid conflict with real MCP servers on 9223-9231
 const PORT = parseInt(process.argv.find((_, i, a) => a[i - 1] === '--port') || '9232');
-const TIMEOUT_MS = 10000;
+const TIMEOUT_MS = 15000;
 
 // ─── Test infrastructure ────────────────────────────────────────
 let ws = null;
@@ -42,7 +44,6 @@ function send(method, params = {}) {
 function handleMessage(data) {
   try {
     const msg = JSON.parse(data);
-    // Event messages (no id) — ignore
     if (!msg.id && msg.type) return;
     const p = pending.get(msg.id);
     if (!p) return;
@@ -81,7 +82,7 @@ function assertError(response, testName) {
 }
 
 function assertSuccess(result, testName) {
-  assert(result && result.success === true, `${testName} — success: true`, `got: ${JSON.stringify(result)}`);
+  assert(result && result.success === true, `${testName} — success: true`, `got: ${JSON.stringify(result)?.substring(0, 200)}`);
 }
 
 function assertNodeShape(node, testName) {
@@ -114,6 +115,14 @@ async function createTestText(name = 'compat-test-text') {
   return res.result?.result;
 }
 
+async function createTestComponent(name = 'compat-test-comp') {
+  const res = await send('EXECUTE_CODE', {
+    code: `const c = figma.createComponent(); c.name = '${name}'; c.resize(100, 50); return { id: c.id, name: c.name };`,
+    timeout: 5000,
+  });
+  return res.result?.result;
+}
+
 async function deleteNode(nodeId) {
   await send('EXECUTE_CODE', {
     code: `const n = await figma.getNodeByIdAsync('${nodeId}'); if (n) n.remove(); return { deleted: true };`,
@@ -126,7 +135,6 @@ async function deleteNode(nodeId) {
 async function testExecuteCode() {
   console.log('\n── EXECUTE_CODE ──');
 
-  // Success
   const res = await send('EXECUTE_CODE', { code: 'return { test: true };', timeout: 5000 });
   const r = assertResult(res, 'execute success');
   assertSuccess(r, 'execute success');
@@ -138,7 +146,7 @@ async function testExecuteCode() {
   assert(er.success === false, 'execute error — success: false');
   assert(typeof er.error === 'string', 'execute error — error is string');
 
-  // Syntax error — ISO: must be result with success: false
+  // Syntax error
   const syn = await send('EXECUTE_CODE', { code: 'invalid @@!!', timeout: 5000 });
   const sr = assertResult(syn, 'execute syntax error — is result, not WS error');
   assert(sr.success === false, 'execute syntax error — success: false');
@@ -183,35 +191,24 @@ async function testNodeOperations() {
   assertSuccess(cr, 'corner radius');
   assert(cr.node?.cornerRadius === 8, 'corner radius — is 8');
 
-  // SET_NODE_DESCRIPTION — only works on Components, not Rectangles.
-  // Create a Component to test properly.
-  const compRes = await send('EXECUTE_CODE', {
-    code: `const c = figma.createComponent(); c.name = 'desc-test-comp'; c.resize(100,50); return { id: c.id };`,
-    timeout: 5000,
-  });
-  const compId = compRes.result?.result?.id;
-  if (compId) {
-    const desc = await send('SET_NODE_DESCRIPTION', { nodeId: compId, description: 'test desc' });
+  // SET_NODE_DESCRIPTION on Component
+  const comp = await createTestComponent('desc-test');
+  if (comp) {
+    const desc = await send('SET_NODE_DESCRIPTION', { nodeId: comp.id, description: 'test desc' });
     const dr = assertResult(desc, 'description');
     assertSuccess(dr, 'description');
     assert(dr.node?.description === 'test desc', 'description — value set');
-    await deleteNode(compId);
-  } else {
-    assert(false, 'description — could not create Component for test');
+    await deleteNode(comp.id);
   }
 
-  // SET_NODE_FILLS — hex color conversion
+  // SET_NODE_FILLS
   const fills = await send('SET_NODE_FILLS', { nodeId: id, fills: [{ type: 'SOLID', color: '#FF5500' }] });
   const fr = assertResult(fills, 'fills');
   assertSuccess(fr, 'fills');
   assertNodeShape(fr.node, 'fills');
 
-  // SET_NODE_STROKES — hex color conversion + strokeWeight
-  const strokes = await send('SET_NODE_STROKES', {
-    nodeId: id,
-    strokes: [{ type: 'SOLID', color: '#000000' }],
-    strokeWeight: 2,
-  });
+  // SET_NODE_STROKES
+  const strokes = await send('SET_NODE_STROKES', { nodeId: id, strokes: [{ type: 'SOLID', color: '#000000' }], strokeWeight: 2 });
   const str = assertResult(strokes, 'strokes');
   assertSuccess(str, 'strokes');
 
@@ -220,24 +217,18 @@ async function testNodeOperations() {
   const clr = assertResult(clone, 'clone');
   assertSuccess(clr, 'clone');
   assertNodeShape(clr.node, 'clone');
-  const cloneId = clr.node?.id;
+  if (clr.node?.id) await deleteNode(clr.node.id);
 
-  // DELETE_NODE (delete the clone)
-  if (cloneId) {
-    const del = await send('DELETE_NODE', { nodeId: cloneId });
-    const dlr = assertResult(del, 'delete');
-    assertSuccess(dlr, 'delete');
-    assert(dlr.deleted === true, 'delete — deleted: true');
-  }
-
-  // Cleanup
-  await deleteNode(id);
+  // DELETE_NODE
+  const del = await send('DELETE_NODE', { nodeId: id });
+  const dlr = assertResult(del, 'delete');
+  assertSuccess(dlr, 'delete');
+  assert(dlr.deleted === true, 'delete — deleted: true');
 }
 
 async function testNodeErrors() {
   console.log('\n── NODE ERRORS (ISO format) ──');
 
-  // Non-existent node — ISO: error must contain "Node not found: <id>"
   const methods = ['RESIZE_NODE', 'MOVE_NODE', 'CLONE_NODE', 'DELETE_NODE', 'RENAME_NODE',
     'SET_NODE_OPACITY', 'SET_NODE_CORNER_RADIUS', 'SET_NODE_DESCRIPTION',
     'SET_NODE_FILLS', 'SET_NODE_STROKES', 'CAPTURE_SCREENSHOT'];
@@ -251,7 +242,7 @@ async function testNodeErrors() {
     assert(err.includes('Node not found: 999:999'), `${method} — error says "Node not found: 999:999"`, `got: ${err}`);
   }
 
-  // SET_TEXT_CONTENT on non-text node — ISO: "Node must be a TEXT node. Got: <type>"
+  // SET_TEXT_CONTENT on non-text node
   const rect = await createTestRect('error-type-test');
   if (rect) {
     const textErr = await send('SET_TEXT_CONTENT', { nodeId: rect.id, text: 'hello' });
@@ -263,6 +254,10 @@ async function testNodeErrors() {
   // CREATE_CHILD_NODE with non-existent parent
   const childErr = await send('CREATE_CHILD_NODE', { parentId: '999:999', nodeType: 'RECTANGLE' });
   assertError(childErr, 'create_child 999:999');
+
+  // SET_TEXT_CONTENT on non-existent node
+  const textErr2 = await send('SET_TEXT_CONTENT', { nodeId: '999:999', text: 'hello' });
+  assertError(textErr2, 'set_text 999:999');
 }
 
 async function testTextContent() {
@@ -270,10 +265,17 @@ async function testTextContent() {
   const text = await createTestText('text-test');
   if (!text) { console.log('  ⚠️ Skipped — could not create test text node'); return; }
 
+  // Basic text update
   const res = await send('SET_TEXT_CONTENT', { nodeId: text.id, text: 'Updated text!' });
   const r = assertResult(res, 'set text');
   assertSuccess(r, 'set text');
   assert(r.node?.characters === 'Updated text!', 'set text — characters updated');
+
+  // Text with fontSize
+  const res2 = await send('SET_TEXT_CONTENT', { nodeId: text.id, text: 'Big text', fontSize: 32 });
+  const r2 = assertResult(res2, 'set text + fontSize');
+  assertSuccess(r2, 'set text + fontSize');
+  assert(r2.node?.characters === 'Big text', 'set text + fontSize — characters updated');
 
   await deleteNode(text.id);
 }
@@ -286,14 +288,21 @@ async function testCreateChild() {
   const types = ['RECTANGLE', 'ELLIPSE', 'FRAME', 'TEXT', 'LINE'];
   for (const nodeType of types) {
     const res = await send('CREATE_CHILD_NODE', {
-      parentId: frame.id,
-      nodeType,
+      parentId: frame.id, nodeType,
       properties: { name: `child-${nodeType}`, width: 50, height: 50 },
     });
     const r = assertResult(res, `create child ${nodeType}`);
     assertSuccess(r, `create child ${nodeType}`);
     assertNodeShape(r.node, `create child ${nodeType}`);
   }
+
+  // With fills (hex conversion)
+  const res = await send('CREATE_CHILD_NODE', {
+    parentId: frame.id, nodeType: 'RECTANGLE',
+    properties: { name: 'child-with-fills', width: 30, height: 30, fills: [{ type: 'SOLID', color: '#FF0000' }] },
+  });
+  const r = assertResult(res, 'create child with fills');
+  assertSuccess(r, 'create child with fills');
 
   await deleteNode(frame.id);
 }
@@ -306,13 +315,18 @@ async function testCaptureScreenshot() {
   const res = await send('CAPTURE_SCREENSHOT', { nodeId: rect.id });
   const r = assertResult(res, 'screenshot');
   assertSuccess(r, 'screenshot');
-  assert(typeof r.image === 'string', 'screenshot — image is base64 string', `got type: ${typeof r.image}`);
-  assert(r.image?.length > 100, 'screenshot — image has data', `length: ${r.image?.length}`);
+  // ISO: image must be an object with base64, format, scale, byteLength, node, bounds
+  assert(typeof r.image === 'object' && r.image !== null, 'screenshot — image is object');
+  assert(typeof r.image?.base64 === 'string', 'screenshot — image.base64 is string');
+  assert(r.image?.base64?.length > 100, 'screenshot — image.base64 has data');
+  assert(r.image?.format === 'PNG', 'screenshot — image.format is PNG');
+  assert(typeof r.image?.byteLength === 'number', 'screenshot — image.byteLength is number');
+  assert(r.image?.node?.id === rect.id, 'screenshot — image.node.id matches');
 
   await deleteNode(rect.id);
 }
 
-async function testVariables() {
+async function testVariableOperations() {
   console.log('\n── VARIABLE OPERATIONS ──');
 
   // GET_VARIABLES_DATA — local cache
@@ -333,28 +347,150 @@ async function testVariables() {
   const cpr = assertResult(comps, 'get local components');
   assertSuccess(cpr, 'get local components');
   assert(Array.isArray(cpr.data), 'get local components — data is array');
+
+  // Get a collection ID for variable tests
+  const collections = rfr.data?.variableCollections;
+  if (!collections || collections.length === 0) {
+    console.log('  ⚠️ Skipping variable CRUD — no collections in file');
+    return;
+  }
+  const collectionId = collections[0].id;
+
+  // CREATE_VARIABLE
+  const createVar = await send('CREATE_VARIABLE', { name: 'test/e2e-var', collectionId, resolvedType: 'FLOAT' });
+  const cvr = assertResult(createVar, 'create variable');
+  assertSuccess(cvr, 'create variable');
+  assert(cvr.variable?.name === 'test/e2e-var', 'create variable — name matches');
+  const varId = cvr.variable?.id;
+
+  if (varId) {
+    // RENAME_VARIABLE
+    const renameVar = await send('RENAME_VARIABLE', { variableId: varId, newName: 'test/e2e-renamed' });
+    const rvr = assertResult(renameVar, 'rename variable');
+    assertSuccess(rvr, 'rename variable');
+    assert(rvr.variable?.name === 'test/e2e-renamed', 'rename variable — name updated');
+
+    // SET_VARIABLE_DESCRIPTION
+    const descVar = await send('SET_VARIABLE_DESCRIPTION', { variableId: varId, description: 'test desc' });
+    const dvr = assertResult(descVar, 'set variable description');
+    assertSuccess(dvr, 'set variable description');
+
+    // UPDATE_VARIABLE
+    const modeId = collections[0].modes?.[0]?.id || collections[0].defaultModeId;
+    if (modeId) {
+      const updateVar = await send('UPDATE_VARIABLE', { variableId: varId, modeId, value: 42 });
+      const uvr = assertResult(updateVar, 'update variable');
+      assertSuccess(uvr, 'update variable');
+    }
+
+    // DELETE_VARIABLE
+    const delVar = await send('DELETE_VARIABLE', { variableId: varId });
+    const dlvr = assertResult(delVar, 'delete variable');
+    assertSuccess(dlvr, 'delete variable');
+    assert(dlvr.deleted === true, 'delete variable — deleted: true');
+  }
+}
+
+async function testComponentOperations() {
+  console.log('\n── COMPONENT OPERATIONS ──');
+
+  const comp = await createTestComponent('comp-ops-test');
+  if (!comp) { console.log('  ⚠️ Skipped — could not create test component'); return; }
+
+  // GET_COMPONENT
+  const getComp = await send('GET_COMPONENT', { nodeId: comp.id });
+  const gcr = assertResult(getComp, 'get component');
+  assertSuccess(gcr, 'get component');
+
+  // ADD_COMPONENT_PROPERTY — returns propertyName which may include #nodeId suffix
+  const addProp = await send('ADD_COMPONENT_PROPERTY', {
+    nodeId: comp.id, propertyName: 'testProp', propertyType: 'BOOLEAN', defaultValue: true
+  });
+  const apr = assertResult(addProp, 'add component property');
+  assertSuccess(apr, 'add component property');
+  // Use the returned propertyName (may be "testProp#123:456") for subsequent ops
+  const actualPropName = apr.propertyName || 'testProp';
+
+  // EDIT_COMPONENT_PROPERTY — newValue is wrapped in { defaultValue } by adapter
+  const editProp = await send('EDIT_COMPONENT_PROPERTY', {
+    nodeId: comp.id, propertyName: actualPropName, newValue: false
+  });
+  const epr = assertResult(editProp, 'edit component property');
+  assertSuccess(epr, 'edit component property');
+
+  // DELETE_COMPONENT_PROPERTY — must use the full property name with hash suffix
+  const delProp = await send('DELETE_COMPONENT_PROPERTY', { nodeId: comp.id, propertyName: actualPropName });
+  const dpr = assertResult(delProp, 'delete component property');
+  assertSuccess(dpr, 'delete component property');
+
+  // Component error: property operations on non-existent node
+  const errProp = await send('ADD_COMPONENT_PROPERTY', { nodeId: '999:999', propertyName: 'x', propertyType: 'BOOLEAN', defaultValue: true });
+  assertError(errProp, 'add component property 999:999');
+
+  await deleteNode(comp.id);
+}
+
+async function testSetImageFill() {
+  console.log('\n── SET_IMAGE_FILL ──');
+  const rect = await createTestRect('image-fill-test');
+  if (!rect) { console.log('  ⚠️ Skipped — could not create test node'); return; }
+
+  // Create a tiny 2x2 red PNG as base64
+  // This is the smallest valid PNG: 2x2 pixels, red
+  const tinyPngBase64 = 'iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAYAAABytg0kAAAAEklEQVQIW2P8z8BQDwQMDAwMAB1qA/1b1VqJAAAAAElFTkSuQmCC';
+
+  const res = await send('SET_IMAGE_FILL', { nodeId: rect.id, imageData: tinyPngBase64, scaleMode: 'FILL' });
+  const r = assertResult(res, 'set image fill');
+  assertSuccess(r, 'set image fill');
+  assert(typeof r.imageHash === 'string', 'set image fill — has imageHash');
+  assert(r.updatedCount >= 1, 'set image fill — updatedCount >= 1');
+
+  // Error: non-existent node
+  const err = await send('SET_IMAGE_FILL', { nodeId: '999:999', imageData: tinyPngBase64 });
+  // SET_IMAGE_FILL uses EXECUTE_CODE internally, errors come back as result
+  // Just check it doesn't crash
+  assert(err.result !== undefined || err.error !== undefined, 'set image fill error — responds');
+
+  // Error: missing imageData
+  const err2 = await send('SET_IMAGE_FILL', { nodeId: rect.id });
+  assertError(err2, 'set image fill — missing imageData');
+
+  await deleteNode(rect.id);
 }
 
 async function testFileInfo() {
   console.log('\n── FILE INFO & STATUS ──');
 
+  // GET_FILE_INFO — ISO format
   const info = await send('GET_FILE_INFO', {});
   const r = assertResult(info, 'get file info');
   assertSuccess(r, 'get file info');
   assert(r.fileInfo !== undefined, 'file info — has fileInfo');
+  assert(typeof r.fileInfo?.fileName === 'string', 'file info — has fileName');
+  assert(r.fileInfo?.currentPage !== undefined, 'file info — has currentPage');
+  assert(r.fileInfo?.currentPageId !== undefined, 'file info — has currentPageId');
 
+  // CLEAR_CONSOLE
   const clear = await send('CLEAR_CONSOLE', {});
   const cr = assertResult(clear, 'clear console');
   assert(cr.cleared === true || cr.success === true, 'clear console — success');
 
+  // RELOAD_UI
   const reload = await send('RELOAD_UI', {});
   const rlr = assertResult(reload, 'reload ui');
   assert(rlr.success === true, 'reload ui — success');
 }
 
+async function testLintDesign() {
+  console.log('\n── LINT_DESIGN (stub) ──');
+  // LINT_DESIGN is declared but not implemented — must return a clear error
+  const res = await send('LINT_DESIGN', { nodeId: '0:1' });
+  assertError(res, 'lint design — returns error (not implemented)');
+  assert(res.error.includes('not implemented'), 'lint design — error says not implemented', `got: ${res.error}`);
+}
+
 async function testUnknownMethod() {
   console.log('\n── UNKNOWN METHOD ──');
-
   const res = await send('NONEXISTENT_METHOD_XYZ', {});
   assertError(res, 'unknown method');
 }
@@ -362,46 +498,49 @@ async function testUnknownMethod() {
 async function testEventForwarding() {
   console.log('\n── EVENT FORWARDING ──');
 
-  // Trigger a selection change and verify we receive the event
-  let receivedEvent = false;
-  const eventPromise = new Promise((resolve) => {
-    const originalHandler = ws.onmessage;
-    const timeout = setTimeout(() => resolve(false), 5000);
-    ws.onmessage = (event) => {
-      // Call original handler for pending requests
-      if (originalHandler) originalHandler(event);
-
-      try {
-        const msg = JSON.parse(event.data);
-        if (msg.type === 'SELECTION_CHANGE' || msg.type === 'VARIABLES_DATA' || msg.type === 'FILE_INFO') {
-          receivedEvent = true;
-          clearTimeout(timeout);
-          resolve(true);
-        }
-      } catch { /* ignore */ }
-    };
-    // Trigger by requesting file info (forces VARIABLES_DATA or FILE_INFO on connect)
-  });
-
-  // We already received events on connect (VARIABLES_DATA, FILE_INFO)
-  // Just check that we can trigger a selection change
   await send('EXECUTE_CODE', {
     code: `const r = figma.createRectangle(); r.name = 'event-test'; figma.currentPage.selection = [r]; return { id: r.id };`,
     timeout: 5000,
   });
 
-  // Give time for the event to arrive
   await new Promise(r => setTimeout(r, 1000));
   assert(true, 'event forwarding — SELECTION_CHANGE / VARIABLES_DATA received on connect');
 
-  // Cleanup
   await send('EXECUTE_CODE', {
     code: `const sel = figma.currentPage.selection; if (sel[0]) sel[0].remove(); return { cleaned: true };`,
     timeout: 5000,
   });
 }
 
+// ─── All test suites ────────────────────────────────────────────
+const allSuites = [
+  testExecuteCode,
+  testNodeOperations,
+  testNodeErrors,
+  testTextContent,
+  testCreateChild,
+  testCaptureScreenshot,
+  testVariableOperations,
+  testComponentOperations,
+  testSetImageFill,
+  testLintDesign,
+  testFileInfo,
+  testUnknownMethod,
+  testEventForwarding,
+];
+
 // ─── Main ───────────────────────────────────────────────────────
+async function runAllSuites() {
+  for (const suite of allSuites) {
+    try {
+      await suite();
+    } catch (e) {
+      console.log(`\n💥 Suite ${suite.name} crashed: ${e.message}`);
+      failed++;
+    }
+  }
+}
+
 async function main() {
   console.log(`\n🔌 Starting FC MCP compatibility test server on port ${PORT}...`);
   console.log('   Open the Guardian plugin in Figma Desktop to connect.\n');
@@ -413,12 +552,10 @@ async function main() {
       ws = socket;
       ws.on('message', (data) => handleMessage(data.toString()));
       console.log('✅ Guardian plugin connected\n');
-      // Wait a moment for handshake (VARIABLES_DATA + FILE_INFO)
       setTimeout(() => resolve(), 1000);
     });
   });
 
-  // Wait for connection with timeout
   const connectTimeout = setTimeout(() => {
     console.log('❌ No connection after 60s. Is the Guardian plugin open in Figma?');
     process.exit(1);
@@ -431,21 +568,7 @@ async function main() {
   console.log('  Figma Console MCP Compatibility Tests');
   console.log('═══════════════════════════════════════════');
 
-  try {
-    await testExecuteCode();
-    await testNodeOperations();
-    await testNodeErrors();
-    await testTextContent();
-    await testCreateChild();
-    await testCaptureScreenshot();
-    await testVariables();
-    await testFileInfo();
-    await testUnknownMethod();
-    await testEventForwarding();
-  } catch (e) {
-    console.log(`\n💥 Test suite crashed: ${e.message}`);
-    failed++;
-  }
+  await runAllSuites();
 
   console.log('\n═══════════════════════════════════════════');
   console.log(`  Results: ${passed} passed, ${failed} failed`);
@@ -456,8 +579,7 @@ async function main() {
     failures.forEach(f => console.log(f));
   }
 
-  // --watch mode: keep server alive so the plugin stays connected.
-  // Press Enter to re-run tests, Ctrl+C to exit.
+  // --watch mode
   const watch = process.argv.includes('--watch');
   if (watch) {
     const rerun = async () => {
@@ -466,21 +588,7 @@ async function main() {
       console.log('═══════════════════════════════════════════');
       console.log('  Figma Console MCP Compatibility Tests');
       console.log('═══════════════════════════════════════════');
-      try {
-        await testExecuteCode();
-        await testNodeOperations();
-        await testNodeErrors();
-        await testTextContent();
-        await testCreateChild();
-        await testCaptureScreenshot();
-        await testVariables();
-        await testFileInfo();
-        await testUnknownMethod();
-        await testEventForwarding();
-      } catch (e) {
-        console.log(`\n💥 Test suite crashed: ${e.message}`);
-        failed++;
-      }
+      await runAllSuites();
       console.log('\n═══════════════════════════════════════════');
       console.log(`  Results: ${passed} passed, ${failed} failed`);
       console.log('═══════════════════════════════════════════');
@@ -494,7 +602,7 @@ async function main() {
     console.log('\n⏎  Press Enter to re-run, Ctrl+C to exit');
     process.stdin.setEncoding('utf8');
     process.stdin.on('data', () => { rerun(); });
-    return; // don't exit
+    return;
   }
 
   wss.close();

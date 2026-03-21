@@ -241,11 +241,93 @@ The widget (`packages/figma-widget/`) displays a canvas badge showing Guardian s
 
 Shares `bridge.ts` with the plugin: `sendFigpalInit`, `setupPageChangeListener`, `handleBasicMessage`, `buildNodeUrl`.
 
+## Complete Message Handler Matrix
+
+All message types handled by the plugin, showing FC MCP compatibility, Guardian-specific handlers,
+and which MCP tools use each handler.
+
+Legend: **FC** = Figma Console MCP WS method, **G** = Guardian-only handler, **Overlap** = equivalent exists in both
+
+| # | Handler | Origin | Description | FC MCP Tools | Guardian MCP Tools | Tested E2E | ISO FC 1.15.5 |
+|---|---------|:---:|---|---|---|:---:|:---:|
+| 1 | `EXECUTE_CODE` | FC+G | Eval arbitrary JS in sandbox with guardrails | `figma_execute`, `figma_get_selection` (verbose), `figma_get_variables` (fallback) | `figma_execute`, `run_action` (all 6 actions), `list_page_children` | ✅ s+e | ✅ |
+| 2 | `RESIZE_NODE` | FC | Resize a node (width, height, constraints) | `figma_resize_node` | — | ✅ s+e | ✅ |
+| 3 | `MOVE_NODE` | FC | Move a node (x, y) | `figma_move_node` | — | ✅ s+e | ✅ |
+| 4 | `CLONE_NODE` | FC | Duplicate a node | `figma_clone_node` | — | ✅ s+e | ✅ |
+| 5 | `DELETE_NODE` | FC | Remove a node | `figma_delete_node` | — | ✅ s+e | ✅ |
+| 6 | `RENAME_NODE` | FC | Set node name | `figma_rename_node` | — | ✅ s+e | ✅ |
+| 7 | `SET_NODE_OPACITY` | FC | Set node opacity (0-1) | `figma_set_opacity`* | — | ✅ s+e | ✅ |
+| 8 | `SET_NODE_CORNER_RADIUS` | FC | Set corner radius | `figma_set_corner_radius`* | — | ✅ s+e | ✅ |
+| 9 | `SET_NODE_DESCRIPTION` | FC | Set description (Components only) | `figma_set_description` | — | ✅ s+e | ✅ |
+| 10 | `SET_NODE_FILLS` | FC | Set fills with hex→RGB conversion | `figma_set_fills` | — | ✅ s+e | ✅ |
+| 11 | `SET_NODE_STROKES` | FC | Set strokes with hex→RGB + weight | `figma_set_strokes` | — | ✅ s+e | ✅ |
+| 12 | `SET_TEXT_CONTENT` | FC | Set text (loadFont + fontSize) | `figma_set_text` | — | ✅ s+e | ✅ |
+| 13 | `CREATE_CHILD_NODE` | FC | Create child node by type | `figma_create_child` | — | ✅ s+e | ✅ |
+| 14 | `CAPTURE_SCREENSHOT` | FC | Export node as PNG base64 | `figma_capture_screenshot` | — | ✅ s+e | ✅ |
+| 15 | `SET_IMAGE_FILL` | FC | Set image fill (base64 decode + createImage) | `figma_set_image_fill` | — | ✅ s+e | ✅ |
+| 16 | `SET_INSTANCE_PROPERTIES` | FC | Set component instance properties | `figma_set_instance_properties` | — | ✅ s | ✅ |
+| 17 | `GET_COMPONENT` | FC | Get component metadata | `figma_get_component` | — | ✅ s | ✅ |
+| 18 | `ADD_COMPONENT_PROPERTY` | FC | Add property to component (returns #hash name) | `figma_add_component_property` | — | ✅ s+e | ✅ |
+| 19 | `EDIT_COMPONENT_PROPERTY` | FC | Edit component property value | `figma_edit_component_property` | — | ✅ s | ✅ |
+| 20 | `DELETE_COMPONENT_PROPERTY` | FC | Delete component property | `figma_delete_component_property` | — | ✅ s | ✅ |
+| 21 | `CREATE_VARIABLE` | FC | Create variable (collection object in dynamic-page) | `figma_create_variable` | — | ✅ s | ✅ |
+| 22 | `UPDATE_VARIABLE` | FC | Set variable value for mode | `figma_update_variable` | — | ✅ s | ✅ |
+| 23 | `DELETE_VARIABLE` | FC | Remove a variable | `figma_delete_variable` | — | ✅ s | ✅ |
+| 24 | `RENAME_VARIABLE` | FC | Rename a variable | `figma_rename_variable` | — | ✅ s | ✅ |
+| 25 | `SET_VARIABLE_DESCRIPTION` | FC | Set variable description | (via FC tools) | — | ✅ s | ✅ |
+| 26 | `CREATE_VARIABLE_COLLECTION` | FC | Create variable collection + modes | `figma_create_variable_collection` | — | ✅ s | ✅ |
+| 27 | `DELETE_VARIABLE_COLLECTION` | FC | Delete variable collection | `figma_delete_variable_collection` | — | ✅ s | ✅ |
+| 28 | `ADD_MODE` | FC | Add mode to collection | `figma_add_mode` | — | ✅ s | ✅ |
+| 29 | `RENAME_MODE` | FC | Rename a mode | `figma_rename_mode` | — | ✅ s | ✅ |
+| 30 | `INSTANTIATE_COMPONENT` | FC | Import + instantiate (variant matching) | `figma_instantiate_component` | — | ✅ s | ✅ |
+| 31 | `REFRESH_VARIABLES` | FC | Full fetch all variables + collections | `figma_get_variables` (refresh) | — | ✅ s | ✅ |
+| 32 | `GET_LOCAL_COMPONENTS` | FC | List all local components | `figma_get_local_components`* | — | ✅ s | ✅ |
+| 33 | `GET_VARIABLES_DATA` | FC | Return cached variables (no round-trip) | `figma_get_variables` (cache) | — | ✅ s | ✅ |
+| 34 | `GET_FILE_INFO` | FC | File name, key, page, selection count | `figma_get_status`, `figma_list_open_files` | — | ✅ s | ✅ |
+| 35 | `CLEAR_CONSOLE` | FC | No-op (buffer server-side) | `figma_clear_console` | — | ✅ s | ✅ |
+| 36 | `RELOAD_UI` | FC | Reload plugin UI | `figma_reload_plugin` | — | ✅ s | ✅ |
+| 37 | `LINT_DESIGN` | FC | WCAG accessibility audit (~500 lines) | `figma_lint_design` | — | ✅ stub | ⚠️ stub |
+| — | — | — | — | — | — | — | — |
+| 38 | `get-selection` | **Overlap** | Snapshot selection (nodes + PNG + URL) | — | via `run_action(get_selection_context)` | — | — |
+| 39 | `GET_VARIABLES` | **Overlap** | Fetch all variables + collections | — | via `run_action(get_ds_variables)` | — | — |
+| 40 | `get-file-info` | **Overlap** | File name, key, pages, user | — | webapp context init | — | — |
+| 41 | `HIGHLIGHT_NODE` | G | Select + zoom to a node by ID | — | Electron overlay | — | — |
+| 42 | `notify` | G | Show Figma toast notification | — | Electron overlay | — | — |
+| 43 | `notify-login-prompt` | G | "Sign in to Guardian" toast with button | — | Auth timer (unauthenticated mode) | — | — |
+| 44 | `BACKEND_STATUS` | G | Persist status for widget badge | — | Widget badge via clientStorage | — | — |
+| 45 | `storage-get` | G | Read clientStorage | — | Theme, URL, bridge status | — | — |
+| 46 | `storage-set` | G | Write clientStorage | — | Theme, URL, bridge status | — | — |
+| 47 | `OPEN_PLUGIN_AND_CONVERSE` | G | Show plugin + trigger analysis | — | Electron overlay | — | — |
+| 48 | `PROXY_CALL` | G | Call method on figma.* or handle | — | FC Bridge adapters (engine) | — | — |
+| 49 | `PROXY_GET` | G | Read property from handle | — | FC Bridge adapters (engine) | — | — |
+| 50 | `PROXY_SET` | G | Write property on handle | — | FC Bridge adapters (engine) | — | — |
+| 51 | `PROXY_SNAPSHOT` | G | Read N properties in one call | — | FC Bridge adapters (engine) | — | — |
+| 52 | `PROXY_ITERATE` | G | Snapshot each element of array | — | FC Bridge adapters (engine) | — | — |
+| 53 | `PROXY_CALL_EACH` | G | Batch call same method N times | — | FC Bridge adapters (engine) | — | — |
+| 54 | `PROXY_RELEASE` | G | Free handles from store | — | FC Bridge adapters (engine) | — | — |
+
+*Some FC MCP tools use EXECUTE_CODE internally rather than dedicated WS methods.
+
+**FC MCP compatibility: 36/37 implemented, 1 stub. 194 E2E assertions, 0 failures.**
+**Tested against figma-console-mcp v1.15.5 (2026-03-21).**
+
+### Guardian handlers that overlap with FC methods
+
+Three Guardian-only handlers have functional equivalents in FC:
+
+| Guardian handler | FC equivalent | Can replace? |
+|---|---|---|
+| `get-selection` (#38) | `EXECUTE_CODE` with selection code | No — Guardian version includes PNG export + nodeUrl that FC doesn't |
+| `GET_VARIABLES` (#39) | `REFRESH_VARIABLES` (#31) | Yes — same data, same API calls. Could migrate to Proxy internally |
+| `get-file-info` (#40) | `GET_FILE_INFO` (#34) | Partially — Guardian returns `fileUrl`, `pages[]`, `currentUser` which FC doesn't |
+
+The remaining Guardian handlers (#41-54) have no FC equivalent — they serve Guardian-specific features (widget badge, Electron overlay, auth, Proxy engine).
+
 ## Proxy vs EXECUTE_CODE — Current Usage
 
 | Consumer | Uses Proxy? | Uses EXECUTE_CODE? | Migration candidate? |
 |---|---|---|---|
-| FC Bridge adapters | Yes (34 methods) | Only for EXECUTE_CODE passthrough | Done |
+| FC Bridge adapters | Yes (36 methods) | EXECUTE_CODE passthrough + SET_IMAGE_FILL + GET_FILE_INFO | Done |
 | Guardian MCP actions (get_selection_context, etc.) | No | Yes (JS templates) | Yes |
 | Guardian MCP tools (list_page_children) | No | Yes (inline JS strings) | Yes |
 | Webapp hook (useFigmaPlugin.executeCode) | No | Yes (passthrough) | Partially (agent-generated code stays as EXECUTE_CODE) |

@@ -124,6 +124,12 @@ After discovering agents #Figma-Desktop-abc (file: Homepage) and #Figma-Desktop-
         }
       }
 
+      // Always include figma_console_local (stdio, no auth needed)
+      // — works when the Guardian plugin bridges to the local MCP server
+      if (!mcpServerIds.includes("figma_console_local")) {
+        mcpServerIds.push("figma_console_local")
+      }
+
       try {
         const response = await fetch(`${cloudUrl}/api/orchestration/start`, {
           method: "POST",

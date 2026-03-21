@@ -838,11 +838,21 @@ async function handleExecuteExternalTool(
   state: AgentWorkflowState,
   effect: Extract<AgentEffect, { type: "execute_external_tool" }>,
   userId: string,
+  mcpServerIds?: string[],
 ): Promise<void> {
   // Resolve server ID from the prefixed tool name
-  const resolved = resolveServerIdFromPrefixedName(effect.toolName);
+  const resolved = resolveServerIdFromPrefixedName(effect.toolName, mcpServerIds);
   if (!resolved) {
     injectToolResult(state, effect.toolCallId, `Error: Cannot resolve MCP server for tool "${effect.toolName}"`);
+    // Emit error activity so it appears in the stream
+    await executeEffect(state, {
+      type: "emit_activity",
+      activities: [{
+        action: "external_tool_result",
+        success: false,
+        summary: `${effect.toolName}: Cannot resolve MCP server`,
+      }],
+    }, userId);
     return;
   }
 
@@ -858,13 +868,28 @@ async function handleExecuteExternalTool(
     state.directiveExecCount = (state.directiveExecCount ?? 0) + 1;
   }
 
+  // Emit activity so external tool results appear in the stream
+  await executeEffect(state, {
+    type: "emit_activity",
+    activities: [{
+      action: "external_tool_result",
+      success: result.success ?? false,
+      summary: result.success
+        ? `${effect.toolName}: OK${result.result ? ` — ${JSON.stringify(result.result).slice(0, 200)}` : ""}`
+        : `${effect.toolName}: FAILED — ${result.error?.slice(0, 200) ?? "Unknown error"}`,
+    }],
+  }, userId);
+
   injectToolResult(state, effect.toolCallId, JSON.stringify(result));
 }
 
 /** Resolve server ID from prefixed tool name (e.g. "figmaconsole_create_child" → figma_console / create_child) */
-function resolveServerIdFromPrefixedName(prefixedName: string): { serverId: string; rawName: string } | undefined {
+function resolveServerIdFromPrefixedName(prefixedName: string, mcpServerIds?: string[]): { serverId: string; rawName: string } | undefined {
   const prefixes: Array<[string, string]> = [
-    ["figmaconsole_", "figma_console"],
+    // If figma_console_local is connected, prefer it over remote for figmaconsole_ tools
+    ...(mcpServerIds?.includes("figma_console_local")
+      ? [["figmaconsole_", "figma_console_local"] as [string, string]]
+      : [["figmaconsole_", "figma_console"] as [string, string]]),
     ["github_", "github"],
     ["figma_", "figma_mcp"],
   ];
@@ -956,11 +981,13 @@ export async function agentWorkflow(input: AgentWorkflowInput): Promise<void> {
 
   // ── Inject system prompt (includes task context) ────────────────────────
   const peerAgents = Array.from(state.agentDirectory.values());
+  const hasExternalFigmaTools = input.mcpServerIds?.includes("figma_console_local") || input.mcpServerIds?.includes("figma_console");
   const systemPrompt = buildAgentSystemPrompt(
     input.agent,
     "orchestrator",
     peerAgents,
-    input.task
+    input.task,
+    { hasExternalFigmaTools }
   );
   state.messageHistory.push({
     role: "system",
@@ -1037,7 +1064,7 @@ export async function agentWorkflow(input: AgentWorkflowInput): Promise<void> {
         // Continue LLM loop with correct messages (including tool results)
         if (pendingLLM) {
           const msgs = didExecTool ? [...state.messageHistory] : pendingLLM.messages;
-          await executeLLMLoop(state, msgs, pendingLLM.tools, input.userId, callLLM, input.model);
+          await executeLLMLoop(state, msgs, pendingLLM.tools, input.userId, callLLM, input.model, input.mcpServerIds);
         }
       } else if (effect.type === "wait_for_input") {
         // Continue to next loop iteration
@@ -1059,7 +1086,8 @@ async function executeLLMLoop(
   tools: LLMToolDefinition[] | undefined,
   userId: string,
   callLLM: LLMActivities["callLLM"],
-  model?: string
+  model?: string,
+  mcpServerIds?: string[],
 ): Promise<void> {
   let maxIterations = 200;
 
@@ -1096,7 +1124,7 @@ async function executeLLMLoop(
         didExecuteTool = true;
         needsContinue = true;
       } else if (effect.type === "execute_external_tool") {
-        await handleExecuteExternalTool(state, effect, userId);
+        await handleExecuteExternalTool(state, effect, userId, mcpServerIds);
         didExecuteTool = true;
         needsContinue = true;
       } else if (effect.type === "fetch_figma_docs") {

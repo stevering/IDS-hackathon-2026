@@ -105,17 +105,36 @@ export function buildAgentSystemPrompt(
   agent: AgentId,
   orchestratorShortId: string,
   peerAgents: AgentId[],
-  task?: string
+  task?: string,
+  options?: { hasExternalFigmaTools?: boolean }
 ): string {
   const peerList = peerAgents
     .filter((a) => a.shortId !== agent.shortId)
     .map((a) => `- ${a.shortId} (${a.label})`)
     .join("\n");
 
+  const fcToolsSection = options?.hasExternalFigmaTools
+    ? `
+## Figma Console MCP tools (PREFERRED for Figma modifications)
+You have access to Figma Console MCP tools prefixed with \`figmaconsole_\` (e.g. figmaconsole_figma_execute, figmaconsole_figma_create_child, figmaconsole_figma_set_fills, figmaconsole_figma_set_text, figmaconsole_figma_capture_screenshot, etc.).
+
+**PREFER these tools over figma_plugin_execute** for all Figma document modifications:
+- \`figmaconsole_figma_execute\` — run arbitrary JS code in Figma (same as figma_plugin_execute but via FC MCP)
+- \`figmaconsole_figma_create_child\` — create child nodes (RECTANGLE, ELLIPSE, FRAME, TEXT, LINE)
+- \`figmaconsole_figma_set_fills\` / \`figmaconsole_figma_set_strokes\` — set fills/strokes with hex colors
+- \`figmaconsole_figma_set_text\` — set text content with optional fontSize
+- \`figmaconsole_figma_resize_node\` / \`figmaconsole_figma_move_node\` — resize/move nodes
+- \`figmaconsole_figma_capture_screenshot\` — capture node as PNG
+- \`figmaconsole_figma_clone_node\` / \`figmaconsole_figma_delete_node\` / \`figmaconsole_figma_rename_node\`
+
+Use \`figma_plugin_execute\` only as fallback if a figmaconsole_ tool is not available for a specific operation, or for complex multi-step code that cannot be expressed with individual FC tools.
+`
+    : "";
+
   const figmaSection = agent.pluginClientId
     ? `
 ## Figma execution strategy
-You have access to a Figma plugin via figma_plugin_execute.
+You have access to a Figma plugin via figma_plugin_execute.${fcToolsSection ? "\n" + fcToolsSection : ""}
 
 ### Phase 1: PLAN (before any code)
 Write a numbered plan. For each step, state:
