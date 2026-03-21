@@ -41,13 +41,14 @@ export async function POST(request: Request) {
   }
 
   const body = await request.json();
-  const { task, targetAgents, model, maxDurationMs, context, conversationId } = body as {
+  const { task, targetAgents, model, maxDurationMs, context, conversationId, mcpServerIds } = body as {
     task: string;
     targetAgents: AgentId[];
     model?: string;
     maxDurationMs?: number;
     context?: Record<string, unknown>;
     conversationId?: string;
+    mcpServerIds?: string[];
   };
 
   if (!task || !targetAgents?.length) {
@@ -96,6 +97,7 @@ export async function POST(request: Request) {
         ...context,
         userSettings,
       },
+      mcpServerIds,
     };
 
     log.info("starting orchestration", {

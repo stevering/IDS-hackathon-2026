@@ -8,6 +8,7 @@
 import type {
   LLMCallParams,
   LLMCallResult,
+  LLMToolDefinition,
   ExecuteCodeParams,
   ExecuteCodeResult,
   FetchFigmaDocsParams,
@@ -67,4 +68,22 @@ export interface PersistenceActivities {
 
 export interface DocsActivities {
   fetchFigmaDocs(params: FetchFigmaDocsParams): Promise<FetchFigmaDocsResult>;
+}
+
+// ---------------------------------------------------------------------------
+// MCP Activities
+// ---------------------------------------------------------------------------
+
+export interface MCPActivities {
+  discoverMCPTools(params: {
+    userId: string;
+    mcpServerIds: string[];
+  }): Promise<LLMToolDefinition[]>;
+
+  executeMCPTool(params: {
+    userId: string;
+    serverId: string;
+    toolName: string;
+    arguments: Record<string, unknown>;
+  }): Promise<{ success: boolean; result?: unknown; error?: string }>;
 }

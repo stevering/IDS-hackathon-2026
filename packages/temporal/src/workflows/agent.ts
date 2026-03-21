@@ -54,7 +54,7 @@ import {
   agentActivitySignal,
 } from "../signals/definitions.js";
 
-import type { LLMActivities, FigmaActivities, DocsActivities } from "../activities/types.js";
+import type { LLMActivities, FigmaActivities, DocsActivities, MCPActivities } from "../activities/types.js";
 
 // Proxy activities — normal timeouts
 const normalLLM = proxyActivities<LLMActivities>({
@@ -74,6 +74,11 @@ const { executeFigmaCode } = proxyActivities<FigmaActivities>({
 
 const { fetchFigmaDocs } = proxyActivities<DocsActivities>({
   startToCloseTimeout: "20 seconds",
+  retry: { maximumAttempts: 2 },
+});
+
+const mcpActivities = proxyActivities<MCPActivities>({
+  startToCloseTimeout: "60 seconds",
   retry: { maximumAttempts: 2 },
 });
 
@@ -825,6 +830,52 @@ async function handleFetchFigmaDocs(
   }
 }
 
+// ---------------------------------------------------------------------------
+// External tool execution (MCP)
+// ---------------------------------------------------------------------------
+
+async function handleExecuteExternalTool(
+  state: AgentWorkflowState,
+  effect: Extract<AgentEffect, { type: "execute_external_tool" }>,
+  userId: string,
+): Promise<void> {
+  // Resolve server ID from the prefixed tool name
+  const resolved = resolveServerIdFromPrefixedName(effect.toolName);
+  if (!resolved) {
+    injectToolResult(state, effect.toolCallId, `Error: Cannot resolve MCP server for tool "${effect.toolName}"`);
+    return;
+  }
+
+  const result = await mcpActivities.executeMCPTool({
+    userId,
+    serverId: resolved.serverId,
+    toolName: resolved.rawName,
+    arguments: effect.arguments,
+  });
+
+  if (result.success) {
+    recordExecResult(state, true);
+    state.directiveExecCount = (state.directiveExecCount ?? 0) + 1;
+  }
+
+  injectToolResult(state, effect.toolCallId, JSON.stringify(result));
+}
+
+/** Resolve server ID from prefixed tool name (e.g. "figmaconsole_create_child" → figma_console / create_child) */
+function resolveServerIdFromPrefixedName(prefixedName: string): { serverId: string; rawName: string } | undefined {
+  const prefixes: Array<[string, string]> = [
+    ["figmaconsole_", "figma_console"],
+    ["github_", "github"],
+    ["figma_", "figma_mcp"],
+  ];
+  for (const [prefix, serverId] of prefixes) {
+    if (prefixedName.startsWith(prefix)) {
+      return { serverId, rawName: prefixedName.slice(prefix.length) };
+    }
+  }
+  return undefined;
+}
+
 // Re-export for convenience within the workflow sandbox
 export type { AgentWorkflowInput } from "./types.js";
 
@@ -889,6 +940,19 @@ export async function agentWorkflow(input: AgentWorkflowInput): Promise<void> {
 
   // ── Wait for directory ───────────────────────────────────────────────────
   await condition(() => directoryReceived);
+
+  // ── Discover MCP tools (if user has connected MCP servers) ──────────────
+  if (input.mcpServerIds?.length) {
+    try {
+      state.externalTools = await mcpActivities.discoverMCPTools({
+        userId: input.userId,
+        mcpServerIds: input.mcpServerIds,
+      });
+    } catch {
+      // Non-fatal: agent continues with static tools only
+      state.externalTools = [];
+    }
+  }
 
   // ── Inject system prompt (includes task context) ────────────────────────
   const peerAgents = Array.from(state.agentDirectory.values());
@@ -1029,6 +1093,10 @@ async function executeLLMLoop(
       if (effect.type === "emit_activity") continue;
       if (effect.type === "review_and_execute_figma_code") {
         await handleReviewAndExecute(state, effect, userId, callLLM, model);
+        didExecuteTool = true;
+        needsContinue = true;
+      } else if (effect.type === "execute_external_tool") {
+        await handleExecuteExternalTool(state, effect, userId);
         didExecuteTool = true;
         needsContinue = true;
       } else if (effect.type === "fetch_figma_docs") {

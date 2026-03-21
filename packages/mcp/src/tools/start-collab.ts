@@ -2,6 +2,7 @@ import { z } from "zod"
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js"
 import { getConnectedClients } from "../lib/figma-bridge.js"
 import { formatToolResponse } from "../lib/format-response.js"
+import { createClient } from "@supabase/supabase-js"
 
 /**
  * MCP tool: start_collab
@@ -108,6 +109,21 @@ After discovering agents #Figma-Desktop-abc (file: Homepage) and #Figma-Desktop-
       const cloudUrl = process.env.GUARDIAN_CLOUD_URL || "http://localhost:3000"
       const serviceKey = process.env.STORAGE_SUPABASE_SERVICE_ROLE_KEY || ""
 
+      // Discover user's connected MCP servers for tool injection
+      let mcpServerIds: string[] = []
+      if (userId && serviceKey) {
+        try {
+          const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.STORAGE_SUPABASE_URL || ""
+          if (supabaseUrl) {
+            const supabase = createClient(supabaseUrl, serviceKey)
+            const { data } = await supabase.rpc("list_mcp_connections_service", { p_user_id: userId })
+            mcpServerIds = (data as Array<{ server_id: string }> | null)?.map((c) => c.server_id) ?? []
+          }
+        } catch {
+          // Non-fatal: proceed without MCP tools
+        }
+      }
+
       try {
         const response = await fetch(`${cloudUrl}/api/orchestration/start`, {
           method: "POST",
@@ -121,6 +137,7 @@ After discovering agents #Figma-Desktop-abc (file: Homepage) and #Figma-Desktop-
             targetAgents,
             model,
             conversationId,
+            mcpServerIds,
           }),
         })
 

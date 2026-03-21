@@ -9,6 +9,7 @@ import {
 } from "@/lib/github-mcp-oauth";
 import { getBaseUrl } from "@/lib/figma-mcp-oauth";
 import { writeOAuthResult } from "@/lib/oauth-store";
+import { createClient } from "@/lib/supabase/server";
 
 const COOKIE_OAUTH_SESSION = "github_oauth_session";
 
@@ -63,6 +64,29 @@ export async function GET(request: NextRequest) {
 
     // Write result (including tokens) to oauth-store for polling fallback
     writeOAuthResult(session, { type: "github-mcp-auth", success: true, tokens: tokensJson ? { github_mcp_tokens: tokensJson } : undefined });
+
+    // Dual-write: persist to Supabase Vault for Temporal workers
+    if (tokensJson) {
+      try {
+        const supabase = await createClient();
+        const { data: { user } } = await supabase.auth.getUser();
+        if (user) {
+          const parsed = JSON.parse(tokensJson);
+          const expiresAt = parsed.expires_in
+            ? new Date(Date.now() + parsed.expires_in * 1000).toISOString()
+            : null;
+          await supabase.rpc("upsert_mcp_connection", {
+            p_server_id: "github",
+            p_tokens_json: tokensJson,
+            p_scopes: "repo",
+            p_expires_at: expiresAt,
+          });
+          console.log("[GitHub Callback] Tokens persisted to Supabase Vault");
+        }
+      } catch (vaultErr) {
+        console.error("[GitHub Callback] Vault dual-write failed (non-fatal):", vaultErr);
+      }
+    }
 
     // Return HTML page that stores token in localStorage (for Figma plugin context)
     // and notifies opener, then closes the popup

@@ -82,6 +82,8 @@ export type AgentWorkflowState = {
   inStandby?: boolean;
   /** Number of successful tool executions since the last directive (reset per directive) */
   directiveExecCount?: number;
+  /** External tools (MCP) discovered at workflow startup */
+  externalTools?: LLMToolDefinition[];
 };
 
 // ---------------------------------------------------------------------------
@@ -100,6 +102,7 @@ export type AgentEffect =
   | { type: "send_sub_conv_message"; targetWorkflowIds: string[]; message: SubConvMessagePayload }
   | { type: "send_sub_conv_close"; targetWorkflowIds: string[]; close: SubConvClosePayload }
   | { type: "notify_orchestrator_sub_conv"; event: "opened" | "closed"; subConvId: string; participantIds: string[]; topic?: string; reason?: "completed" | "timeout" | "cancelled" }
+  | { type: "execute_external_tool"; toolName: string; arguments: Record<string, unknown>; toolCallId: string }
   | { type: "emit_activity"; activities: AgentActivity[] }
   | { type: "wait_for_input" }
   | { type: "complete" };
@@ -1138,6 +1141,23 @@ function processToolCall(
       }
       break;
     }
+
+    default: {
+      // External tool (MCP) — delegate to Temporal activity for execution
+      if (state.externalTools?.some((t) => t.name === tc.name)) {
+        activities.push({ action: "tool_call", toolName: tc.name, summary: JSON.stringify(tc.arguments).slice(0, 200) });
+        effects.push({
+          type: "execute_external_tool",
+          toolName: tc.name,
+          arguments: (tc.arguments ?? {}) as Record<string, unknown>,
+          toolCallId: tc.id,
+        });
+      } else {
+        // Truly unknown tool — inject error
+        injectToolResult(state, tc.id, `Error: Unknown tool "${tc.name}". Available tools: ${getAgentTools(state).map((t) => t.name).join(", ")}`);
+      }
+      break;
+    }
   }
 
   return { effects, activities };
@@ -1264,6 +1284,11 @@ function getAgentTools(state: AgentWorkflowState): LLMToolDefinition[] {
         required: ["topic"],
       },
     });
+  }
+
+  // Add external tools (MCP) discovered at workflow startup
+  if (state.externalTools?.length) {
+    tools.push(...state.externalTools);
   }
 
   return tools;

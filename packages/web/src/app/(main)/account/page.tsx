@@ -79,6 +79,14 @@ export default function AccountPage() {
   const [guardEnabled, setGuardEnabled] = useState(true);
   const [savingOrchSettings, setSavingOrchSettings] = useState(false);
 
+  // Connected MCP services
+  const [mcpServices, setMcpServices] = useState<Array<{
+    id: string; name: string; description: string; authPath: string;
+    connected: boolean; expired: boolean; scopes: string | null;
+    connectedAt: string | null; expiresAt: string | null;
+  }>>([]);
+  const [disconnectingService, setDisconnectingService] = useState<string | null>(null);
+
   // Developer settings
   const [developerMode, setDeveloperMode] = useState(false);
   const [devShowAllEvents, setDevShowAllEvents] = useState(false);
@@ -120,11 +128,12 @@ export default function AccountPage() {
     setLoading(true);
     setError(null);
     try {
-      const [keysRes, usageRes, modelsRes, settingsRes] = await Promise.all([
+      const [keysRes, usageRes, modelsRes, settingsRes, servicesRes] = await Promise.all([
         fetch("/api/user/api-keys"),
         fetch("/api/user/usage"),
         fetch("/api/gateway-models"),
         fetch("/api/user/settings"),
+        fetch("/api/user/connected-services"),
       ]);
 
       if (keysRes.status === 401) { router.push("/login"); return; }
@@ -144,6 +153,12 @@ export default function AccountPage() {
         if (typeof settingsData.devShowAllEvents === "boolean") setDevShowAllEvents(settingsData.devShowAllEvents);
         if (typeof settingsData.devLLMDelegation === "boolean") setDevLLMDelegation(settingsData.devLLMDelegation);
         if (typeof settingsData.devSlowDelegation === "boolean") setDevSlowDelegation(settingsData.devSlowDelegation);
+      }
+
+      // Load connected MCP services
+      if (servicesRes.ok) {
+        const servicesData = await servicesRes.json();
+        setMcpServices(servicesData.services ?? []);
       }
 
       // Build dynamic provider list from Gateway catalog
@@ -713,6 +728,106 @@ export default function AccountPage() {
             />
           </button>
         </div>
+      </section>
+
+      {/* Connected Services (MCP) */}
+      <section className="mb-8 p-4 rounded-xl bg-white/[0.06] border border-white/[0.15] backdrop-blur-md">
+        <h2 className="text-sm font-medium mb-1">Connected services</h2>
+        <p className="text-xs text-white/40 mb-4">
+          Connect external services to enable structured tools in orchestrations. Agents will automatically use these tools when available.
+        </p>
+
+        {loading ? (
+          <div className="space-y-2">
+            {[1, 2].map((i) => (
+              <div key={i} className="h-14 rounded-xl bg-white/[0.04] animate-pulse" />
+            ))}
+          </div>
+        ) : mcpServices.length === 0 ? (
+          <p className="text-sm text-white/30 py-4 text-center">
+            No services available.
+          </p>
+        ) : (
+          <div className="space-y-2">
+            {mcpServices.map((svc) => (
+              <div
+                key={svc.id}
+                className="flex items-center justify-between gap-3 px-4 py-3 rounded-xl bg-white/[0.04] border border-white/[0.06]"
+              >
+                <div className="flex items-center gap-2.5 min-w-0">
+                  {/* Status dot */}
+                  <span
+                    className={`shrink-0 w-2 h-2 rounded-full ${
+                      svc.connected
+                        ? svc.expired
+                          ? "bg-amber-400"
+                          : "bg-emerald-400"
+                        : "bg-white/20"
+                    }`}
+                  />
+                  <div className="min-w-0">
+                    <span className="text-sm font-medium">{svc.name}</span>
+                    <p className="text-[11px] text-white/30 truncate">{svc.description}</p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2 shrink-0">
+                  {svc.connected ? (
+                    <>
+                      {svc.expired && (
+                        <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-amber-500/20 border border-amber-500/30 text-amber-300">
+                          expired
+                        </span>
+                      )}
+                      <span className="text-xs text-white/30 hidden sm:block">
+                        {svc.connectedAt ? new Date(svc.connectedAt).toLocaleDateString() : ""}
+                      </span>
+                      <button
+                        onClick={async () => {
+                          setDisconnectingService(svc.id);
+                          try {
+                            await fetch(`/api/user/connected-services?server_id=${encodeURIComponent(svc.id)}`, {
+                              method: "DELETE",
+                            });
+                            await loadData();
+                          } finally {
+                            setDisconnectingService(null);
+                          }
+                        }}
+                        disabled={disconnectingService === svc.id}
+                        className="text-xs text-red-400/70 hover:text-red-400 transition-colors disabled:opacity-40 cursor-pointer"
+                      >
+                        {disconnectingService === svc.id ? "Disconnecting..." : "Disconnect"}
+                      </button>
+                    </>
+                  ) : (
+                    <button
+                      onClick={() => {
+                        const w = window.open(svc.authPath, "_blank", "width=500,height=700,popup=1");
+                        // Listen for completion message from the OAuth popup
+                        const handler = () => {
+                          loadData();
+                          window.removeEventListener("message", handler);
+                        };
+                        window.addEventListener("message", handler);
+                        // Fallback: poll in case postMessage doesn't work (cross-origin)
+                        const poll = setInterval(() => {
+                          if (w?.closed) {
+                            clearInterval(poll);
+                            loadData();
+                            window.removeEventListener("message", handler);
+                          }
+                        }, 1000);
+                      }}
+                      className="text-xs px-3 py-1.5 rounded-lg bg-white/10 border border-white/15 hover:bg-white/15 transition-colors cursor-pointer"
+                    >
+                      Connect
+                    </button>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
       </section>
 
       {/* Developer settings */}

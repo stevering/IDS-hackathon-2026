@@ -8,6 +8,7 @@ import {
   SOUTHLEFT_MCP_URL,
 } from "@/lib/southleft-mcp-oauth";
 import { writeOAuthResult } from "@/lib/oauth-store";
+import { createClient } from "@/lib/supabase/server";
 
 function requestOrigin(request: NextRequest): string {
   const proto = request.headers.get("x-forwarded-proto") || (request.nextUrl.protocol.replace(":", ""));
@@ -134,6 +135,27 @@ setTimeout(function(){document.getElementById('close-hint').style.display='block
         tokens: tokens,
       });
       console.log("[Southleft Callback] oauth-store written, access_token present:", !!accessToken);
+
+      // Dual-write: persist to Supabase Vault for Temporal workers
+      try {
+        const supabase = await createClient();
+        const { data: { user } } = await supabase.auth.getUser();
+        if (user && tokens.southleft_mcp_tokens) {
+          const parsed = JSON.parse(tokens.southleft_mcp_tokens);
+          const expiresAt = parsed.expires_in
+            ? new Date(Date.now() + parsed.expires_in * 1000).toISOString()
+            : null;
+          await supabase.rpc("upsert_mcp_connection", {
+            p_server_id: "figma_console",
+            p_tokens_json: tokens.southleft_mcp_tokens,
+            p_scopes: "file_content:read,library_content:read,file_variables:read",
+            p_expires_at: expiresAt,
+          });
+          console.log("[Southleft Callback] Tokens persisted to Supabase Vault");
+        }
+      } catch (vaultErr) {
+        console.error("[Southleft Callback] Vault dual-write failed (non-fatal):", vaultErr);
+      }
     } else {
       console.log("[Southleft Callback] No tokens found to store");
     }

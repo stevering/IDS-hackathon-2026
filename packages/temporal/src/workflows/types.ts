@@ -14,4 +14,6 @@ export type AgentWorkflowInput = {
   context?: Record<string, unknown>;
   userId: string;
   model?: string;
+  /** MCP server IDs the user has connected (for tool discovery) */
+  mcpServerIds?: string[];
 };

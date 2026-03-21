@@ -10,6 +10,7 @@ import {
 } from "@/lib/figma-mcp-oauth";
 import {getBaseUrl} from "@/lib/get-base-url";
 import { writeOAuthResult } from "@/lib/oauth-store";
+import { createClient } from "@/lib/supabase/server";
 
 const COOKIE_OAUTH_SESSION = "figma_oauth_session";
 
@@ -111,6 +112,32 @@ export async function GET(request: NextRequest) {
 
     // Write result (including tokens) to oauth-store for polling fallback
     writeOAuthResult(session, { type: "figma-mcp-auth", success: true, tokens: tokensJson ? { figma_mcp_tokens: tokensJson } : undefined });
+
+    // Dual-write: persist to Supabase Vault for Temporal workers
+    if (tokensJson) {
+      try {
+        const supabase = await createClient();
+        const { data: { user } } = await supabase.auth.getUser();
+        if (user) {
+          const parsed = JSON.parse(tokensJson);
+          const expiresAt = parsed.expires_in
+            ? new Date(Date.now() + parsed.expires_in * 1000).toISOString()
+            : null;
+          const scopes = useMcpMode
+            ? "mcp:connect"
+            : (process.env.FIGMA_OAUTH_SCOPES || "current_user:read,file_content:read,file_metadata:read,projects:read");
+          await supabase.rpc("upsert_mcp_connection", {
+            p_server_id: "figma_mcp",
+            p_tokens_json: tokensJson,
+            p_scopes: scopes,
+            p_expires_at: expiresAt,
+          });
+          console.log("[Figma MCP Callback] Tokens persisted to Supabase Vault");
+        }
+      } catch (vaultErr) {
+        console.error("[Figma MCP Callback] Vault dual-write failed (non-fatal):", vaultErr);
+      }
+    }
 
     // Return HTML page that notifies opener and closes the popup
     const html = `<!DOCTYPE html>

@@ -58,6 +58,8 @@ export type StartOrchestrationParams = {
   maxDurationMs?: number;
   /** Optional context data */
   context?: Record<string, unknown>;
+  /** MCP server IDs the user has connected (for tool discovery in agents) */
+  mcpServerIds?: string[];
 };
 
 export type OrchestrationResult = {
