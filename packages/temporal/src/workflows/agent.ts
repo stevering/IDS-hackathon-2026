@@ -998,6 +998,7 @@ export async function agentWorkflow(input: AgentWorkflowInput): Promise<void> {
         userId: input.userId,
         mcpServerIds: input.mcpServerIds,
         agentId: input.agent.shortId,
+        pluginClientId: input.agent.pluginClientId,
       });
     } catch {
       // Non-fatal: agent continues with static tools only

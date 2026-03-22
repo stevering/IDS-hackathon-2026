@@ -4,6 +4,9 @@ When you have to write code in the monorepo or show a snippet of code, you must 
 
 In any AI chat, discuss in the user language, based on the user messages, ignoring snippets of code or logs (probably in English).
 
+Each time you modify a file, you have to update the documentation in:
+- `docs/architectures/*.md`
+
 ## Dev environment
 
 - `pnpm dev` logs are written live to `logs/dev.log` at project root. Always check this file to verify server restarts, hot reloads, or errors — don't ask the user to paste terminal output.

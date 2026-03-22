@@ -18,64 +18,140 @@ Figma plugins run in two isolated contexts. This is a Figma platform constraint,
 
 ```
 ┌─────────────────────────────────────────────────────────┐
-│  code.ts  (QuickJS sandbox)                              │
-│                                                          │
-│  HAS:    figma.* API, eval(), setTimeout                 │
-│  NO:     network, DOM, WebSocket, fetch                  │
-│                                                          │
-│  Role:   blind executor — receives orders, manipulates   │
-│          the Figma document, returns results.             │
-│          Does NOT know who is calling.                    │
+│  code.ts  (QuickJS sandbox)                             │
+│                                                         │
+│  HAS:    figma.* API, eval(), setTimeout                │
+│  NO:     network, DOM, WebSocket, fetch                 │
+│                                                         │
+│  Role:   blind executor — receives orders, manipulates  │
+│          the Figma document, returns results.           │
+│          Does NOT know who is calling.                  │
 └────────────────────────┬────────────────────────────────┘
                          │
                   postMessage (only bridge)
                   Structured Clone (data only, no functions)
                          │
 ┌────────────────────────▼────────────────────────────────┐
-│  ui.html  (Chromium iframe)                              │
-│                                                          │
-│  HAS:    WebSocket, fetch, DOM, localStorage             │
-│  NO:     figma.* API                                     │
-│                                                          │
-│  Role:   intelligent router — connects external systems  │
-│          to the sandbox, translates protocols, caches     │
-│          data, manages UI.                                │
+│  ui.html  (Chromium iframe)                             │
+│                                                         │
+│  HAS:    WebSocket, fetch, DOM, localStorage            │
+│  NO:     figma.* API                                    │
+│                                                         │
+│  Role:   intelligent router — connects external systems │
+│          to the sandbox, translates protocols, caches   │
+│          data, manages UI.                              │
 └─────────────────────────────────────────────────────────┘
 ```
 
 ## Communication Channels
 
+### Production (published plugin on marketplace)
+
 ```
                          code.ts
                     ┌──────────────┐
-                    │ Proxy Handler│  (7 RPC primitives)
                     │ EXECUTE_CODE │  (eval + guardrails)
-                    │ Listeners    │  (selection, page, document, console)
                     │ Handlers     │  (get-selection, GET_VARIABLES, notify...)
+                    │ Listeners    │  (selection, page change)
                     └──────┬───────┘
                            │ postMessage
                     ┌──────▼───────┐
                     │   ui.html    │
                     │              │
-          ┌─────── │ ── router ── │────────┬──────────────┐
-          │        │              │        │              │
-          ▼        │              │        ▼              ▼
-    ┌──────────┐   │              │  ┌──────────┐  ┌──────────────┐
-    │ FC Bridge│   │              │  │ Guardian │  │ Webapp       │
-    │ WS 9223+ │   │              │  │ Bridge   │  │ iframe       │
-    └────┬─────┘   │              │  │ WS 3002  │  │ postMessage  │
-         │         └──────────────┘  └────┬─────┘  └──────┬───────┘
-         ▼                                ▼               ▼
-    FC MCP Server                  Electron Overlay   Next.js App
-    (npx figma-                    (macOS status bar)  (AI chat,
-     console-mcp)                                      auth, MCP)
-         ▲                                               ▲
+                    │ ── router ── │──────────────────────┐
+                    │              │                      │
+                    │              │                      ▼
+                    │              │               ┌──────────────┐
+                    │              │               │ Webapp       │
+                    │              │               │ iframe       │
+                    └──────────────┘               │ postMessage  │
+                                                   └──────┬───────┘
+                                                          ▼
+                                                     Next.js App
+                                                     (AI chat,
+                                                      auth, MCP)
+                                                          ▲
+                                                          │
+                                                     Agent via
+                                                  Guardian MCP tools
+                                                  (Supabase Realtime)
+```
+
+In production: only the webapp bridge is active. No WS connections (blocked by `allowedDomains`).
+FC Bridge code exists in ui.html but is dead code (scan fails silently).
+Proxy handler and console capture exist in code.ts but are never triggered.
+
+### Local development (desktop plugin)
+
+```
+                         code.ts
+                    ┌──────────────┐
+                    │ Proxy Handler│  (7 RPC primitives)        ← LOCAL ONLY
+                    │ EXECUTE_CODE │  (eval + guardrails)
+                    │ Listeners    │  (selection, page, document, console)
+                    │ Handlers     │  (get-selection, GET_VARIABLES, notify...)
+                    │ Console cap. │  (monkey-patch log/warn/error)  ← LOCAL ONLY
+                    │ Doc change   │  (loadAllPages + documentchange) ← LOCAL ONLY
+                    └──────┬───────┘
+                           │ postMessage
+                    ┌──────▼───────┐
+                    │   ui.html    │
+                    │              │
+          ┌──────── │ ── router ── │────────┬──────────────┐
+          │         │              │        │              │
+          ▼         │              │        ▼              ▼
+    ┌──────────┐    │              │  ┌──────────┐  ┌──────────────┐
+    │ FC Bridge│    │              │  │ Guardian │  │ Webapp       │
+    │ WS 9223+ │    │              │  │ Bridge   │  │ iframe       │
+    │ LOCAL    │    │              │  │ WS 3002  │  │ postMessage  │
+    └────┬─────┘    │              │  │ LOCAL    │  └──────┬───────┘
+         │          └──────────────┘  └────┬─────┘         │
+         ▼                                ▼              ▼
+    FC MCP Server                  Electron         Next.js App
+    (WS, local only)              Overlay            (localhost
+         ▲                        (local only)        or cloud)
+         │                                               ▲
          │                                               │
     Agent via                                       Agent via
     FC MCP tools                                 Guardian MCP tools
+
+    ─── Collab path (Temporal, LOCAL ONLY) ─────────────────
+
+    Temporal worker
+         │
+         ├── stdio pool (1 subprocess per agent)        ← LOCAL ONLY
+         │   └── npx figma-console-mcp (persistent)     ← LOCAL ONLY
+         │       │
+         │       ├── Supabase broadcast "connect_fc_port"
+         │       │   → webapp → plugin (instant connect <1s)
+         │       │
+         │       └── WS port ← plugin connects immediately
+         │
+         └── figmaconsole_* tool calls → pool → stdio → WS → plugin
+
+    ─── Collab path (Temporal, PRODUCTION) ──────────────────
+
+    Temporal worker
+         │
+         └── figmaconsole_* tool calls → HTTP → figma-console-mcp.southleft.com
+             (no subprocess, no WS, no plugin — REST API only)
 ```
 
-All three bridges are **parallel entry points** to the same code.ts. They don't know about each other.
+### What changes between local and production
+
+| Component | Local dev | Production |
+|---|---|---|
+| FC Bridge (ui.html) | Active — scans WS 9223-9232, instant connect | Dead code — WS blocked by manifest |
+| Guardian Bridge (ui.html) | Active — WS 3002 to Electron | Dead code — WS blocked by manifest |
+| Proxy handler (code.ts) | Active — used by FC Bridge adapters | Dead code — never called |
+| Console capture (code.ts) | Active — forwards to FC Bridge | Dead code — no FC consumer |
+| Document change listener (code.ts) | Active — cache invalidation for FC | Dead code — no FC consumer |
+| Temporal stdio pool (mcp.ts) | Active — 1 subprocess per agent | Disabled — `NODE_ENV=production` guard |
+| FC MCP routing | Local stdio subprocess → WS → plugin | HTTP to Southleft cloud → REST API |
+| Webapp (Next.js) | localhost:3000 | Vercel/cloud |
+| `connect_fc_port` broadcast | Active — Temporal → Supabase → webapp → plugin | Never triggered |
+
+**Note**: A build-time split (`BUILD_TARGET=marketplace`) is planned to strip local-only code from the marketplace plugin build. See `docs/backlog/plugin-marketplace-build-split.md`.
 
 ## code.ts — Plugin Sandbox
 
@@ -160,10 +236,12 @@ FigmaProxy.executeCode(code, timeout)    // → result (EXECUTE_CODE passthrough
 
 Makes the Guardian plugin respond to `npx figma-console-mcp` WebSocket protocol. The MCP server sees Guardian as if it were the Figma Console Desktop Bridge plugin.
 
-**Connection:**
-- Scans ports 9223-9232, connects to ALL active MCP servers
+**Connection (two mechanisms):**
+- **Periodic scan**: Scans ports 9223-9232 every 15s, connects to ALL active MCP servers
+- **Instant connect**: Receives `CONNECT_FC_PORT` message from webapp (triggered by Temporal via Supabase broadcast), connects to specific port immediately (<1s)
 - Reconnect with exponential backoff (500ms → 30s, max 50 attempts)
 - On connect: sends cached `VARIABLES_DATA` + `FILE_INFO`
+- Exposes `window.__connectFCPort(port)` for programmatic connection
 
 **Protocol:**
 ```
@@ -309,7 +387,23 @@ Legend: **FC** = Figma Console MCP WS method, **G** = Guardian-only handler, **O
 *Some FC MCP tools use EXECUTE_CODE internally rather than dedicated WS methods.
 
 **FC MCP compatibility: 36/37 implemented, 1 stub. 194 E2E assertions, 0 failures.**
-**Tested against figma-console-mcp v1.15.5 (2026-03-21).**
+**Tested against figma-console-mcp v1.15.5 (2026-03-22).**
+
+### Collab integration (Temporal → FC MCP → Plugin)
+
+When a Guardian collab orchestration starts, each agent workflow:
+1. Launches a **persistent stdio subprocess** `npx figma-console-mcp` (1 per agent, pooled in the Temporal worker)
+2. Discovers the subprocess's WS port via `/tmp/figma-console-mcp-{port}.json`
+3. **Broadcasts `connect_fc_port`** via Supabase Realtime → webapp forwards → plugin connects instantly (<1s)
+4. **Polls `figma_get_status`** until the plugin is confirmed connected
+5. Agent LLM calls `figmaconsole_*` tools → routed through the persistent subprocess → WS → Guardian FC Bridge → Proxy → code.ts
+
+**Key fixes for AI SDK v6 compatibility:**
+- Tool parameters extracted from `inputSchema.jsonSchema` (not `parameters` which is `undefined` for MCP tools)
+- `jsonSchema()` wrapper requires `{ validate: (v) => ({ success: true, value: v }) }` passthrough validator
+- Tool call results use `tc.input` (DynamicToolCall) not `tc.args` (StaticToolCall)
+
+**Canvas diff pipeline**: External tool calls that modify Figma (`isFigmaWriteTool`) go through the same before/after snapshot + screenshot + file review LLM pipeline as `figma_plugin_execute`.
 
 ### Guardian handlers that overlap with FC methods
 
@@ -328,6 +422,7 @@ The remaining Guardian handlers (#41-54) have no FC equivalent — they serve Gu
 | Consumer | Uses Proxy? | Uses EXECUTE_CODE? | Migration candidate? |
 |---|---|---|---|
 | FC Bridge adapters | Yes (36 methods) | EXECUTE_CODE passthrough + SET_IMAGE_FILL + GET_FILE_INFO | Done |
+| Collab agents (figmaconsole_* via Temporal) | Yes (via FC Bridge) | figmaconsole_figma_execute | Done — preferred over figma_plugin_execute |
 | Guardian MCP actions (get_selection_context, etc.) | No | Yes (JS templates) | Yes |
 | Guardian MCP tools (list_page_children) | No | Yes (inline JS strings) | Yes |
 | Webapp hook (useFigmaPlugin.executeCode) | No | Yes (passthrough) | Partially (agent-generated code stays as EXECUTE_CODE) |
@@ -353,13 +448,95 @@ The remaining Guardian handlers (#41-54) have no FC equivalent — they serve Gu
 | Constant | Value |
 |---|---|
 | Plugin size | 400x800 (expanded), 400x100 (minimized) |
-| FC MCP ports | 9223-9232 |
+| FC MCP ports | 9223-9232 (10 ports) |
 | Electron port | 3002 |
 | Selection limit | 50 nodes |
 | Text extraction limit | 10,000 chars |
 | Code timeout | 15s default |
-| FC reconnect | max 50 attempts, backoff 500ms → 30s |
+| FC periodic rescan | 15s interval |
+| FC instant connect | <1s via Supabase broadcast |
+| FC reconnect backoff | max 50 attempts, 500ms → 30s |
+| Stdio pool TTL | 10 min idle → close subprocess |
+| Port file location | `/tmp/figma-console-mcp-{port}.json` |
 | Widget heartbeat | 3s, TTL 30s |
+
+## Local vs Production
+
+### Two plugin packages, one codebase
+
+| | `figma-plugin` | `figma-desktop-plugin` |
+|---|---|---|
+| **Target** | Figma marketplace (published) | Local dev only (never published) |
+| **ID** | ...447 | ...448 |
+| **`enablePrivatePluginApi`** | `false` | `true` |
+| **`teamlibrary` permission** | Should be removed before publish | Yes (needed for INSTANTIATE_COMPONENT) |
+| **WS localhost (9223-9232)** | `devAllowedDomains` only (blocked in published plugin) | `devAllowedDomains` (always in dev mode) |
+| **FC Bridge, Proxy, console capture** | Dead code in published build (WS blocked) | Active and used |
+
+Both packages share the exact same `code.ts`, `ui.html`, and `bridge.ts`. Only the `manifest.json` differs.
+
+### What runs where
+
+```
+LOCAL DEV                                    PRODUCTION (CLOUD)
+──────────                                   ──────────────────
+
+Figma Desktop                                Figma Desktop (user's machine)
+├── Guardian Plugin (desktop variant)        ├── Guardian Plugin (marketplace variant)
+│   ├── code.ts (all handlers)               │   ├── code.ts (all handlers — FC ones are dead code)
+│   ├── ui.html (FC Bridge active)           │   ├── ui.html (FC Bridge blocked by allowedDomains)
+│   └── WS 9223-9232 ← FC MCP servers        │   └── WS blocked (no localhost in allowedDomains)
+│
+├── FC MCP Server (npx, user-launched)       (not present — no local MCP server on user's machine)
+│   └── WS port 9224
+│
+├── FC MCP Subprocess (Temporal-launched)     (not present — guarded by NODE_ENV check)
+│   └── WS port 9228
+│
+Temporal Worker (local)                      Temporal Worker (cloud)
+├── stdio pool (figma_console_local)         ├── stdio pool DISABLED (NODE_ENV=production)
+├── /tmp/figma-console-mcp-*.json            ├── (no port files)
+├── Supabase broadcast connect_fc_port       ├── (no broadcast)
+└── MCP HTTP (figma_console, github)         └── MCP HTTP only (figma_console, github, figma_mcp)
+
+Guardian MCP Server (local)                  Guardian MCP Server (cloud)
+├── start_collab includes                    ├── start_collab EXCLUDES
+│   figma_console_local (stdio)              │   figma_console_local (NODE_ENV=production)
+└── figma_console (HTTP, remote)             └── figma_console (HTTP, remote) ← only FC path
+
+Webapp (localhost:3000)                      Webapp (Vercel/cloud)
+├── connect_fc_port handler (active)         ├── connect_fc_port handler (never triggered)
+└── execute_request handler (active)         └── execute_request handler (active)
+```
+
+### Production safety guards
+
+Three layers prevent stdio/local code from running in production:
+
+| Layer | File | Guard | Effect |
+|---|---|---|---|
+| 1. Entry point | `start-collab.ts` | `NODE_ENV !== "production"` | `figma_console_local` not added to `mcpServerIds` |
+| 2. Discovery | `mcp.ts` discoverMCPTools | `NODE_ENV === "production"` | Skip stdio servers, log warning |
+| 3. Execution | `mcp.ts` executeMCPTool | `NODE_ENV === "production"` | Return error instead of spawning subprocess |
+
+Override: `ENABLE_LOCAL_MCP=true` bypasses all three guards (for staging/testing).
+
+### Plugin manifest — network access
+
+| Domain | `allowedDomains` (prod) | `devAllowedDomains` (dev) |
+|---|---|---|
+| LLM providers (Google, OpenAI, Anthropic, X.AI) | ✅ | ✅ |
+| Google Fonts, GitHub raw | ✅ | ✅ |
+| `localhost:3000` (webapp) | ❌ | ✅ |
+| `ws://localhost:3002` (Electron) | ❌ | ✅ |
+| `ws://localhost:9223-9232` (FC MCP) | ❌ | ✅ |
+| Vercel/figdesys.com URLs | ❌ | ✅ |
+
+In a published plugin, `devAllowedDomains` is ignored — the FC Bridge scan fails silently (no WS available).
+
+### Future: marketplace build split
+
+A build-time split (`BUILD_TARGET=marketplace|desktop`) is planned to strip FC Bridge code from the marketplace build entirely. See `docs/backlog/plugin-marketplace-build-split.md`.
 
 ## Build
 
@@ -368,6 +545,6 @@ pnpm --filter @guardian/figma-plugin build   # esbuild code.ts → dist/code.js
 pnpm --filter @guardian/figma-plugin dev     # watch mode (auto-rebuild on code.ts change)
 ```
 
-`ui.html` is served directly (not compiled). Changes require plugin reload in Figma.
+`ui.html` is served directly (not compiled). Changes require plugin reload in Figma (close + reopen, or esbuild watch triggers Figma auto-reload for code.ts changes only).
 
 `bridge.ts` is imported by both plugin `code.ts` and widget `widget-src/code.tsx`, bundled by esbuild into each.

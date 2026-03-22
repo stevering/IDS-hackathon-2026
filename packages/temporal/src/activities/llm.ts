@@ -280,8 +280,6 @@ async function delegateToExternal(
 // ---------------------------------------------------------------------------
 
 async function callLLMDirect(params: LLMCallParams): Promise<LLMCallResult> {
-  // Debug marker — remove after testing
-  console.log("[callLLM] CODE VERSION: schema-fix-v4");
   const { resolveModelForActivity } = await import("./llm-resolver.js");
   const { generateText, jsonSchema } = await import("ai");
 

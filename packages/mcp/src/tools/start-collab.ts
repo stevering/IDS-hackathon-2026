@@ -124,9 +124,10 @@ After discovering agents #Figma-Desktop-abc (file: Homepage) and #Figma-Desktop-
         }
       }
 
-      // Always include figma_console_local (stdio, no auth needed)
-      // — works when the Guardian plugin bridges to the local MCP server
-      if (!mcpServerIds.includes("figma_console_local")) {
+      // Include figma_console_local (stdio) only in local dev — in prod/cloud
+      // there's no Figma Desktop to connect to, and npx would fail.
+      const isLocal = process.env.NODE_ENV !== "production" || process.env.ENABLE_LOCAL_MCP === "true"
+      if (isLocal && !mcpServerIds.includes("figma_console_local")) {
         mcpServerIds.push("figma_console_local")
       }
 

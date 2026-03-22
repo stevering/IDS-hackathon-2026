@@ -187,6 +187,17 @@ export function useFigmaExecuteChannel(
           >
         );
       })
+      .on("broadcast", { event: "connect_fc_port" }, (payload) => {
+        const { port, targetClientId } = payload.payload as { port: number; targetClientId?: string };
+        // Only forward to this plugin instance
+        if (targetClientId && targetClientId !== clientId.current) return;
+        if (clientInfoRef.current?.type !== "figma-plugin") return;
+        console.log(`[ExecuteChannel] Forwarding connect_fc_port (port ${port}) to plugin`);
+        // Forward to plugin UI via postMessage
+        if (typeof window !== "undefined") {
+          window.parent.postMessage({ source: "figpal-webapp", type: "CONNECT_FC_PORT", data: { port } }, "*");
+        }
+      })
       .subscribe(async (status) => {
         if (status === "SUBSCRIBED") {
           await retrackPresence();

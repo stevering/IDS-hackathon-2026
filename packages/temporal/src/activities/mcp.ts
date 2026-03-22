@@ -13,6 +13,9 @@
 import { createClient } from "@supabase/supabase-js";
 import { createMCPClient } from "@ai-sdk/mcp";
 import { Experimental_StdioMCPTransport } from "@ai-sdk/mcp/mcp-stdio";
+import { readdirSync, readFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { LLMToolDefinition } from "@guardian/orchestrations";
 import { createLogger } from "../lib/log.js";
 
@@ -94,9 +97,40 @@ const poolCleanupTimer = setInterval(() => {
 }, 60_000);
 poolCleanupTimer.unref();
 
+// ---------------------------------------------------------------------------
+// Port file helpers — FC MCP subprocess publishes its WS port in /tmp
+// ---------------------------------------------------------------------------
+
+const PORT_FILE_PREFIX = "figma-console-mcp-";
+
+function listPortFiles(): Array<{ port: number; pid: number; startedAt: string }> {
+  try {
+    const dir = tmpdir();
+    return readdirSync(dir)
+      .filter((f) => f.startsWith(PORT_FILE_PREFIX) && f.endsWith(".json"))
+      .map((f) => {
+        try {
+          const data = JSON.parse(readFileSync(join(dir, f), "utf-8"));
+          return { port: data.port, pid: data.pid, startedAt: data.startedAt };
+        } catch { return null; }
+      })
+      .filter((d): d is { port: number; pid: number; startedAt: string } => d !== null);
+  } catch { return []; }
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+// ---------------------------------------------------------------------------
+// getOrCreateStdioClient — creates subprocess, notifies plugin, waits for WS
+// ---------------------------------------------------------------------------
+
 async function getOrCreateStdioClient(
   serverDef: Extract<MCPServerDef, { transport: "stdio" }>,
   poolKey: string,
+  userId?: string,
+  pluginClientId?: string,
 ): Promise<PoolEntry> {
   const existing = stdioPool.get(poolKey);
   if (existing) {
@@ -105,6 +139,9 @@ async function getOrCreateStdioClient(
   }
 
   poolLog.info(`Creating persistent stdio client: ${poolKey} (${serverDef.command} ${serverDef.args.join(" ")})`);
+
+  // Snapshot port files BEFORE creating subprocess
+  const portsBefore = new Set(listPortFiles().map((p) => p.port));
 
   const transport = new Experimental_StdioMCPTransport({
     command: serverDef.command,
@@ -117,6 +154,65 @@ async function getOrCreateStdioClient(
 
   const entry: PoolEntry = { client, tools, lastUsed: Date.now() };
   stdioPool.set(poolKey, entry);
+
+  // Discover the new subprocess's WS port by diffing port files
+  let newPort: number | undefined;
+  for (let attempt = 0; attempt < 10; attempt++) {
+    const portsAfter = listPortFiles();
+    const fresh = portsAfter.find((p) => !portsBefore.has(p.port));
+    if (fresh) {
+      newPort = fresh.port;
+      break;
+    }
+    await sleep(500);
+  }
+
+  if (newPort) {
+    poolLog.info(`Port found: ${newPort} for ${poolKey}`);
+  } else {
+    poolLog.warn(`Could not discover port for ${poolKey} — plugin will rely on periodic scan`);
+  }
+
+  // Notify the Guardian plugin to connect to this port immediately
+  if (newPort && userId && pluginClientId) {
+    try {
+      const supabase = createServiceClient();
+      const ch = supabase.channel(`guardian:execute:${userId}`);
+      await new Promise<void>((resolve) => {
+        ch.subscribe((status) => {
+          if (status === "SUBSCRIBED") resolve();
+        });
+      });
+      await ch.send({
+        type: "broadcast",
+        event: "connect_fc_port",
+        payload: { port: newPort, targetClientId: pluginClientId },
+      });
+      poolLog.info(`Broadcast connect_fc_port (port ${newPort}) to plugin ${pluginClientId}`);
+      ch.unsubscribe();
+    } catch (err) {
+      poolLog.warn(`Failed to broadcast connect_fc_port: ${err}`);
+    }
+  }
+
+  // Wait for the plugin to connect to the subprocess's WS
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const statusTool = tools["figma_get_status"] as any;
+  if (statusTool && newPort) {
+    poolLog.info(`Waiting for plugin to connect to port ${newPort}...`);
+    for (let i = 0; i < 15; i++) {
+      try {
+        const status = await statusTool.execute({}, { toolCallId: `wait-${i}` });
+        const statusStr = JSON.stringify(status);
+        if (statusStr.includes('"available":true') || statusStr.includes("connectedFile")) {
+          poolLog.info(`Plugin connected to subprocess on port ${newPort}`);
+          break;
+        }
+      } catch { /* ignore — subprocess may not be ready yet */ }
+      await sleep(1000);
+    }
+  }
+
   return entry;
 }
 
@@ -145,6 +241,7 @@ export async function discoverMCPTools(params: {
   userId: string;
   mcpServerIds: string[];
   agentId?: string;
+  pluginClientId?: string;
 }): Promise<LLMToolDefinition[]> {
   const log = createLogger("mcp-discover", { u: params.userId.slice(0, 8), agent: params.agentId });
   const supabase = createServiceClient();
@@ -162,9 +259,14 @@ export async function discoverMCPTools(params: {
       let mcpTools: Record<string, any>;
 
       if (serverDef.transport === "stdio") {
+        // Stdio servers only work in local dev (subprocess needs local Figma Desktop)
+        if (process.env.NODE_ENV === "production" && process.env.ENABLE_LOCAL_MCP !== "true") {
+          log.warn(`Skipping stdio server ${serverId} in production`);
+          continue;
+        }
         // Use persistent pool — subprocess stays alive for subsequent executeMCPTool calls
         const poolKey = `${serverId}:${params.agentId ?? "default"}`;
-        const entry = await getOrCreateStdioClient(serverDef, poolKey);
+        const entry = await getOrCreateStdioClient(serverDef, poolKey, params.userId, params.pluginClientId);
         mcpTools = entry.tools;
         // NO client.close() — stays in pool
       } else {
@@ -240,6 +342,10 @@ export async function executeMCPTool(params: {
 
   try {
     if (serverDef.transport === "stdio") {
+      // Stdio servers only work in local dev
+      if (process.env.NODE_ENV === "production" && process.env.ENABLE_LOCAL_MCP !== "true") {
+        return { success: false, error: `Stdio MCP server "${params.serverId}" not available in production` };
+      }
       // Use persistent pool — reuse subprocess from discoverMCPTools
       const poolKey = `${params.serverId}:${params.agentId ?? "default"}`;
       const entry = await getOrCreateStdioClient(serverDef, poolKey);

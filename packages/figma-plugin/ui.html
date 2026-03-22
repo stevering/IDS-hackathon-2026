@@ -1298,6 +1298,13 @@
                 }
                 return;
             }
+            // Instant FC MCP connection triggered by Temporal subprocess
+            if (event.data.type === 'CONNECT_FC_PORT' && event.data.data?.port) {
+                if (typeof window.__connectFCPort === 'function') {
+                    window.__connectFCPort(event.data.data.port);
+                }
+                return;
+            }
             parent.postMessage({ pluginMessage: event.data }, '*');
         }
     });
@@ -1939,6 +1946,30 @@
         // Start scanning + periodic rescan to discover new servers
         scanAndConnect();
         setInterval(function () { scanAndConnect(); }, 15000);
+
+        // Expose instant connect for Temporal subprocess notification
+        // Called when the webapp receives a connect_fc_port broadcast from Supabase
+        window.__connectFCPort = function(port) {
+            if (isPortConnected(port)) {
+                console.log('[FC Bridge] Already connected to port ' + port);
+                return;
+            }
+            console.log('[FC Bridge] Instant connect requested for port ' + port);
+            try {
+                var ws = new WebSocket('ws://localhost:' + port);
+                ws.onopen = function() {
+                    activeConnections.push({ port: port, ws: ws });
+                    console.log('[FC Bridge] Instant connect OK → port ' + port + ' (' + activeConnections.length + ' total)');
+                    attachWsHandlers(ws, port);
+                    initializeConnection(ws);
+                    reconnectDelay = 500;
+                    reconnectAttempts = 0;
+                };
+                ws.onerror = function() {
+                    console.log('[FC Bridge] Instant connect FAILED for port ' + port);
+                };
+            } catch(e) { /* ignore */ }
+        };
     })();
 
     // ── Guardian Bridge Client ──────────────────────────────────────────────────

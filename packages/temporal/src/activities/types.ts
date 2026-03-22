@@ -79,6 +79,7 @@ export interface MCPActivities {
     userId: string;
     mcpServerIds: string[];
     agentId?: string;
+    pluginClientId?: string;
   }): Promise<LLMToolDefinition[]>;
 
   executeMCPTool(params: {
