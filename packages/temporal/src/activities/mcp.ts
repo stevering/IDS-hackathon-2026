@@ -247,10 +247,28 @@ export async function discoverMCPTools(params: {
   const supabase = createServiceClient();
   const tools: LLMToolDefinition[] = [];
 
-  for (const serverId of params.mcpServerIds) {
+  // Track which prefixes are already covered (to avoid duplicates)
+  const coveredPrefixes = new Set<string>();
+
+  // Process stdio servers first (local = superset of remote for same prefix)
+  const sortedIds = [...params.mcpServerIds].sort((a, b) => {
+    const aDef = getServerDef(a);
+    const bDef = getServerDef(b);
+    if (aDef?.transport === "stdio" && bDef?.transport !== "stdio") return -1;
+    if (aDef?.transport !== "stdio" && bDef?.transport === "stdio") return 1;
+    return 0;
+  });
+
+  for (const serverId of sortedIds) {
     const serverDef = getServerDef(serverId);
     if (!serverDef) {
       log.warn(`Unknown MCP server: ${serverId}`);
+      continue;
+    }
+
+    // Skip if a local server already covers this prefix (e.g. figma_console_local covers figmaconsole_)
+    if (coveredPrefixes.has(serverDef.toolPrefix)) {
+      log.info(`Skipping ${serverId} — prefix "${serverDef.toolPrefix}" already covered by local server`);
       continue;
     }
 
@@ -309,6 +327,7 @@ export async function discoverMCPTools(params: {
       }
 
       log.info(`Discovered ${count} tools from ${serverId}`);
+      if (count > 0) coveredPrefixes.add(serverDef.toolPrefix);
     } catch (err) {
       log.error(`Failed to discover tools from ${serverId}`, { error: String(err) });
     }

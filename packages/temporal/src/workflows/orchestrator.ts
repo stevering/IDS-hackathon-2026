@@ -209,6 +209,38 @@ export async function orchestratorWorkflow(
     }
   }
 
+  // ── Phase 2b: Watch for child workflow crashes ──────────────────────────
+  // If an agent workflow fails unexpectedly (LLM error, activity crash, etc.),
+  // inject a "failed" report so the orchestrator loop can react instead of
+  // hanging forever waiting for a signal that will never come.
+  for (const [shortId, agentState] of state.agents) {
+    if (agentState.workflowHandle) {
+      // Cast to ChildWorkflowHandle — the engine types it as `unknown`
+      // but Temporal's startChild returns a handle with .result()
+      const handle = agentState.workflowHandle as { result: () => Promise<unknown> };
+      const agentShortId = shortId;
+      // Fire-and-forget: monitor the child workflow result in the background
+      handle.result().catch((err: Error) => {
+        // Only inject if agent isn't already marked as done
+        const current = state.agents.get(agentShortId);
+        if (current && current.status === "active") {
+          const errorMsg = err.message || String(err);
+          current.status = "failed";
+          state.pendingReports.push({
+            agentShortId,
+            status: "failed",
+            summary: `Agent workflow crashed: ${errorMsg.slice(0, 500)}`,
+          });
+          state.eventLog.push({
+            type: "agent_status_changed",
+            agentShortId,
+            status: "failed",
+          });
+        }
+      });
+    }
+  }
+
   // ── Phase 3: System brief + orchestrator tool-based planning ────────────
   //
   // 1. System injects context into orchestrator history (deterministic)

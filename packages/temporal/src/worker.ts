@@ -59,8 +59,13 @@ async function run() {
   await worker.run();
 
   // Cleanup on shutdown (enables clean --watch restarts)
+  console.log(`[temporal-worker] 🛑 Stopping — cleaning up MCP pool...`);
+  await closeStdioPool({}).catch(() => {});
   await connection.close();
   console.log(`[temporal-worker] 🛑 Stopped`);
+
+  // Force exit — stdio subprocess pipes can keep the process alive
+  setTimeout(() => process.exit(0), 1000).unref();
 }
 
 run().catch((err) => {
