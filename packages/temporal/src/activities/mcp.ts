@@ -5,6 +5,9 @@
  * and executes individual MCP tool calls.
  *
  * Supports both remote (HTTP + OAuth) and local (stdio) MCP servers.
+ * Stdio clients are kept alive in a persistent pool (1 per agent) to avoid
+ * launching a new subprocess per tool call — the Guardian plugin needs time
+ * (~15s rescan) to connect to the subprocess's WS server.
  */
 
 import { createClient } from "@supabase/supabase-js";
@@ -58,18 +61,73 @@ function createServiceClient() {
 }
 
 // ---------------------------------------------------------------------------
-// MCP Client creation — supports both remote (HTTP) and local (stdio)
+// Persistent stdio client pool (1 subprocess per agent)
+// ---------------------------------------------------------------------------
+// Module-level state — survives between activity invocations in the same
+// Temporal worker process. Each agent gets its own subprocess to avoid
+// stdin/stdout conflicts in parallel execution.
+
+type PoolEntry = {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  client: any;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  tools: Record<string, any>;
+  lastUsed: number;
+};
+
+const stdioPool = new Map<string, PoolEntry>();
+const POOL_TTL_MS = 10 * 60 * 1000; // 10 min idle → close subprocess
+
+const poolLog = createLogger("mcp-pool");
+
+// Periodic cleanup of idle subprocesses.
+// unref() so this timer doesn't prevent process exit during --watch restarts.
+const poolCleanupTimer = setInterval(() => {
+  const now = Date.now();
+  for (const [key, entry] of stdioPool) {
+    if (now - entry.lastUsed > POOL_TTL_MS) {
+      poolLog.info(`Closing idle stdio client: ${key}`);
+      try { entry.client.close(); } catch { /* ignore */ }
+      stdioPool.delete(key);
+    }
+  }
+}, 60_000);
+poolCleanupTimer.unref();
+
+async function getOrCreateStdioClient(
+  serverDef: Extract<MCPServerDef, { transport: "stdio" }>,
+  poolKey: string,
+): Promise<PoolEntry> {
+  const existing = stdioPool.get(poolKey);
+  if (existing) {
+    existing.lastUsed = Date.now();
+    return existing;
+  }
+
+  poolLog.info(`Creating persistent stdio client: ${poolKey} (${serverDef.command} ${serverDef.args.join(" ")})`);
+
+  const transport = new Experimental_StdioMCPTransport({
+    command: serverDef.command,
+    args: serverDef.args,
+  });
+  const client = await createMCPClient({ transport });
+  const tools = await client.tools();
+
+  poolLog.info(`Stdio client ready: ${poolKey} — ${Object.keys(tools).length} tools`);
+
+  const entry: PoolEntry = { client, tools, lastUsed: Date.now() };
+  stdioPool.set(poolKey, entry);
+  return entry;
+}
+
+// ---------------------------------------------------------------------------
+// HTTP/SSE client creation (stateless, one-shot)
 // ---------------------------------------------------------------------------
 
-async function connectMCP(serverDef: MCPServerDef, accessToken?: string) {
-  if (serverDef.transport === "stdio") {
-    const transport = new Experimental_StdioMCPTransport({
-      command: serverDef.command,
-      args: serverDef.args,
-    });
-    return createMCPClient({ transport });
-  }
-  // HTTP/SSE remote transport
+async function connectHTTP(
+  serverDef: Extract<MCPServerDef, { transport: "http" | "sse" }>,
+  accessToken?: string,
+) {
   return createMCPClient({
     transport: {
       type: serverDef.transport,
@@ -86,8 +144,9 @@ async function connectMCP(serverDef: MCPServerDef, accessToken?: string) {
 export async function discoverMCPTools(params: {
   userId: string;
   mcpServerIds: string[];
+  agentId?: string;
 }): Promise<LLMToolDefinition[]> {
-  const log = createLogger("mcp-discover", { u: params.userId.slice(0, 8) });
+  const log = createLogger("mcp-discover", { u: params.userId.slice(0, 8), agent: params.agentId });
   const supabase = createServiceClient();
   const tools: LLMToolDefinition[] = [];
 
@@ -99,10 +158,18 @@ export async function discoverMCPTools(params: {
     }
 
     try {
-      let accessToken: string | undefined;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      let mcpTools: Record<string, any>;
 
-      // Stdio servers don't need OAuth tokens
-      if (serverDef.transport !== "stdio") {
+      if (serverDef.transport === "stdio") {
+        // Use persistent pool — subprocess stays alive for subsequent executeMCPTool calls
+        const poolKey = `${serverId}:${params.agentId ?? "default"}`;
+        const entry = await getOrCreateStdioClient(serverDef, poolKey);
+        mcpTools = entry.tools;
+        // NO client.close() — stays in pool
+      } else {
+        // HTTP/SSE: stateless, one-shot
+        let accessToken: string | undefined;
         const { data: tokensJson, error } = await supabase.rpc("get_mcp_connection_service", {
           p_user_id: params.userId,
           p_server_id: serverId,
@@ -119,24 +186,27 @@ export async function discoverMCPTools(params: {
           continue;
         }
         accessToken = tokens.access_token;
+
+        log.info(`Connecting to ${serverId} (${serverDef.transport})...`);
+        const client = await connectHTTP(serverDef, accessToken);
+        mcpTools = await client.tools();
+        await client.close();
       }
 
-      log.info(`Connecting to ${serverId} (${serverDef.transport})...`);
-
-      const client = await connectMCP(serverDef, accessToken);
-      const mcpTools = await client.tools();
       let count = 0;
       for (const [name, tool] of Object.entries(mcpTools)) {
+        // AI SDK MCP client returns the schema in inputSchema.jsonSchema (not parameters)
+        const toolAny = tool as { description?: string; parameters?: Record<string, unknown>; inputSchema?: { jsonSchema?: Record<string, unknown> } };
+        const parameters = toolAny.parameters ?? toolAny.inputSchema?.jsonSchema ?? {};
         tools.push({
           name: `${serverDef.toolPrefix}${name}`,
-          description: (tool as { description?: string }).description ?? "",
-          parameters: (tool as { parameters?: Record<string, unknown> }).parameters ?? {},
+          description: toolAny.description ?? "",
+          parameters,
         });
         count++;
       }
 
       log.info(`Discovered ${count} tools from ${serverId}`);
-      await client.close();
     } catch (err) {
       log.error(`Failed to discover tools from ${serverId}`, { error: String(err) });
     }
@@ -155,8 +225,13 @@ export async function executeMCPTool(params: {
   serverId: string;
   toolName: string;
   arguments: Record<string, unknown>;
+  agentId?: string;
 }): Promise<{ success: boolean; result?: unknown; error?: string }> {
-  const log = createLogger("mcp-exec", { u: params.userId.slice(0, 8), tool: `${params.serverId}/${params.toolName}` });
+  const log = createLogger("mcp-exec", {
+    u: params.userId.slice(0, 8),
+    agent: params.agentId,
+    tool: `${params.serverId}/${params.toolName}`,
+  });
 
   const serverDef = getServerDef(params.serverId);
   if (!serverDef) {
@@ -164,32 +239,51 @@ export async function executeMCPTool(params: {
   }
 
   try {
-    let accessToken: string | undefined;
+    if (serverDef.transport === "stdio") {
+      // Use persistent pool — reuse subprocess from discoverMCPTools
+      const poolKey = `${params.serverId}:${params.agentId ?? "default"}`;
+      const entry = await getOrCreateStdioClient(serverDef, poolKey);
 
-    // Stdio servers don't need OAuth tokens
-    if (serverDef.transport !== "stdio") {
-      const supabase = createServiceClient();
-      const { data: tokensJson, error } = await supabase.rpc("get_mcp_connection_service", {
-        p_user_id: params.userId,
-        p_server_id: params.serverId,
-      });
-
-      if (error || !tokensJson) {
-        return { success: false, error: `No token for ${params.serverId}: ${error?.message ?? "not found"}` };
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      let tool: any = entry.tools[params.toolName];
+      if (!tool) {
+        // Tools may have changed since discovery — refresh
+        log.info(`Tool "${params.toolName}" not in cache, refreshing...`);
+        entry.tools = await entry.client.tools();
+        entry.lastUsed = Date.now();
+        tool = entry.tools[params.toolName];
+      }
+      if (!tool) {
+        return { success: false, error: `Tool "${params.toolName}" not found on ${params.serverId}` };
       }
 
-      const tokens = JSON.parse(tokensJson);
-      if (!tokens.access_token) {
-        return { success: false, error: `Token for ${params.serverId} has no access_token` };
-      }
-      accessToken = tokens.access_token;
+      log.info(`Executing via persistent stdio client...`, { args: JSON.stringify(params.arguments).slice(0, 500) });
+      const result = await tool.execute(params.arguments, { toolCallId: `mcp-${Date.now()}` });
+      entry.lastUsed = Date.now();
+      log.info(`Execution succeeded`, { result: JSON.stringify(result).slice(0, 200) });
+      return { success: true, result };
     }
 
+    // HTTP/SSE: stateless, create → execute → close
+    let accessToken: string | undefined;
+    const supabase = createServiceClient();
+    const { data: tokensJson, error } = await supabase.rpc("get_mcp_connection_service", {
+      p_user_id: params.userId,
+      p_server_id: params.serverId,
+    });
+
+    if (error || !tokensJson) {
+      return { success: false, error: `No token for ${params.serverId}: ${error?.message ?? "not found"}` };
+    }
+
+    const tokens = JSON.parse(tokensJson);
+    if (!tokens.access_token) {
+      return { success: false, error: `Token for ${params.serverId} has no access_token` };
+    }
+    accessToken = tokens.access_token;
+
     log.info(`Connecting to execute ${params.toolName} (${serverDef.transport})...`);
-
-    const client = await connectMCP(serverDef, accessToken);
-
-    // Get tools with execute functions, then call the target tool
+    const client = await connectHTTP(serverDef, accessToken);
     const mcpTools = await client.tools();
     const tool = mcpTools[params.toolName];
     if (!tool) {
@@ -197,16 +291,37 @@ export async function executeMCPTool(params: {
       return { success: false, error: `Tool "${params.toolName}" not found on ${params.serverId}` };
     }
 
-    // AI SDK tools have an execute function — call it
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const toolAny = tool as any;
-    const result = await toolAny.execute(params.arguments, { toolCallId: `mcp-${Date.now()}` });
+    const result = await (tool as any).execute(params.arguments, { toolCallId: `mcp-${Date.now()}` });
     await client.close();
-
     log.info(`Execution succeeded`, { result: JSON.stringify(result).slice(0, 200) });
     return { success: true, result };
   } catch (err) {
+    // If stdio client crashed, remove from pool so next call creates a fresh one
+    if (serverDef.transport === "stdio") {
+      const poolKey = `${params.serverId}:${params.agentId ?? "default"}`;
+      const entry = stdioPool.get(poolKey);
+      if (entry) {
+        poolLog.info(`Removing crashed stdio client: ${poolKey}`);
+        try { entry.client.close(); } catch { /* ignore */ }
+        stdioPool.delete(poolKey);
+      }
+    }
     log.error(`Execution failed`, { error: String(err) });
     return { success: false, error: String(err) };
+  }
+}
+
+// ---------------------------------------------------------------------------
+// closeStdioPool — explicit cleanup (called at orchestration end or on demand)
+// ---------------------------------------------------------------------------
+
+export async function closeStdioPool(params: { agentId?: string }): Promise<void> {
+  for (const [key, entry] of stdioPool) {
+    if (!params.agentId || key.endsWith(`:${params.agentId}`)) {
+      poolLog.info(`Closing stdio client: ${key}`);
+      try { entry.client.close(); } catch { /* ignore */ }
+      stdioPool.delete(key);
+    }
   }
 }

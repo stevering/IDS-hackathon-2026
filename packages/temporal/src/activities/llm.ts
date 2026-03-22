@@ -280,6 +280,8 @@ async function delegateToExternal(
 // ---------------------------------------------------------------------------
 
 async function callLLMDirect(params: LLMCallParams): Promise<LLMCallResult> {
+  // Debug marker — remove after testing
+  console.log("[callLLM] CODE VERSION: schema-fix-v4");
   const { resolveModelForActivity } = await import("./llm-resolver.js");
   const { generateText, jsonSchema } = await import("ai");
 
@@ -291,7 +293,11 @@ async function callLLMDirect(params: LLMCallParams): Promise<LLMCallResult> {
           t.name,
           {
             description: t.description,
-            inputSchema: jsonSchema(t.parameters),
+            // AI SDK v6 requires a validate function to parse LLM tool call arguments.
+            // Without it, args are returned as {}. Passthrough validator accepts any input.
+            inputSchema: jsonSchema(t.parameters, {
+              validate: (value) => ({ success: true as const, value }),
+            }),
           },
         ])
       )
@@ -363,11 +369,14 @@ async function callLLMDirect(params: LLMCallParams): Promise<LLMCallResult> {
   return {
     content: result.text,
     reasoning,
-    toolCalls: result.toolCalls?.map((tc: { toolCallId: string; toolName: string; input?: unknown; args?: unknown }) => ({
-      id: tc.toolCallId,
-      name: tc.toolName,
-      arguments: (tc.input ?? tc.args ?? {}) as Record<string, unknown>,
-    })),
+    toolCalls: result.toolCalls?.map((tc: Record<string, unknown>) => {
+      // AI SDK v6: StaticToolCall has .args, DynamicToolCall (MCP) has .input
+      const args = (tc.args ?? tc.input ?? {}) as Record<string, unknown>;
+      if (Object.keys(args).length === 0) {
+        console.warn(`[callLLM] Empty args for tool ${tc.toolName}`, { rawKeys: Object.keys(tc).join(","), rawTc: JSON.stringify(tc).slice(0, 500) });
+      }
+      return { id: tc.toolCallId as string, name: tc.toolName as string, arguments: args };
+    }),
     usage: result.usage
       ? {
           promptTokens: (result.usage as { inputTokens?: number }).inputTokens ?? 0,

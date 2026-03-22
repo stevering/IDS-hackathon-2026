@@ -266,6 +266,82 @@ function resetPipelineFailures(state: AgentWorkflowState): void {
 }
 
 
+// ---------------------------------------------------------------------------
+// Shared canvas capture helpers (used by both handleReviewAndExecute and handleExecuteExternalTool)
+// ---------------------------------------------------------------------------
+
+const SNAPSHOT_CODE = `return JSON.stringify(figma.currentPage.children.map(n => ({
+  id: n.id, name: n.name,
+  childCount: 'children' in n ? n.children.length : 0,
+  width: Math.round(n.width), height: Math.round(n.height),
+  fillHash: 'fills' in n ? JSON.stringify(n.fills).slice(0, 100) : '',
+})));`;
+
+function buildScreenshotCode(targetExpr: string): string {
+  return `const target = ${targetExpr};
+if (!target) return null;
+const bytes = await target.exportAsync({ format: 'PNG', constraint: { type: 'SCALE', value: 0.25 } });
+const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+let r = '';
+for (let i = 0; i < bytes.length; i += 3) {
+  const a = bytes[i], b = bytes[i+1] || 0, c = bytes[i+2] || 0;
+  r += chars[a >> 2] + chars[((a & 3) << 4) | (b >> 4)] + (i+1 < bytes.length ? chars[((b & 15) << 2) | (c >> 6)] : '=') + (i+2 < bytes.length ? chars[c & 63] : '=');
+}
+return r;`;
+}
+
+function buildDiffCode(beforeIds: string[], beforeNodeProps: Record<string, unknown>): string {
+  const beforeSet = JSON.stringify(beforeIds);
+  const prevProps = JSON.stringify(beforeNodeProps);
+  return `const before = new Set(${beforeSet});
+const prevProps = ${prevProps};
+const children = figma.currentPage.children;
+const added = children.filter(n => !before.has(n.id));
+const countDescendants = n => { if (!('children' in n)) return 0; let count = n.children.length; for (const c of n.children) count += countDescendants(c); return count; };
+const describe = n => ({ id: n.id, name: n.name, type: n.type, x: Math.round(n.x), y: Math.round(n.y), width: Math.round(n.width), height: Math.round(n.height), fills: 'fills' in n ? n.fills : undefined, childCount: 'children' in n ? n.children.length : undefined, descendantCount: countDescendants(n) });
+const modified = [];
+for (const n of children) { if (!before.has(n.id)) continue; const prev = prevProps[n.id]; if (!prev) continue; const changes = []; const cc = 'children' in n ? n.children.length : 0; if (cc !== prev.childCount) changes.push('children: '+prev.childCount+'→'+cc); if (n.name !== prev.name) changes.push('name: '+prev.name+'→'+n.name); if (Math.round(n.width) !== prev.width || Math.round(n.height) !== prev.height) changes.push('size: '+prev.width+'x'+prev.height+'→'+Math.round(n.width)+'x'+Math.round(n.height)); const currFillHash = 'fills' in n ? JSON.stringify(n.fills).slice(0,100) : ''; if (currFillHash !== prev.fillHash) changes.push('fills changed'); if (changes.length > 0) modified.push({ id: n.id, name: n.name, changes }); }
+const removed = ${beforeSet}.filter(id => !children.find(n => n.id === id));
+return JSON.stringify({ added: added.map(describe), modified, removedCount: removed.length, totalChildren: children.length });`;
+}
+
+type CanvasSnapshot = {
+  ids: string[];
+  nodeProps: Record<string, { name: string; childCount: number; width: number; height: number; fillHash: string }>;
+  screenshot?: string;
+};
+
+async function captureCanvasSnapshot(clientId: string, userId: string, workflowId: string, screenshotTargetExpr?: string): Promise<CanvasSnapshot> {
+  const snap: CanvasSnapshot = { ids: [], nodeProps: {} };
+  try {
+    const result = await executeFigmaCode({ pluginClientId: clientId, userId, code: SNAPSHOT_CODE, workflowId });
+    if (result.success && result.result) {
+      const parsed = JSON.parse(String(result.result));
+      snap.ids = parsed.map((n: { id: string }) => n.id);
+      snap.nodeProps = Object.fromEntries(parsed.map((n: { id: string; name: string; childCount: number; width: number; height: number; fillHash: string }) =>
+        [n.id, { name: n.name, childCount: n.childCount, width: n.width, height: n.height, fillHash: n.fillHash }]));
+    }
+    const ssCode = buildScreenshotCode(screenshotTargetExpr ?? "figma.currentPage");
+    const ssResult = await executeFigmaCode({ pluginClientId: clientId, userId, code: ssCode, workflowId });
+    if (ssResult.success && ssResult.result) snap.screenshot = String(ssResult.result).slice(0, 500_000);
+  } catch { /* best-effort */ }
+  return snap;
+}
+
+async function captureCanvasDiff(clientId: string, userId: string, workflowId: string, before: CanvasSnapshot, screenshotTargetExpr?: string): Promise<{ diff?: string; screenshot?: string }> {
+  const result: { diff?: string; screenshot?: string } = {};
+  try {
+    const diffCode = buildDiffCode(before.ids, before.nodeProps);
+    const diffResult = await executeFigmaCode({ pluginClientId: clientId, userId, code: diffCode, workflowId });
+    if (diffResult.success && diffResult.result) result.diff = String(diffResult.result).slice(0, 2000);
+    const ssCode = buildScreenshotCode(screenshotTargetExpr ?? "figma.currentPage");
+    const ssResult = await executeFigmaCode({ pluginClientId: clientId, userId, code: ssCode, workflowId });
+    if (ssResult.success && ssResult.result) result.screenshot = String(ssResult.result).slice(0, 500_000);
+  } catch { /* best-effort */ }
+  return result;
+}
+
+
 async function handleReviewAndExecute(
   state: AgentWorkflowState,
   effect: Extract<AgentEffect, { type: "review_and_execute_figma_code" }>,
@@ -366,65 +442,17 @@ async function handleReviewAndExecute(
 
   // Step 2: Snapshot BEFORE — list all node IDs + their child counts + capture screenshot
   const clientId = effect.pluginClientId || state.agent.pluginClientId || "";
-  const snapshotCode = `return JSON.stringify(figma.currentPage.children.map(n => ({
-  id: n.id,
-  name: n.name,
-  childCount: 'children' in n ? n.children.length : 0,
-  width: Math.round(n.width),
-  height: Math.round(n.height),
-  fillHash: 'fills' in n ? JSON.stringify(n.fills).slice(0, 100) : '',
-})));`;
-  let beforeIds: string[] = [];
-  let beforeNodeProps: Record<string, { name: string; childCount: number; width: number; height: number; fillHash: string }> = {};
-  let beforeScreenshot: string | undefined;
 
   // Determine screenshot target: parent node if code references one, otherwise full page
-  // This ensures before/after screenshots are always of the SAME node
   const parentIdMatch = effect.code.match(/getNodeByIdAsync\s*\(\s*["'](\d+:\d+)["']\s*\)/);
-  const screenshotTargetId = parentIdMatch?.[1]; // e.g. "400:703" or undefined
+  const screenshotTargetId = parentIdMatch?.[1];
+  const screenshotTargetExpr = screenshotTargetId ? `await figma.getNodeByIdAsync("${screenshotTargetId}")` : "figma.currentPage";
 
   // Detect if agent code uses scrollAndZoomIntoView (affects viewport, not node exports)
   const codeHasScroll = /scrollAndZoomIntoView|scrollIntoView/.test(effect.code);
 
-  try {
-    const beforeResult = await executeFigmaCode({
-      pluginClientId: clientId, userId, code: snapshotCode,
-      workflowId: state.orchestratorWorkflowId,
-    });
-    if (beforeResult.success && beforeResult.result) {
-      const parsed = JSON.parse(String(beforeResult.result));
-      beforeIds = parsed.map((n: { id: string }) => n.id);
-      beforeNodeProps = Object.fromEntries(
-        parsed.map((n: { id: string; name: string; childCount: number; width: number; height: number; fillHash: string }) =>
-          [n.id, { name: n.name, childCount: n.childCount, width: n.width, height: n.height, fillHash: n.fillHash }]
-        )
-      );
-    }
-    // Capture screenshot — on target node if known, otherwise full page
-    const canCapture = screenshotTargetId || beforeIds.length > 0;
-    if (canCapture) {
-      const exportTarget = screenshotTargetId
-        ? `await figma.getNodeByIdAsync("${screenshotTargetId}")`
-        : `figma.currentPage`;
-      const screenshotCode = `const target = ${exportTarget};
-if (!target) return null;
-const bytes = await target.exportAsync({ format: 'PNG', constraint: { type: 'SCALE', value: 0.25 } });
-const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
-let r = '';
-for (let i = 0; i < bytes.length; i += 3) {
-  const a = bytes[i], b = bytes[i+1] || 0, c = bytes[i+2] || 0;
-  r += chars[a >> 2] + chars[((a & 3) << 4) | (b >> 4)] + (i+1 < bytes.length ? chars[((b & 15) << 2) | (c >> 6)] : '=') + (i+2 < bytes.length ? chars[c & 63] : '=');
-}
-return r;`;
-      const ssResult = await executeFigmaCode({
-        pluginClientId: clientId, userId, code: screenshotCode,
-        workflowId: state.orchestratorWorkflowId,
-      });
-      if (ssResult.success && ssResult.result) {
-        beforeScreenshot = String(ssResult.result).slice(0, 500_000); // cap at ~375KB
-      }
-    }
-  } catch { /* best-effort */ }
+  const before = await captureCanvasSnapshot(clientId, userId, state.orchestratorWorkflowId, screenshotTargetExpr);
+  const beforeScreenshot = before.screenshot;
 
   // Step 3: Execute the actual code in Figma
   const execResult = await executeFigmaCode({
@@ -435,6 +463,7 @@ return r;`;
   });
 
   let verificationSummary: string | undefined;
+  let afterScreenshot: string | undefined;
 
   // Emit code_executed activity
   await executeEffect(state, {
@@ -450,97 +479,18 @@ return r;`;
 
   // Step 4: Snapshot AFTER — diff to find new/changed nodes
   if (execResult.success) {
-    try {
-      const beforeSet = JSON.stringify(beforeIds);
-      const prevProps = JSON.stringify(beforeNodeProps);
-      const diffCode = `const before = new Set(${beforeSet});
-const prevProps = ${prevProps};
-const children = figma.currentPage.children;
-const added = children.filter(n => !before.has(n.id));
-const removed = ${beforeSet}.filter(id => !children.find(n => n.id === id));
-const countDescendants = n => {
-  if (!('children' in n)) return 0;
-  let count = n.children.length;
-  for (const c of n.children) count += countDescendants(c);
-  return count;
-};
-const describe = n => ({
-  id: n.id, name: n.name, type: n.type,
-  x: Math.round(n.x), y: Math.round(n.y),
-  width: Math.round(n.width), height: Math.round(n.height),
-  fills: 'fills' in n ? n.fills : undefined,
-  childCount: 'children' in n ? n.children.length : undefined,
-  descendantCount: countDescendants(n),
-});
-const modified = [];
-for (const n of children) {
-  if (!before.has(n.id)) continue;
-  const prev = prevProps[n.id];
-  if (!prev) continue;
-  const changes = [];
-  const currChildCount = 'children' in n ? n.children.length : 0;
-  if (currChildCount !== prev.childCount) changes.push('children: ' + prev.childCount + '→' + currChildCount);
-  if (n.name !== prev.name) changes.push('name: ' + prev.name + '→' + n.name);
-  if (Math.round(n.width) !== prev.width || Math.round(n.height) !== prev.height) changes.push('size: ' + prev.width + 'x' + prev.height + '→' + Math.round(n.width) + 'x' + Math.round(n.height));
-  const currFillHash = 'fills' in n ? JSON.stringify(n.fills).slice(0, 100) : '';
-  if (currFillHash !== prev.fillHash) changes.push('fills changed');
-  if (changes.length > 0) {
-    modified.push({ id: n.id, name: n.name, changes: changes });
-  }
-}
-return JSON.stringify({
-  added: added.map(describe),
-  modified: modified,
-  removedCount: removed.length,
-  totalChildren: children.length,
-});`;
-      const afterResult = await executeFigmaCode({
-        pluginClientId: clientId, userId, code: diffCode,
-        workflowId: state.orchestratorWorkflowId,
-      });
-      if (afterResult.success && afterResult.result) {
-        verificationSummary = String(afterResult.result).slice(0, 2000);
-        await executeEffect(state, {
-          type: "emit_activity",
-          activities: [{
-            action: "code_verified" as const,
-            selection: verificationSummary,
-          }],
-        }, userId);
-      }
-    } catch {
-      // Verification is best-effort — don't block the agent if it fails
+    const after = await captureCanvasDiff(clientId, userId, state.orchestratorWorkflowId, before, screenshotTargetExpr);
+    verificationSummary = after.diff;
+    afterScreenshot = after.screenshot;
+    if (verificationSummary) {
+      await executeEffect(state, {
+        type: "emit_activity",
+        activities: [{ action: "code_verified" as const, selection: verificationSummary }],
+      }, userId);
     }
   }
 
   await notifyGuardrailIfBlocked(execResult, state);
-
-  // Step 5: Capture AFTER screenshot — same target node as BEFORE for reliable binary comparison
-  let afterScreenshot: string | undefined;
-  if (execResult.success) {
-    try {
-      const exportTarget = screenshotTargetId
-        ? `await figma.getNodeByIdAsync("${screenshotTargetId}")`
-        : `figma.currentPage`;
-      const screenshotCode = `const target = ${exportTarget};
-if (!target) return null;
-const bytes = await target.exportAsync({ format: 'PNG', constraint: { type: 'SCALE', value: 0.25 } });
-const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
-let r = '';
-for (let i = 0; i < bytes.length; i += 3) {
-  const a = bytes[i], b = bytes[i+1] || 0, c = bytes[i+2] || 0;
-  r += chars[a >> 2] + chars[((a & 3) << 4) | (b >> 4)] + (i+1 < bytes.length ? chars[((b & 15) << 2) | (c >> 6)] : '=') + (i+2 < bytes.length ? chars[c & 63] : '=');
-}
-return r;`;
-      const ssResult = await executeFigmaCode({
-        pluginClientId: clientId, userId, code: screenshotCode,
-        workflowId: state.orchestratorWorkflowId,
-      });
-      if (ssResult.success && ssResult.result) {
-        afterScreenshot = String(ssResult.result).slice(0, 500_000);
-      }
-    } catch { /* best-effort */ }
-  }
 
   // Step 6: File review LLM — ask an LLM to interpret the diff in natural language
   let fileReviewVerdict: string | undefined;
@@ -834,17 +784,35 @@ async function handleFetchFigmaDocs(
 // External tool execution (MCP)
 // ---------------------------------------------------------------------------
 
+// Read-only FC tools that don't modify the Figma canvas (no diff/screenshot needed)
+const FC_READ_ONLY_TOOLS = new Set([
+  "figma_get_status", "figma_get_selection", "figma_get_variables", "figma_get_file_data",
+  "figma_get_styles", "figma_get_component", "figma_get_component_details",
+  "figma_get_component_image", "figma_get_component_for_development",
+  "figma_get_console_logs", "figma_get_design_system_summary", "figma_get_design_system_kit",
+  "figma_get_design_changes", "figma_get_comments", "figma_get_file_for_plugin",
+  "figma_get_library_components", "figma_get_token_values", "figma_get_variables",
+  "figma_list_open_files", "figma_navigate", "figma_reconnect", "figma_watch_console",
+  "figma_browse_tokens", "figma_search_components", "figma_clear_console",
+  "figma_check_design_parity", "figma_lint_design", "figma_audit_design_system",
+]);
+
+function isFigmaWriteTool(rawToolName: string): boolean {
+  return rawToolName.startsWith("figma_") && !FC_READ_ONLY_TOOLS.has(rawToolName);
+}
+
 async function handleExecuteExternalTool(
   state: AgentWorkflowState,
   effect: Extract<AgentEffect, { type: "execute_external_tool" }>,
   userId: string,
   mcpServerIds?: string[],
+  callLLM?: LLMActivities["callLLM"],
+  model?: string,
 ): Promise<void> {
   // Resolve server ID from the prefixed tool name
   const resolved = resolveServerIdFromPrefixedName(effect.toolName, mcpServerIds);
   if (!resolved) {
     injectToolResult(state, effect.toolCallId, `Error: Cannot resolve MCP server for tool "${effect.toolName}"`);
-    // Emit error activity so it appears in the stream
     await executeEffect(state, {
       type: "emit_activity",
       activities: [{
@@ -856,11 +824,21 @@ async function handleExecuteExternalTool(
     return;
   }
 
+  const clientId = state.agent.pluginClientId || "";
+  const shouldCaptureDiff = isFigmaWriteTool(resolved.rawName) && clientId;
+
+  // ── Before snapshot (for Figma write tools) ────────────────────────────
+  const before = shouldCaptureDiff
+    ? await captureCanvasSnapshot(clientId, userId, state.orchestratorWorkflowId)
+    : { ids: [], nodeProps: {} } as CanvasSnapshot;
+
+  // ── Execute the MCP tool ───────────────────────────────────────────────
   const result = await mcpActivities.executeMCPTool({
     userId,
     serverId: resolved.serverId,
     toolName: resolved.rawName,
     arguments: effect.arguments,
+    agentId: state.agent.shortId,
   });
 
   if (result.success) {
@@ -868,7 +846,7 @@ async function handleExecuteExternalTool(
     state.directiveExecCount = (state.directiveExecCount ?? 0) + 1;
   }
 
-  // Emit activity so external tool results appear in the stream
+  // Emit tool result activity
   await executeEffect(state, {
     type: "emit_activity",
     activities: [{
@@ -880,7 +858,54 @@ async function handleExecuteExternalTool(
     }],
   }, userId);
 
-  injectToolResult(state, effect.toolCallId, JSON.stringify(result));
+  // ── After snapshot + diff + file review (for Figma write tools) ────────
+  let verificationSummary: string | undefined;
+  let afterScreenshot: string | undefined;
+
+  if (shouldCaptureDiff && result.success) {
+    try {
+      const after = await captureCanvasDiff(clientId, userId, state.orchestratorWorkflowId, before);
+      verificationSummary = after.diff;
+      afterScreenshot = after.screenshot;
+
+      if (verificationSummary) {
+        await executeEffect(state, {
+          type: "emit_activity",
+          activities: [{ action: "code_verified" as const, selection: verificationSummary }],
+        }, userId);
+      }
+
+      // File review LLM
+      if (verificationSummary && callLLM) {
+        const images: string[] = [];
+        if (before.screenshot) images.push(before.screenshot);
+        if (afterScreenshot) images.push(afterScreenshot);
+        const imageContext = images.length === 2 ? "\n\nTwo screenshots attached: FIRST = BEFORE, SECOND = AFTER." : images.length === 1 ? "\n\nOne screenshot attached (AFTER)." : "";
+        const tracing = { conversationType: "orchestration" as const, orchestrationId: state.orchestratorWorkflowId, agentShortId: state.agent.shortId, currentDirective: state.lastDirectiveContent, stepCount: state.stepCount, execStats: state.execStats, devLLMDelegation: state.devLLMDelegation, devSlowDelegation: state.devSlowDelegation };
+        const fileReviewResult = await callLLM({
+          messages: [
+            { role: "system", content: FILE_REVIEW_SYSTEM_PROMPT },
+            { role: "user", content: `External MCP tool executed: ${effect.toolName}\nArguments: ${JSON.stringify(effect.arguments).slice(0, 500)}\nResult: ${JSON.stringify(result.result).slice(0, 500)}\n\nFigma canvas diff:\n${verificationSummary}${imageContext}${state.lastDirectiveContent ? `\n\nAgent directive: ${state.lastDirectiveContent}` : ""}`, images: images.length > 0 ? images : undefined },
+          ],
+          userId, model, maxTokens: 256, purpose: "file_review", tracing,
+        });
+        const review = parseFileReviewResponse(fileReviewResult.content);
+        await executeEffect(state, { type: "emit_activity", activities: [{ action: "file_review_llm_response" as const, verdict: review.verdict, status: review.status, code: `[MCP Tool] ${effect.toolName}(${JSON.stringify(effect.arguments).slice(0, 200)})`, diff: verificationSummary ?? "", hasScreenshots: images.length > 0, beforeScreenshot: before.screenshot, afterScreenshot, rawResponse: fileReviewResult.content, usage: fileReviewResult.usage, intercepted: fileReviewResult.intercepted }] }, userId);
+      }
+    } catch { /* canvas diff/review is best-effort */ }
+  }
+
+  // Build enriched result for the agent
+  const parts: string[] = [];
+  if (verificationSummary) parts.push(`Canvas diff:\n${verificationSummary}`);
+  if (state.lastDirectiveContent) parts.push(`[Reminder] Your assigned directive: "${state.lastDirectiveContent}".`);
+  parts.push(`---\n${JSON.stringify(result)}`);
+
+  const toolImages: string[] = [];
+  if (before.screenshot) toolImages.push(before.screenshot);
+  if (afterScreenshot) toolImages.push(afterScreenshot);
+
+  injectToolResult(state, effect.toolCallId, parts.join("\n\n"), toolImages.length > 0 ? toolImages : undefined);
 }
 
 /** Resolve server ID from prefixed tool name (e.g. "figmaconsole_create_child" → figma_console / create_child) */
@@ -972,6 +997,7 @@ export async function agentWorkflow(input: AgentWorkflowInput): Promise<void> {
       state.externalTools = await mcpActivities.discoverMCPTools({
         userId: input.userId,
         mcpServerIds: input.mcpServerIds,
+        agentId: input.agent.shortId,
       });
     } catch {
       // Non-fatal: agent continues with static tools only
@@ -1124,7 +1150,7 @@ async function executeLLMLoop(
         didExecuteTool = true;
         needsContinue = true;
       } else if (effect.type === "execute_external_tool") {
-        await handleExecuteExternalTool(state, effect, userId, mcpServerIds);
+        await handleExecuteExternalTool(state, effect, userId, mcpServerIds, callLLM, model);
         didExecuteTool = true;
         needsContinue = true;
       } else if (effect.type === "fetch_figma_docs") {

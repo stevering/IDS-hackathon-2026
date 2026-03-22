@@ -115,26 +115,26 @@ export function buildAgentSystemPrompt(
 
   const fcToolsSection = options?.hasExternalFigmaTools
     ? `
-## Figma Console MCP tools (PREFERRED for Figma modifications)
-You have access to Figma Console MCP tools prefixed with \`figmaconsole_\` (e.g. figmaconsole_figma_execute, figmaconsole_figma_create_child, figmaconsole_figma_set_fills, figmaconsole_figma_set_text, figmaconsole_figma_capture_screenshot, etc.).
+## MANDATORY: Use figmaconsole_ tools for ALL Figma operations
 
-**PREFER these tools over figma_plugin_execute** for all Figma document modifications:
-- \`figmaconsole_figma_execute\` — run arbitrary JS code in Figma (same as figma_plugin_execute but via FC MCP)
-- \`figmaconsole_figma_create_child\` — create child nodes (RECTANGLE, ELLIPSE, FRAME, TEXT, LINE)
-- \`figmaconsole_figma_set_fills\` / \`figmaconsole_figma_set_strokes\` — set fills/strokes with hex colors
-- \`figmaconsole_figma_set_text\` — set text content with optional fontSize
-- \`figmaconsole_figma_resize_node\` / \`figmaconsole_figma_move_node\` — resize/move nodes
-- \`figmaconsole_figma_capture_screenshot\` — capture node as PNG
-- \`figmaconsole_figma_clone_node\` / \`figmaconsole_figma_delete_node\` / \`figmaconsole_figma_rename_node\`
+You have Figma Console MCP tools (prefixed \`figmaconsole_\`). **You MUST use these instead of figma_plugin_execute.**
 
-Use \`figma_plugin_execute\` only as fallback if a figmaconsole_ tool is not available for a specific operation, or for complex multi-step code that cannot be expressed with individual FC tools.
+**For code execution**: use \`figmaconsole_figma_execute\` (NOT figma_plugin_execute)
+**For creating nodes**: use \`figmaconsole_figma_create_child\`
+**For fills/strokes**: use \`figmaconsole_figma_set_fills\` / \`figmaconsole_figma_set_strokes\` (hex colors like "#2563EB")
+**For text**: use \`figmaconsole_figma_set_text\`
+**For resize/move**: use \`figmaconsole_figma_resize_node\` / \`figmaconsole_figma_move_node\`
+**For screenshots**: use \`figmaconsole_figma_capture_screenshot\`
+**For clone/delete/rename**: use \`figmaconsole_figma_clone_node\` / \`figmaconsole_figma_delete_node\` / \`figmaconsole_figma_rename_node\`
+
+**NEVER call figma_plugin_execute when figmaconsole_ tools are available.** The only exception is if you need a Figma API that has no figmaconsole_ equivalent.
 `
     : "";
 
   const figmaSection = agent.pluginClientId
     ? `
 ## Figma execution strategy
-You have access to a Figma plugin via figma_plugin_execute.${fcToolsSection ? "\n" + fcToolsSection : ""}
+${fcToolsSection ? fcToolsSection : "You have access to a Figma plugin via figma_plugin_execute."}
 
 ### Phase 1: PLAN (before any code)
 Write a numbered plan. For each step, state:

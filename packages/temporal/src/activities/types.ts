@@ -78,6 +78,7 @@ export interface MCPActivities {
   discoverMCPTools(params: {
     userId: string;
     mcpServerIds: string[];
+    agentId?: string;
   }): Promise<LLMToolDefinition[]>;
 
   executeMCPTool(params: {
@@ -85,5 +86,10 @@ export interface MCPActivities {
     serverId: string;
     toolName: string;
     arguments: Record<string, unknown>;
+    agentId?: string;
   }): Promise<{ success: boolean; result?: unknown; error?: string }>;
+
+  closeStdioPool(params: {
+    agentId?: string;
+  }): Promise<void>;
 }

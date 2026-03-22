@@ -644,13 +644,22 @@ function AgentActivityItem({ activity, agentShortId }: { activity: AgentActivity
             ? "bg-emerald-500/5 border-emerald-500/10 text-emerald-400/60 hover:bg-emerald-500/10"
             : "bg-red-500/5 border-red-500/10 text-red-400/60 hover:bg-red-500/10"} />
       );
-    case "external_tool_result":
+    case "external_tool_result": {
+      // Extract tool name from summary (format: "toolName: OK — result" or "toolName: FAILED — error")
+      const toolMatch = activity.summary.match(/^([^:]+):\s*(OK|FAILED)/);
+      const toolName = toolMatch?.[1] ?? "MCP Tool";
+      // Detect MCP errors hidden inside success responses
+      const hasHiddenError = activity.success && activity.summary.includes("MCP error");
+      const effectiveSuccess = activity.success && !hasHiddenError;
+      const statusLabel = hasHiddenError ? "Error" : effectiveSuccess ? "OK" : "Failed";
+      const detail = toolMatch ? activity.summary.slice(toolMatch[0].length).replace(/^\s*—\s*/, "") : activity.summary;
       return (
-        <ActivityRow pill={pill} label={`${agentShortId} ${activity.success ? "MCP Tool OK" : "MCP Tool Failed"}`} detail={activity.summary}
-          colorClass={activity.success
+        <ActivityRow pill={pill} label={`${agentShortId} ${toolName} ${statusLabel}`} detail={detail}
+          colorClass={effectiveSuccess
             ? "bg-blue-500/5 border-blue-500/10 text-blue-400/60 hover:bg-blue-500/10"
             : "bg-red-500/5 border-red-500/10 text-red-400/60 hover:bg-red-500/10"} />
       );
+    }
     case "code_verified": {
       let formatted: string;
       try {

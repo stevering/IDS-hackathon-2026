@@ -11,16 +11,17 @@ import { executeFigmaCode } from "./activities/figma-execute.js";
 import { checkPresence } from "./activities/presence.js";
 import { saveOrchestrationState, persistDurableEvents } from "./activities/persistence.js";
 import { fetchFigmaDocs } from "./activities/fetch-docs.js";
-import { discoverMCPTools, executeMCPTool } from "./activities/mcp.js";
+import { discoverMCPTools, executeMCPTool, closeStdioPool } from "./activities/mcp.js";
 
 async function run() {
   const address = process.env.TEMPORAL_ADDRESS ?? "localhost:7233";
   const namespace = process.env.TEMPORAL_NAMESPACE ?? "default";
   const taskQueue = process.env.TEMPORAL_TASK_QUEUE ?? "guardian-orchestration";
 
-  console.log(`[temporal-worker] Connecting to ${address} (namespace: ${namespace})`);
+  console.log(`[temporal-worker] ⏳ Starting... (${new Date().toISOString()})`);
 
   const connection = await NativeConnection.connect({ address });
+  console.log(`[temporal-worker] ⏳ Connected to Temporal (${address}), building workflow bundle...`);
 
   const worker = await Worker.create({
     connection,
@@ -48,16 +49,22 @@ async function run() {
       fetchFigmaDocs,
       discoverMCPTools,
       executeMCPTool,
+      closeStdioPool,
     },
   });
 
-  console.log(`[temporal-worker] Listening on task queue: ${taskQueue}`);
+  console.log(`[temporal-worker] ✅ Ready — listening on task queue: ${taskQueue}`);
 
   // Run the worker until shutdown signal
   await worker.run();
+
+  // Cleanup on shutdown (enables clean --watch restarts)
+  await connection.close();
+  console.log(`[temporal-worker] 🛑 Stopped`);
 }
 
 run().catch((err) => {
   console.error("[temporal-worker] Fatal error:", err);
   process.exit(1);
 });
+// force restart 1774176886
