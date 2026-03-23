@@ -49,7 +49,7 @@ function matchesAgentFilter(e: OrchestrationSSEEvent, agentFilter: string): bool
     case "sub_conv_message":
       return e.fromAgentId === agentFilter;
     case "orchestrator_brief":
-    case "orchestrator_thinking":
+    case "orchestrator_text": case "orchestrator_reasoning":
     case "orchestrator_tool_call":
     case "orchestrator_tool_result":
     case "orchestrator_input":
@@ -250,15 +250,17 @@ function renderEvent(event: OrchestrationSSEEvent, index: number, agents: AgentV
       );
     }
 
-    // ── Orchestrator thinking ──────────────────────────────────────────
-    case "orchestrator_thinking":
+    // ── Orchestrator text / reasoning ───────────────────────────────────
+    case "orchestrator_text": case "orchestrator_reasoning": {
+      const isReasoning = event.type === "orchestrator_reasoning";
+      const simLabel = isReasoning && "simulated" in event && event.simulated ? " (simulated)" : "";
       return (
         <div key={index}>
           <EventBlock
             event={event}
             agents={agents}
             title="Orchestrator"
-            subject={event.usage ? `thinking  ${event.usage.totalTokens} tok` : "thinking"}
+            subject={event.usage ? `${isReasoning ? "reasoning" : "response"}${simLabel}  ${event.usage.totalTokens} tok` : `${isReasoning ? "reasoning" : "response"}${simLabel}`}
             preview={event.content}
             defaultOpen={true}
             colorClass="border-amber-500/20 bg-amber-500/5 text-amber-300"
@@ -274,6 +276,7 @@ function renderEvent(event: OrchestrationSSEEvent, index: number, agents: AgentV
           </EventBlock>
         </div>
       );
+    }
 
     // ── Orchestrator directive ──────────────────────────────────────────
     case "orchestrator_directive": {
@@ -605,13 +608,13 @@ function AgentActivityItem({ activity, agentShortId }: { activity: AgentActivity
   switch (activity.action) {
     case "reasoning":
       return (
-        <ActivityRow pill={pill} label={`${agentShortId} reasoning`} detail={activity.content}
+        <ActivityRow pill={pill} label={`${agentShortId} reasoning${activity.simulated ? " (simulated)" : ""}`} detail={activity.content}
           usage={activity.usage}
           colorClass="bg-amber-500/5 border-amber-500/10 text-amber-400/60 hover:bg-amber-500/10" />
       );
-    case "thinking":
+    case "assistant_text":
       return (
-        <ActivityRow pill={pill} label={agentShortId} detail={activity.content}
+        <ActivityRow pill={pill} label={`${agentShortId} response`} detail={activity.content}
           usage={activity.usage}
           colorClass="bg-cyan-500/5 border-cyan-500/10 text-cyan-400/60 hover:bg-cyan-500/10" />
       );

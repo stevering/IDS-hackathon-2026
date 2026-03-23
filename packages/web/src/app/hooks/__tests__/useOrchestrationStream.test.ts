@@ -67,7 +67,7 @@ describe("useOrchestrationStream — workflowId changes (conversation switch)", 
       es.onmessage?.(
         new MessageEvent("message", {
           data: JSON.stringify({
-            type: "orchestrator_thinking",
+            type: "orchestrator_text",
             content: "thinking...",
           }),
         }),
@@ -99,7 +99,7 @@ describe("useOrchestrationStream — workflowId changes (conversation switch)", 
       firstEs.onmessage?.(
         new MessageEvent("message", {
           data: JSON.stringify({
-            type: "orchestrator_thinking",
+            type: "orchestrator_text",
             content: "from workflow aaa",
           }),
         }),
@@ -143,7 +143,7 @@ describe("useOrchestrationStream — disconnect resets state", () => {
       es.onmessage?.(
         new MessageEvent("message", {
           data: JSON.stringify({
-            type: "orchestrator_thinking",
+            type: "orchestrator_text",
             content: "data",
           }),
         }),
@@ -174,7 +174,7 @@ describe("useOrchestrationStream — event accumulation and isolation", () => {
       es.onmessage?.(
         new MessageEvent("message", {
           data: JSON.stringify({
-            type: "orchestrator_thinking",
+            type: "orchestrator_text",
             content: "event 1",
           }),
         }),
@@ -184,7 +184,7 @@ describe("useOrchestrationStream — event accumulation and isolation", () => {
       es.onmessage?.(
         new MessageEvent("message", {
           data: JSON.stringify({
-            type: "orchestrator_thinking",
+            type: "orchestrator_text",
             content: "event 2",
           }),
         }),
@@ -207,7 +207,7 @@ describe("useOrchestrationStream — event accumulation and isolation", () => {
       oldEs.onmessage?.(
         new MessageEvent("message", {
           data: JSON.stringify({
-            type: "orchestrator_thinking",
+            type: "orchestrator_text",
             content: "old event",
           }),
         }),
@@ -227,7 +227,7 @@ describe("useOrchestrationStream — event accumulation and isolation", () => {
       newEs.onmessage?.(
         new MessageEvent("message", {
           data: JSON.stringify({
-            type: "orchestrator_thinking",
+            type: "orchestrator_text",
             content: "new event",
           }),
         }),

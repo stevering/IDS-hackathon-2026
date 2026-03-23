@@ -38,9 +38,9 @@ describe("getEventsSince — cursor-based event reading", () => {
   it("returns all events when sinceIndex is 0", () => {
     const state = createOrchestratorState(makeParams([makeAgent("a")]));
     state.eventLog.push(
-      { type: "orchestrator_thinking", content: "step 1" },
-      { type: "orchestrator_thinking", content: "step 2" },
-      { type: "orchestrator_thinking", content: "step 3" },
+      { type: "orchestrator_text", content: "step 1" },
+      { type: "orchestrator_text", content: "step 2" },
+      { type: "orchestrator_text", content: "step 3" },
     );
 
     const { events, cursor } = getEventsSince(state, 0);
@@ -52,8 +52,8 @@ describe("getEventsSince — cursor-based event reading", () => {
   it("does NOT clear the event log after reading", () => {
     const state = createOrchestratorState(makeParams([makeAgent("a")]));
     state.eventLog.push(
-      { type: "orchestrator_thinking", content: "event A" },
-      { type: "orchestrator_thinking", content: "event B" },
+      { type: "orchestrator_text", content: "event A" },
+      { type: "orchestrator_text", content: "event B" },
     );
 
     getEventsSince(state, 0);
@@ -64,8 +64,8 @@ describe("getEventsSince — cursor-based event reading", () => {
   it("returns only new events when sinceIndex matches previous cursor", () => {
     const state = createOrchestratorState(makeParams([makeAgent("a")]));
     state.eventLog.push(
-      { type: "orchestrator_thinking", content: "event 1" },
-      { type: "orchestrator_thinking", content: "event 2" },
+      { type: "orchestrator_text", content: "event 1" },
+      { type: "orchestrator_text", content: "event 2" },
     );
 
     // First read: get all events
@@ -75,20 +75,20 @@ describe("getEventsSince — cursor-based event reading", () => {
 
     // Add more events
     state.eventLog.push(
-      { type: "orchestrator_thinking", content: "event 3" },
+      { type: "orchestrator_text", content: "event 3" },
     );
 
     // Second read: only new events since cursor=2
     const second = getEventsSince(state, first.cursor);
     expect(second.events).toHaveLength(1);
-    expect(second.events[0]).toEqual({ type: "orchestrator_thinking", content: "event 3" });
+    expect(second.events[0]).toEqual({ type: "orchestrator_text", content: "event 3" });
     expect(second.cursor).toBe(3);
   });
 
   it("returns empty events when cursor is up to date", () => {
     const state = createOrchestratorState(makeParams([makeAgent("a")]));
     state.eventLog.push(
-      { type: "orchestrator_thinking", content: "event A" },
+      { type: "orchestrator_text", content: "event A" },
     );
 
     const { events, cursor } = getEventsSince(state, 1);
@@ -101,8 +101,8 @@ describe("getEventsSince — cursor-based event reading", () => {
 
     // Push initial events
     state.eventLog.push(
-      { type: "orchestrator_thinking", content: "event 1" },
-      { type: "orchestrator_thinking", content: "event 2" },
+      { type: "orchestrator_text", content: "event 1" },
+      { type: "orchestrator_text", content: "event 2" },
     );
 
     // Client A reads all events
@@ -115,18 +115,18 @@ describe("getEventsSince — cursor-based event reading", () => {
 
     // Push more events
     state.eventLog.push(
-      { type: "orchestrator_thinking", content: "event 3" },
+      { type: "orchestrator_text", content: "event 3" },
     );
 
     // Client A reads only new events
     const clientA2 = getEventsSince(state, clientA1.cursor);
     expect(clientA2.events).toHaveLength(1);
-    expect(clientA2.events[0]).toEqual({ type: "orchestrator_thinking", content: "event 3" });
+    expect(clientA2.events[0]).toEqual({ type: "orchestrator_text", content: "event 3" });
 
     // Client B reads only new events (same result)
     const clientB2 = getEventsSince(state, clientB1.cursor);
     expect(clientB2.events).toHaveLength(1);
-    expect(clientB2.events[0]).toEqual({ type: "orchestrator_thinking", content: "event 3" });
+    expect(clientB2.events[0]).toEqual({ type: "orchestrator_text", content: "event 3" });
   });
 
   it("late-connecting client (cursor=0) gets full history", () => {
@@ -134,7 +134,7 @@ describe("getEventsSince — cursor-based event reading", () => {
 
     // Simulate events over time
     state.eventLog.push(
-      { type: "orchestrator_thinking", content: "early event" },
+      { type: "orchestrator_text", content: "early event" },
       { type: "orchestrator_directive", agentShortId: "a", content: "do stuff" },
       { type: "agent_report", agentShortId: "a", report: { status: "completed", timestamp: "t" } },
     );
@@ -148,7 +148,7 @@ describe("getEventsSince — cursor-based event reading", () => {
   it("defaults sinceIndex to 0 when omitted", () => {
     const state = createOrchestratorState(makeParams([makeAgent("a")]));
     state.eventLog.push(
-      { type: "orchestrator_thinking", content: "test" },
+      { type: "orchestrator_text", content: "test" },
     );
 
     const { events, cursor } = getEventsSince(state);
@@ -158,12 +158,12 @@ describe("getEventsSince — cursor-based event reading", () => {
 
   it("returned events are independent copies (no shared reference)", () => {
     const state = createOrchestratorState(makeParams([makeAgent("a")]));
-    state.eventLog.push({ type: "orchestrator_thinking", content: "original" });
+    state.eventLog.push({ type: "orchestrator_text", content: "original" });
 
     const { events } = getEventsSince(state, 0);
 
     // Mutating the returned array should not affect state
-    events.push({ type: "orchestrator_thinking", content: "injected" });
+    events.push({ type: "orchestrator_text", content: "injected" });
     expect(state.eventLog).toHaveLength(1);
   });
 });
@@ -176,9 +176,9 @@ describe("drainEvents (deprecated)", () => {
   it("returns and clears event log", () => {
     const state = createOrchestratorState(makeParams([makeAgent("a")]));
     state.eventLog.push(
-      { type: "orchestrator_thinking", content: "step 1" },
-      { type: "orchestrator_thinking", content: "step 2" },
-      { type: "orchestrator_thinking", content: "step 3" },
+      { type: "orchestrator_text", content: "step 1" },
+      { type: "orchestrator_text", content: "step 2" },
+      { type: "orchestrator_text", content: "step 3" },
     );
 
     const drained = drainEvents(state);
@@ -190,8 +190,8 @@ describe("drainEvents (deprecated)", () => {
   it("subsequent drain after clear returns empty array", () => {
     const state = createOrchestratorState(makeParams([makeAgent("a")]));
     state.eventLog.push(
-      { type: "orchestrator_thinking", content: "event A" },
-      { type: "orchestrator_thinking", content: "event B" },
+      { type: "orchestrator_text", content: "event A" },
+      { type: "orchestrator_text", content: "event B" },
     );
 
     const first = drainEvents(state);
@@ -217,7 +217,7 @@ describe("Conversation isolation — createOrchestratorState", () => {
     const state1 = createOrchestratorState(makeParams(agents));
     const state2 = createOrchestratorState(makeParams(agents));
 
-    state1.eventLog.push({ type: "orchestrator_thinking", content: "only in state1" });
+    state1.eventLog.push({ type: "orchestrator_text", content: "only in state1" });
 
     expect(state1.eventLog).toHaveLength(1);
     expect(state2.eventLog).toHaveLength(0);

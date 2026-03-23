@@ -388,8 +388,8 @@ describe("getAgentViewStates", () => {
 describe("getEventsSince", () => {
   it("returns events from cursor without clearing", () => {
     const state = createOrchestratorState(makeParams([makeAgent("a")]));
-    state.eventLog.push({ type: "orchestrator_thinking", content: "test" });
-    state.eventLog.push({ type: "orchestrator_thinking", content: "test2" });
+    state.eventLog.push({ type: "orchestrator_text", content: "test" });
+    state.eventLog.push({ type: "orchestrator_text", content: "test2" });
 
     const { events, cursor } = getEventsSince(state, 0);
     expect(events).toHaveLength(2);
@@ -400,12 +400,12 @@ describe("getEventsSince", () => {
 
   it("returns only new events from a given cursor", () => {
     const state = createOrchestratorState(makeParams([makeAgent("a")]));
-    state.eventLog.push({ type: "orchestrator_thinking", content: "old" });
-    state.eventLog.push({ type: "orchestrator_thinking", content: "new" });
+    state.eventLog.push({ type: "orchestrator_text", content: "old" });
+    state.eventLog.push({ type: "orchestrator_text", content: "new" });
 
     const { events, cursor } = getEventsSince(state, 1);
     expect(events).toHaveLength(1);
-    expect(events[0]).toEqual({ type: "orchestrator_thinking", content: "new" });
+    expect(events[0]).toEqual({ type: "orchestrator_text", content: "new" });
     expect(cursor).toBe(2);
   });
 });
@@ -413,8 +413,8 @@ describe("getEventsSince", () => {
 describe("drainEvents (deprecated)", () => {
   it("returns and clears event log", () => {
     const state = createOrchestratorState(makeParams([makeAgent("a")]));
-    state.eventLog.push({ type: "orchestrator_thinking", content: "test" });
-    state.eventLog.push({ type: "orchestrator_thinking", content: "test2" });
+    state.eventLog.push({ type: "orchestrator_text", content: "test" });
+    state.eventLog.push({ type: "orchestrator_text", content: "test2" });
 
     const events = drainEvents(state);
     expect(events).toHaveLength(2);

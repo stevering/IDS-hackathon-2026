@@ -420,6 +420,7 @@ async function callLLMDirect(params: LLMCallParams): Promise<LLMCallResult> {
   return {
     content: result.text,
     reasoning,
+    reasoningSimulated: !hasNativeReasoning && !!reasoning,
     toolCalls: result.toolCalls?.map((tc: Record<string, unknown>) => {
       // AI SDK v6: StaticToolCall has .args, DynamicToolCall (MCP) has .input
       const args = (tc.args ?? tc.input ?? {}) as Record<string, unknown>;

@@ -140,6 +140,8 @@ export type LLMCallResult = {
   content: string;
   /** Model reasoning/thinking (if supported, e.g. kimi-k2.5) */
   reasoning?: string;
+  /** True when reasoning was extracted via <thinking> middleware, not native model reasoning */
+  reasoningSimulated?: boolean;
   toolCalls?: LLMToolCall[];
   /** Token usage */
   usage?: {

@@ -192,9 +192,9 @@ export function processPlanningResponse(
 
   effects.push({
     type: "emit_event",
-    event: { type: "orchestrator_thinking", content: llmResponse },
+    event: { type: "orchestrator_text", content: llmResponse },
   });
-  state.eventLog.push({ type: "orchestrator_thinking", content: llmResponse });
+  state.eventLog.push({ type: "orchestrator_text", content: llmResponse });
 
   for (const directive of directives) {
     const resolved = resolveAgent(state.agents, directive.agentShortId);
@@ -398,7 +398,8 @@ export function processOrchestratorLLMResponse(
   toolCalls?: LLMToolCall[],
   reasoning?: string,
   usage?: { promptTokens: number; completionTokens: number; totalTokens: number },
-  intercepted?: { action: string; reason: string; originalModel?: string }
+  intercepted?: { action: string; reason: string; originalModel?: string },
+  reasoningSimulated?: boolean
 ): OrchestratorEffect[] {
   state.messageHistory.push({ role: "assistant", content, toolCalls });
 
@@ -407,7 +408,7 @@ export function processOrchestratorLLMResponse(
 
   // Log reasoning (model internal thinking, e.g. kimi-k2.5)
   if (reasoning?.trim()) {
-    const event = { type: "orchestrator_thinking" as const, content: reasoning, usage: !usageAttached ? usage : undefined, intercepted };
+    const event = { type: "orchestrator_reasoning" as const, content: reasoning, simulated: reasoningSimulated || undefined, usage: !usageAttached ? usage : undefined, intercepted };
     if (usage) usageAttached = true;
     effects.push({ type: "emit_event", event });
     state.eventLog.push(event);
@@ -415,7 +416,7 @@ export function processOrchestratorLLMResponse(
 
   // Log text content (the model's visible response)
   if (content.trim()) {
-    const event = { type: "orchestrator_thinking" as const, content, usage: !usageAttached ? usage : undefined, intercepted: !usageAttached ? intercepted : undefined };
+    const event = { type: "orchestrator_text" as const, content, usage: !usageAttached ? usage : undefined, intercepted: !usageAttached ? intercepted : undefined };
     if (usage) usageAttached = true;
     effects.push({ type: "emit_event", event });
     state.eventLog.push(event);
@@ -868,9 +869,9 @@ export function processCoordinationResponse(
 
   effects.push({
     type: "emit_event",
-    event: { type: "orchestrator_thinking", content: llmResponse },
+    event: { type: "orchestrator_text", content: llmResponse },
   });
-  state.eventLog.push({ type: "orchestrator_thinking", content: llmResponse });
+  state.eventLog.push({ type: "orchestrator_text", content: llmResponse });
 
   return effects;
 }

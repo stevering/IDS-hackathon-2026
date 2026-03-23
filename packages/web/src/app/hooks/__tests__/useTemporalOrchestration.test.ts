@@ -143,7 +143,7 @@ describe("useTemporalOrchestration — reset clears state", () => {
       es.onmessage?.(
         new MessageEvent("message", {
           data: JSON.stringify({
-            type: "orchestrator_thinking",
+            type: "orchestrator_text",
             content: "planning...",
           }),
         }),
@@ -244,7 +244,7 @@ describe("useTemporalOrchestration — state isolation across resets", () => {
       es1.onmessage?.(
         new MessageEvent("message", {
           data: JSON.stringify({
-            type: "orchestrator_thinking",
+            type: "orchestrator_text",
             content: "first orchestration event",
           }),
         }),
@@ -293,7 +293,7 @@ describe("useTemporalOrchestration — state isolation across resets", () => {
       es2.onmessage?.(
         new MessageEvent("message", {
           data: JSON.stringify({
-            type: "orchestrator_thinking",
+            type: "orchestrator_text",
             content: "second orchestration event",
           }),
         }),
