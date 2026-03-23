@@ -522,6 +522,21 @@ export function processOrchestratorLLMResponse(
         if (resolved && resolved.agent.agent.workflowId) {
           const { key: shortId, agent: agentState } = resolved;
 
+          // Guard: do not send a new directive while the agent is still working on one
+          if (agentState.status === "active" &&
+              (!agentState.lastReport || agentState.lastReport.status !== "completed")) {
+            const errMsg = `Agent ${shortId} is still working on a directive (status: active). ` +
+              `Wait for the agent to report "completed" before sending a new directive.`;
+            state.messageHistory.push({
+              role: "tool",
+              content: `${errMsg}\n---\n${JSON.stringify({ success: false, error: errMsg })}`,
+              toolCallId: tc.id,
+            });
+            effects.push({ type: "emit_event", event: { type: "orchestrator_tool_result", toolName: tc.name, result: errMsg, isError: true } });
+            state.eventLog.push({ type: "orchestrator_tool_result", toolName: tc.name, result: errMsg, isError: true });
+            break;
+          }
+
           // Guard: do not send directives to agents whose workflow has terminated
           if (agentState.confirmedByAgent &&
               (agentState.status === "failed" || agentState.status === "completed" || agentState.status === "interrupted")) {

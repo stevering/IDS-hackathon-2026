@@ -536,19 +536,19 @@ export function processLLMResponse(
       });
     }
 
-    // Report in-progress and wait
+    // Don't report raw text as "progress" to orchestrator — it misleads.
+    // Instead, nudge the LLM to use a tool and retry. The idle counter (above) is the guard.
+    const genericNudge = "You responded with text but did not call any tool. " +
+      "You MUST call a tool to make progress. Call figma_plugin_execute or " +
+      "figmaconsole_figma_execute to run Figma code, or signal_task_complete if your task is done.";
+    state.messageHistory.push({ role: "user", content: genericNudge });
+    activities.push({ action: "guardian_message", recipient: `agent ${state.agent.shortId}`, message: genericNudge });
     if (activities.length > 0) {
       effects.push({ type: "emit_activity", activities });
     }
-    effects.push({
-      type: "report_to_orchestrator",
-      report: {
-        agentShortId: state.agent.shortId,
-        status: "in_progress",
-        summary: content,
-      },
-    });
-    effects.push({ type: "wait_for_input" });
+    if (!state.completed && state.stepCount < MAX_STEPS) {
+      effects.push({ type: "call_llm", messages: [...state.messageHistory], tools: getAgentTools(state) });
+    }
     return effects;
   }
 

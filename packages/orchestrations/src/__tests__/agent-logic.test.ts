@@ -248,19 +248,42 @@ describe("processQueues", () => {
 });
 
 describe("processLLMResponse", () => {
-  it("reports in-progress when no tool calls", () => {
+  it("nudges and retries LLM when no tool calls (does not report to orchestrator)", () => {
     const state = createAgentState(makeAgentId());
 
     const effects = processLLMResponse(state, "I'm working on it");
 
-    expect(state.messageHistory).toHaveLength(1);
     expect(state.stepCount).toBe(1);
 
+    // Should NOT report to orchestrator — no false "in_progress" signal
     const reports = effects.filter((e) => e.type === "report_to_orchestrator");
-    expect(reports).toHaveLength(1);
-    if (reports[0].type === "report_to_orchestrator") {
-      expect(reports[0].report.status).toBe("in_progress");
-    }
+    expect(reports).toHaveLength(0);
+
+    // Should nudge the LLM to use a tool
+    const nudgeMsg = state.messageHistory.find(
+      (m) => m.role === "user" && m.content.includes("MUST call a tool")
+    );
+    expect(nudgeMsg).toBeDefined();
+
+    // Should retry the LLM call
+    const llmCalls = effects.filter((e) => e.type === "call_llm");
+    expect(llmCalls).toHaveLength(1);
+  });
+
+  it("does not report text-only responses as progress to orchestrator", () => {
+    const state = createAgentState(makeAgentId());
+    state.lastDirectiveContent = "Create a color palette";
+
+    // Simulate 2 text-only responses
+    processLLMResponse(state, "Let me plan this...");
+    const effects2 = processLLMResponse(state, "Here is the code:\nconst f = figma.createFrame();");
+
+    // No report_to_orchestrator at any point
+    const reports = effects2.filter((e) => e.type === "report_to_orchestrator");
+    expect(reports).toHaveLength(0);
+
+    // Idle counter should have incremented
+    expect(state.consecutiveTextOnlyResponses).toBe(2);
   });
 
   it("handles signal_task_complete — enters standby (does NOT terminate)", () => {

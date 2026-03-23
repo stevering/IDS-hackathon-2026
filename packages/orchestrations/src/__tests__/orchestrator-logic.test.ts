@@ -610,6 +610,52 @@ describe("processOrchestratorLLMResponse", () => {
     expect(state.agents.get("#Figma-Desktop-abc")?.status).toBe("active");
   });
 
+  it("rejects directive to agent with active directive (not yet completed)", () => {
+    const state = createOrchestratorState(makeParams([makeAgent("a", "wf-a")]));
+    state.agents.get("a")!.status = "active";
+    // No lastReport or lastReport.status !== "completed" → agent is still working
+
+    const effects = processOrchestratorLLMResponse(state, "", [
+      {
+        id: "tc1",
+        name: "send_agent_directive",
+        arguments: { agentShortId: "a", content: "Do something else" },
+      },
+    ]);
+
+    // No directive sent — blocked by guard
+    const directives = effects.filter((e) => e.type === "send_directive");
+    expect(directives).toHaveLength(0);
+
+    // Error injected as tool result
+    const toolResult = state.messageHistory.find(
+      (m) => m.role === "tool" && m.toolCallId === "tc1"
+    );
+    expect(toolResult?.content).toContain("still working");
+  });
+
+  it("allows directive to agent that completed previous directive (standby)", () => {
+    const state = createOrchestratorState(makeParams([makeAgent("a", "wf-a")]));
+    state.agents.get("a")!.status = "active";
+    state.agents.get("a")!.lastReport = {
+      status: "completed",
+      summary: "Done with first task",
+      timestamp: new Date().toISOString(),
+    };
+
+    const effects = processOrchestratorLLMResponse(state, "", [
+      {
+        id: "tc1",
+        name: "send_agent_directive",
+        arguments: { agentShortId: "a", content: "Now do second task" },
+      },
+    ]);
+
+    // Directive should be sent — agent completed previous work
+    const directives = effects.filter((e) => e.type === "send_directive");
+    expect(directives).toHaveLength(1);
+  });
+
   it("resolves agent shortId without # when map keys have #", () => {
     const state = createOrchestratorState(
       makeParams([makeAgent("#Figma-Desktop-abc", "wf-abc")])
