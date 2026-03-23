@@ -457,6 +457,44 @@ export function processLLMResponse(
       return effects;
     }
 
+    // Detect "intent to call a tool" — the LLM wrote a tool call or code in text
+    // instead of using structured tool_use. Nudge it to retry properly.
+    const calledToolInText = /\[Called tool:\s*(\w+)\s*\(/.exec(content);
+    const codeBlockInText = /```(?:js|javascript)\s*\n([\s\S]*?)```/.test(content);
+
+    if (calledToolInText) {
+      // Pattern: [Called tool: figmaconsole_figma_execute({...})] written as text
+      const toolName = calledToolInText[1];
+      const nudge = `You wrote a tool call in your text response instead of using a structured tool call. ` +
+        `Do NOT write "[Called tool: ...]" in text — instead, invoke the tool "${toolName}" directly using the tool_use mechanism.`;
+      injectToolResult(state, `nudge-${state.stepCount}`, nudge);
+      activities.push({ action: "guardian_message", recipient: `agent ${state.agent.shortId}`, message: nudge });
+      if (activities.length > 0) {
+        effects.push({ type: "emit_activity", activities });
+      }
+      // Don't count as idle — the agent tried, just used the wrong mechanism
+      if (!state.completed && state.stepCount < MAX_STEPS) {
+        effects.push({ type: "call_llm", messages: [...state.messageHistory], tools: getAgentTools(state) });
+      }
+      return effects;
+    }
+
+    if (codeBlockInText && content.includes("figma.")) {
+      // Pattern: ```js\nconst frame = figma.createFrame()...\n``` — code intended for execution
+      const nudge = `You wrote Figma code in a text code block but did not call a tool to execute it. ` +
+        `If you intended to run this code, call figmaconsole_figma_execute (or figma_plugin_execute) with the code as argument.`;
+      injectToolResult(state, `nudge-${state.stepCount}`, nudge);
+      activities.push({ action: "guardian_message", recipient: `agent ${state.agent.shortId}`, message: nudge });
+      if (activities.length > 0) {
+        effects.push({ type: "emit_activity", activities });
+      }
+      // Don't count as idle
+      if (!state.completed && state.stepCount < MAX_STEPS) {
+        effects.push({ type: "call_llm", messages: [...state.messageHistory], tools: getAgentTools(state) });
+      }
+      return effects;
+    }
+
     // No tool calls detected — idle text loop detection
     // Only count idle texts AFTER the agent has received at least one directive.
     // Pre-directive idle (agent waiting for instructions) should not trigger auto-complete.
