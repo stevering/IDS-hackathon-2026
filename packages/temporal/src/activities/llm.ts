@@ -32,6 +32,41 @@ import type { LLMCallParams, LLMCallResult, LLMCallPurpose } from "@guardian/orc
 import { createLogger } from "../lib/log.js";
 
 // ---------------------------------------------------------------------------
+// Gateway model capabilities cache (public API, refreshed every 24h)
+// ---------------------------------------------------------------------------
+
+const GATEWAY_CATALOG_URL = "https://ai-gateway.vercel.sh/v1/models";
+const CAPABILITIES_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
+
+/** Set of model IDs that have native reasoning support. */
+let reasoningModels: Set<string> = new Set();
+let capabilitiesFetchedAt = 0;
+
+async function refreshCapabilitiesCache(): Promise<void> {
+  try {
+    const res = await fetch(GATEWAY_CATALOG_URL);
+    if (!res.ok) return;
+    const json = await res.json();
+    const models: Array<{ id: string; tags?: string[] }> = json?.data ?? [];
+    const newSet = new Set<string>();
+    for (const m of models) {
+      if (m.tags?.includes("reasoning")) newSet.add(m.id);
+    }
+    reasoningModels = newSet;
+    capabilitiesFetchedAt = Date.now();
+  } catch {
+    // Non-fatal: keep existing cache
+  }
+}
+
+async function modelSupportsReasoning(modelId: string): Promise<boolean> {
+  if (reasoningModels.size === 0 || Date.now() - capabilitiesFetchedAt > CAPABILITIES_TTL_MS) {
+    await refreshCapabilitiesCache();
+  }
+  return reasoningModels.has(modelId);
+}
+
+// ---------------------------------------------------------------------------
 // Interceptor types
 // ---------------------------------------------------------------------------
 
@@ -281,9 +316,19 @@ async function delegateToExternal(
 
 async function callLLMDirect(params: LLMCallParams): Promise<LLMCallResult> {
   const { resolveModelForActivity } = await import("./llm-resolver.js");
-  const { generateText, jsonSchema } = await import("ai");
+  const { generateText, jsonSchema, wrapLanguageModel, extractReasoningMiddleware } = await import("ai");
 
   const resolved = await resolveModelForActivity(params.userId, params.model);
+
+  // For models without native reasoning, wrap with extractReasoningMiddleware
+  // so <thinking> tags in text become reasoning parts (same approach as chat route).
+  const hasNativeReasoning = await modelSupportsReasoning(resolved.modelId);
+  const model = hasNativeReasoning
+    ? resolved.model
+    : wrapLanguageModel({
+        model: resolved.model as Parameters<typeof wrapLanguageModel>[0]["model"],
+        middleware: extractReasoningMiddleware({ tagName: "thinking" }),
+      });
 
   const toolSet = params.tools
     ? Object.fromEntries(
@@ -300,6 +345,19 @@ async function callLLMDirect(params: LLMCallParams): Promise<LLMCallResult> {
         ])
       )
     : undefined;
+
+  // For non-reasoning models, inject <thinking> instruction into the system prompt
+  // so the middleware can extract reasoning from the generated text.
+  if (!hasNativeReasoning) {
+    const systemIdx = params.messages.findIndex((m) => m.role === "system");
+    if (systemIdx !== -1) {
+      params.messages[systemIdx] = {
+        ...params.messages[systemIdx],
+        content: params.messages[systemIdx].content +
+          "\n\n## THINKING PROCESS\nWhile you work, emit your reasoning inside <thinking>...</thinking> blocks.\nKeep thinking blocks short (1-2 sentences).",
+      };
+    }
+  }
 
   // Convert our LLMMessage[] to AI SDK format.
   // Tool-call/tool-result messages are flattened to text so that
@@ -349,20 +407,15 @@ async function callLLMDirect(params: LLMCallParams): Promise<LLMCallResult> {
   });
 
   const result = await generateText({
-    model: resolved.model,
+    model,
     messages,
     maxOutputTokens: params.maxTokens ?? 4096,
     tools: toolSet,
   });
 
   // Extract reasoning if the model provides it (e.g. kimi-k2.5, grok reasoning)
-  const reasoningParts = result.reasoning;
-  const reasoning = reasoningParts?.length
-    ? reasoningParts
-        .filter((p: { type: string }) => p.type === "text")
-        .map((p: { type: string; text?: string }) => p.text ?? "")
-        .join("\n")
-    : undefined;
+  // AI SDK v6 (LMS v3): reasoning parts have type "reasoning" (not "text")
+  const reasoning = result.reasoningText ?? undefined;
 
   return {
     content: result.text,

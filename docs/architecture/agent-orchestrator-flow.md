@@ -95,3 +95,29 @@ Only these events generate `report_to_orchestrator`:
 | Plugin disconnected | `interrupted` | "Plugin disconnected" |
 
 Text-only responses do **not** generate reports. The agent retries silently.
+
+## LLM Reasoning Extraction
+
+Models that support native reasoning (e.g. kimi-k2.5, grok) return reasoning content alongside the main response. The Temporal worker (`llm.ts → callLLMDirect`) extracts it via `result.reasoningText` (AI SDK v6 / LMS v3).
+
+### How it works
+
+```
+Gateway model (e.g. moonshotai/kimi-k2.5)
+  → Moonshot API returns reasoning_content field
+  → Vercel AI Gateway transforms to LMS v3 { type: "reasoning", text: "..." } parts
+  → AI SDK generateText() exposes via result.reasoning / result.reasoningText
+  → callLLMDirect returns { reasoning: "..." } in LLMCallResult
+  → processLLMResponse emits { action: "reasoning" } activity (separate from "thinking")
+```
+
+### Key details
+
+- **Models with native reasoning** (Gateway tag `"reasoning"`): the Gateway transforms provider-specific reasoning (e.g. Moonshot's `reasoning_content`) into LMS v3 `{ type: "reasoning" }` parts. No middleware needed — `result.reasoningText` works directly.
+- **Models without native reasoning** (e.g. `openai/gpt-4o`, `google/gemini-2.0-flash`): `callLLMDirect` wraps the model with `extractReasoningMiddleware({ tagName: "thinking" })` and injects a `<thinking>` instruction into the system prompt. The middleware extracts `<thinking>...</thinking>` tags from text into reasoning parts.
+- `result.reasoning` parts have `type: "reasoning"` (not `type: "text"`) — this is the AI SDK v6 (LMS v3) format.
+- kimi-k2.5 has thinking enabled by default (no `providerOptions` needed).
+
+### Gateway capabilities cache
+
+The Temporal worker maintains an in-memory cache of the Vercel AI Gateway model catalog (`https://ai-gateway.vercel.sh/v1/models`), refreshed every 24h. The cache stores which model IDs have the `"reasoning"` tag, used to decide whether to apply the middleware fallback. Same pattern as `model-pricing.ts`.
