@@ -254,13 +254,14 @@ function renderEvent(event: OrchestrationSSEEvent, index: number, agents: AgentV
     case "orchestrator_text": case "orchestrator_reasoning": {
       const isReasoning = event.type === "orchestrator_reasoning";
       const simLabel = isReasoning && "simulated" in event && event.simulated ? " (simulated)" : "";
+      const modelLabel = event.modelId ? ` [${event.modelId}]` : "";
       return (
         <div key={index}>
           <EventBlock
             event={event}
             agents={agents}
             title="Orchestrator"
-            subject={event.usage ? `${isReasoning ? "reasoning" : "response"}${simLabel}  ${event.usage.totalTokens} tok` : `${isReasoning ? "reasoning" : "response"}${simLabel}`}
+            subject={event.usage ? `${isReasoning ? "reasoning" : "response"}${simLabel}${modelLabel}  ${event.usage.totalTokens} tok` : `${isReasoning ? "reasoning" : "response"}${simLabel}${modelLabel}`}
             preview={event.content}
             defaultOpen={true}
             colorClass="border-amber-500/20 bg-amber-500/5 text-amber-300"
@@ -268,9 +269,10 @@ function renderEvent(event: OrchestrationSSEEvent, index: number, agents: AgentV
             <div className="text-xs text-amber-200/70 leading-relaxed whitespace-pre-wrap">
               {event.content}
             </div>
-            {event.usage && (
+            {(event.usage || event.modelId) && (
               <div className="mt-1 text-[8px] font-mono text-amber-300/40 border-t border-amber-500/10 pt-1">
-                {event.usage.totalTokens} tokens ({event.usage.promptTokens} in + {event.usage.completionTokens} out)
+                {event.modelId && <span>{event.modelId}</span>}
+                {event.usage && <span>{event.modelId ? " · " : ""}{event.usage.totalTokens} tokens ({event.usage.promptTokens} in + {event.usage.completionTokens} out)</span>}
               </div>
             )}
           </EventBlock>
@@ -608,13 +610,13 @@ function AgentActivityItem({ activity, agentShortId }: { activity: AgentActivity
   switch (activity.action) {
     case "reasoning":
       return (
-        <ActivityRow pill={pill} label={`${agentShortId} reasoning${activity.simulated ? " (simulated)" : ""}`} detail={activity.content}
+        <ActivityRow pill={pill} label={`${agentShortId} reasoning${activity.simulated ? " (simulated)" : ""}${activity.modelId ? ` [${activity.modelId}]` : ""}`} detail={activity.content}
           usage={activity.usage}
           colorClass="bg-amber-500/5 border-amber-500/10 text-amber-400/60 hover:bg-amber-500/10" />
       );
     case "assistant_text":
       return (
-        <ActivityRow pill={pill} label={`${agentShortId} response`} detail={activity.content}
+        <ActivityRow pill={pill} label={`${agentShortId} response${activity.modelId ? ` [${activity.modelId}]` : ""}`} detail={activity.content}
           usage={activity.usage}
           colorClass="bg-cyan-500/5 border-cyan-500/10 text-cyan-400/60 hover:bg-cyan-500/10" />
       );

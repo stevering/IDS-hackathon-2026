@@ -142,6 +142,8 @@ export type LLMCallResult = {
   reasoning?: string;
   /** True when reasoning was extracted via <thinking> middleware, not native model reasoning */
   reasoningSimulated?: boolean;
+  /** Actual model ID resolved by the worker (e.g. "moonshotai/kimi-k2.5", "xai/grok-4-1-fast-non-reasoning") */
+  modelId?: string;
   toolCalls?: LLMToolCall[];
   /** Token usage */
   usage?: {

@@ -1062,7 +1062,8 @@ export async function agentWorkflow(input: AgentWorkflowInput): Promise<void> {
           llmResult.reasoning,
           llmResult.usage,
           llmResult.intercepted,
-          llmResult.reasoningSimulated
+          llmResult.reasoningSimulated,
+          llmResult.modelId
         );
 
         // Emit activities first so tool_call events arrive before their pipeline children
@@ -1133,7 +1134,7 @@ async function executeLLMLoop(
         devLLMDelegation: state.devLLMDelegation,
       },
     });
-    const effects = processLLMResponse(state, llmResult.content, llmResult.toolCalls, llmResult.reasoning, llmResult.usage, llmResult.intercepted, llmResult.reasoningSimulated);
+    const effects = processLLMResponse(state, llmResult.content, llmResult.toolCalls, llmResult.reasoning, llmResult.usage, llmResult.intercepted, llmResult.reasoningSimulated, llmResult.modelId);
 
     let needsContinue = false;
     let didExecuteTool = false;

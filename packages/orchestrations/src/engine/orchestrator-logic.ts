@@ -399,7 +399,8 @@ export function processOrchestratorLLMResponse(
   reasoning?: string,
   usage?: { promptTokens: number; completionTokens: number; totalTokens: number },
   intercepted?: { action: string; reason: string; originalModel?: string },
-  reasoningSimulated?: boolean
+  reasoningSimulated?: boolean,
+  modelId?: string
 ): OrchestratorEffect[] {
   state.messageHistory.push({ role: "assistant", content, toolCalls });
 
@@ -408,7 +409,7 @@ export function processOrchestratorLLMResponse(
 
   // Log reasoning (model internal thinking, e.g. kimi-k2.5)
   if (reasoning?.trim()) {
-    const event = { type: "orchestrator_reasoning" as const, content: reasoning, simulated: reasoningSimulated || undefined, usage: !usageAttached ? usage : undefined, intercepted };
+    const event = { type: "orchestrator_reasoning" as const, content: reasoning, modelId, simulated: reasoningSimulated || undefined, usage: !usageAttached ? usage : undefined, intercepted };
     if (usage) usageAttached = true;
     effects.push({ type: "emit_event", event });
     state.eventLog.push(event);
@@ -416,7 +417,7 @@ export function processOrchestratorLLMResponse(
 
   // Log text content (the model's visible response)
   if (content.trim()) {
-    const event = { type: "orchestrator_text" as const, content, usage: !usageAttached ? usage : undefined, intercepted: !usageAttached ? intercepted : undefined };
+    const event = { type: "orchestrator_text" as const, content, modelId, usage: !usageAttached ? usage : undefined, intercepted: !usageAttached ? intercepted : undefined };
     if (usage) usageAttached = true;
     effects.push({ type: "emit_event", event });
     state.eventLog.push(event);

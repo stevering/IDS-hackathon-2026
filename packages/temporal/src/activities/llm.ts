@@ -97,6 +97,7 @@ function interceptLLMCall(params: LLMCallParams): InterceptDecision {
       action: "synthetic",
       result: {
         content: "APPROVED",
+        modelId: model,
         intercepted: {
           action: "auto_approved",
           reason: `Interceptor: ${model} skipped for code_review (high false-positive rate)`,
@@ -111,6 +112,7 @@ function interceptLLMCall(params: LLMCallParams): InterceptDecision {
       action: "synthetic",
       result: {
         content: "VERIFIED: Execution result accepted (review skipped by interceptor)",
+        modelId: model,
         intercepted: {
           action: "auto_verified",
           reason: `Interceptor: ${model} skipped for file_review (high false-positive rate)`,
@@ -211,6 +213,7 @@ async function delegateToExternal(
       resolve({
         content: data.content ?? "",
         toolCalls: data.toolCalls as LLMCallResult["toolCalls"],
+        modelId: params.model,
         intercepted: {
           action: "delegated",
           reason: `Delegated to external responder (${params.purpose})`,
@@ -421,6 +424,7 @@ async function callLLMDirect(params: LLMCallParams): Promise<LLMCallResult> {
     content: result.text,
     reasoning,
     reasoningSimulated: !hasNativeReasoning && !!reasoning,
+    modelId: resolved.modelId,
     toolCalls: result.toolCalls?.map((tc: Record<string, unknown>) => {
       // AI SDK v6: StaticToolCall has .args, DynamicToolCall (MCP) has .input
       const args = (tc.args ?? tc.input ?? {}) as Record<string, unknown>;

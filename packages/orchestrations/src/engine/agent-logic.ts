@@ -401,7 +401,8 @@ export function processLLMResponse(
   reasoning?: string,
   usage?: { promptTokens: number; completionTokens: number; totalTokens: number },
   intercepted?: { action: string; reason: string; originalModel?: string },
-  reasoningSimulated?: boolean
+  reasoningSimulated?: boolean,
+  modelId?: string
 ): AgentEffect[] {
   state.messageHistory.push({
     role: "assistant",
@@ -418,13 +419,13 @@ export function processLLMResponse(
 
   // Emit reasoning activity (model internal thinking, e.g. kimi-k2.5)
   if (reasoning?.trim()) {
-    activities.push({ action: "reasoning", content: reasoning, simulated: reasoningSimulated || undefined, usage, intercepted });
+    activities.push({ action: "reasoning", content: reasoning, simulated: reasoningSimulated || undefined, modelId, usage, intercepted });
     usageAttached = !!usage;
   }
 
   // Emit assistant text activity if there's content
   if (content.trim()) {
-    activities.push({ action: "assistant_text", content, usage: !usageAttached ? usage : undefined, intercepted: !usageAttached ? intercepted : undefined });
+    activities.push({ action: "assistant_text", content, modelId, usage: !usageAttached ? usage : undefined, intercepted: !usageAttached ? intercepted : undefined });
     if (!usageAttached && usage) usageAttached = true;
   }
 

@@ -44,26 +44,15 @@ export async function resolveModelForActivity(
 
   const supabase = createClient(supabaseUrl, serviceKey);
 
-  // Look up user API key directly via tables + vault (service-role bypasses RLS).
-  // The get_api_key RPC uses auth.uid() which is NULL for service-role clients.
+  // Look up user API key via get_api_key_for_user RPC (SECURITY DEFINER).
+  // The original get_api_key uses auth.uid() which is NULL for service-role clients.
   async function getUserApiKey(provider: string): Promise<string | null> {
-    const { data: keyRow } = await supabase
-      .from("user_api_keys")
-      .select("vault_id")
-      .eq("user_id", userId!)
-      .eq("provider", provider)
-      .maybeSingle();
-
-    if (!keyRow?.vault_id) return null;
-
-    const { data: secret } = await supabase
-      .schema("vault")
-      .from("decrypted_secrets")
-      .select("decrypted_secret")
-      .eq("id", keyRow.vault_id)
-      .maybeSingle();
-
-    return secret?.decrypted_secret ?? null;
+    const { data, error } = await supabase.rpc("get_api_key_for_user", {
+      p_user_id: userId,
+      p_provider: provider,
+    });
+    if (error || !data) return null;
+    return data as string;
   }
 
   // Check gateway key first

@@ -252,3 +252,17 @@
 - **#17** — Canvas diff + file review shown as two blocks
 - **#18** — Agent report displayed twice
 - **#19** — Thinking text alongside tool call (solved by #14)
+- **#22** — Orchestration without explicit model uses free tier instead of user's BYOK default
+
+---
+
+## #22 — Orchestration without explicit model should use user's BYOK default
+
+**Context:** When `start_collab` is called without a `model` parameter (e.g. from MCP), the resolver falls back to the free tier (XAI `grok-4-1-fast-non-reasoning`) even if the user has a BYOK Gateway key configured in their account.
+**Bug:** `resolveModelForActivity` requires a `provider/model-id` format string to attempt BYOK lookup. When `model` is undefined or has no `/`, it skips BYOK entirely and goes straight to free tier. There is no mechanism to resolve the user's default BYOK key + a sensible default model.
+**Impact:** High — users with a paid Gateway key get the free tier model in orchestrations unless they explicitly pass `model` every time. The MCP `start_collab` tool makes model optional, so most MCP-initiated orchestrations use the wrong model.
+**First thought:** In `resolveModelForActivity`, when `requestedModel` is undefined/empty:
+1. Check if the user has a default BYOK key (gateway or direct provider) via `get_api_key_for_user`
+2. If gateway key exists → use it with a sensible default model (e.g. the user's last selected model from `user_settings`, or a hardcoded default like `google/gemini-2.5-flash`)
+3. If no BYOK key → free tier with usage limit enforcement
+This also requires storing the user's preferred default model in `user_settings` so the resolver can pick it up without the frontend passing it explicitly.

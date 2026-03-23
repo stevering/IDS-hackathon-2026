@@ -455,7 +455,8 @@ async function executeOrchestratorLLMLoop(
       llmResult.reasoning,
       llmResult.usage,
       llmResult.intercepted,
-      llmResult.reasoningSimulated
+      llmResult.reasoningSimulated,
+      llmResult.modelId
     );
 
     // Separate continuation call_llm from other effects

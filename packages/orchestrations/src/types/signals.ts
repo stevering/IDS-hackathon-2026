@@ -191,8 +191,8 @@ export type TokenUsage = { promptTokens: number; completionTokens: number; total
 export type InterceptedInfo = { action: string; reason: string; originalModel?: string };
 
 export type AgentActivity =
-  | { action: "reasoning"; content: string; simulated?: boolean; usage?: TokenUsage; intercepted?: InterceptedInfo }
-  | { action: "assistant_text"; content: string; usage?: TokenUsage; intercepted?: InterceptedInfo }
+  | { action: "reasoning"; content: string; simulated?: boolean; modelId?: string; usage?: TokenUsage; intercepted?: InterceptedInfo }
+  | { action: "assistant_text"; content: string; modelId?: string; usage?: TokenUsage; intercepted?: InterceptedInfo }
   | { action: "tool_call"; toolName: string; summary: string; usage?: TokenUsage }
   | { action: "code_review_rejected"; issues: string[]; feedback?: string }
   | { action: "code_review_passed"; codeSnippet: string }

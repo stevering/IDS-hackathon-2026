@@ -118,6 +118,15 @@ Gateway model (e.g. moonshotai/kimi-k2.5)
 - `result.reasoning` parts have `type: "reasoning"` (not `type: "text"`) — this is the AI SDK v6 (LMS v3) format.
 - kimi-k2.5 has thinking enabled by default (no `providerOptions` needed).
 
+### Model traceability
+
+Every LLM call returns `modelId` (the actual resolved model, e.g. `"moonshotai/kimi-k2.5"` or `"xai/grok-4-1-fast-non-reasoning"` for free tier). This flows through:
+- `LLMCallResult.modelId` → `processLLMResponse` / `processOrchestratorLLMResponse`
+- Agent activities: `reasoning.modelId`, `assistant_text.modelId`
+- Orchestrator events: `orchestrator_text.modelId`, `orchestrator_reasoning.modelId`
+- Persisted in `orchestration_events.payload` (JSONB) automatically
+- Displayed in the UI event log as `[model-id]` badge
+
 ### Gateway capabilities cache
 
 The Temporal worker maintains an in-memory cache of the Vercel AI Gateway model catalog (`https://ai-gateway.vercel.sh/v1/models`), refreshed every 24h. The cache stores which model IDs have the `"reasoning"` tag, used to decide whether to apply the middleware fallback. Same pattern as `model-pricing.ts`.
