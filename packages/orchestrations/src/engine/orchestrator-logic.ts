@@ -39,7 +39,7 @@ export type OrchestratorState = {
   orchestrationId: string;
   userId: string;
   task: string;
-  status: "active" | "completed" | "cancelled" | "timed_out";
+  status: "active" | "completed" | "completed_with_errors" | "failed" | "cancelled" | "timed_out";
   agents: Map<string, AgentState>;
   /** LLM conversation history for the orchestrator */
   messageHistory: LLMMessage[];
@@ -923,7 +923,18 @@ export function checkCompletion(state: OrchestratorState): OrchestratorEffect | 
   );
 
   if (allDone) {
-    state.status = "completed";
+    const agents = Array.from(state.agents.values());
+    const failedCount = agents.filter((a) => a.status === "failed").length;
+    const totalCount = agents.length;
+
+    if (failedCount === totalCount) {
+      state.status = "failed";
+    } else if (failedCount > 0) {
+      state.status = "completed_with_errors";
+    } else {
+      state.status = "completed";
+    }
+
     return {
       type: "complete",
       result: buildResult(state),
@@ -1097,7 +1108,7 @@ function buildResult(state: OrchestratorState): OrchestrationResult {
   }
 
   return {
-    status: state.status === "active" ? "completed" : state.status,
+    status: state.status === "active" ? "completed" : state.status as OrchestrationResult["status"],
     agentResults,
     durationMs: Date.now() - state.startedAt,
   };

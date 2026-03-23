@@ -14,7 +14,7 @@ type Props = {
   /** Timer remaining in ms (from SSE stream) */
   timerRemainingMs: number | null;
   /** Completion status (null while still running) */
-  completedStatus: "completed" | "cancelled" | "timed_out" | null;
+  completedStatus: "completed" | "completed_with_errors" | "failed" | "cancelled" | "timed_out" | null;
 };
 
 /**
@@ -54,24 +54,35 @@ export function OrchestrationBanner({
   const statusLabel = completedStatus
     ? completedStatus === "completed"
       ? "Orchestration completed"
-      : completedStatus === "cancelled"
-        ? "Orchestration cancelled"
-        : "Orchestration timed out"
+      : completedStatus === "completed_with_errors"
+        ? "Orchestration completed with errors"
+        : completedStatus === "failed"
+          ? "Orchestration failed"
+          : completedStatus === "cancelled"
+            ? "Orchestration cancelled"
+            : "Orchestration timed out"
     : "Orchestration in progress";
+
+  const isSuccess = completedStatus === "completed";
+  const isError = completedStatus === "failed" || completedStatus === "completed_with_errors";
 
   const statusColorClass = isRunning
     ? "text-amber-300/80"
-    : completedStatus === "completed"
+    : isSuccess
       ? "text-emerald-300/80"
-      : "text-amber-300/80";
+      : isError
+        ? "text-red-300/80"
+        : "text-amber-300/80";
 
   const bannerBg = isInOrchestrationConversation
     ? "bg-violet-500/5"
     : isRunning
       ? "bg-amber-500/5"
-      : completedStatus === "completed"
+      : isSuccess
         ? "bg-emerald-500/5"
-        : "bg-amber-500/5";
+        : isError
+          ? "bg-red-500/5"
+          : "bg-amber-500/5";
 
   // Status icon (spinner or checkmark)
   const StatusIcon = () =>

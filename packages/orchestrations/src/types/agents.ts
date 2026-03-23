@@ -63,7 +63,7 @@ export type StartOrchestrationParams = {
 };
 
 export type OrchestrationResult = {
-  status: "completed" | "cancelled" | "timed_out";
+  status: "completed" | "completed_with_errors" | "failed" | "cancelled" | "timed_out";
   agentResults: Record<string, {
     status: AgentReportStatus;
     summary?: string;

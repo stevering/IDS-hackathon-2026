@@ -59,10 +59,18 @@ export async function GET(
       .eq("workflow_id", workflowId)
       .order("created_at", { ascending: true });
 
+    // Extract the real completion status from persisted events, default to "completed"
+    let finalStatus: string = "completed";
     if (persistedEvents && persistedEvents.length > 0) {
       const replayable = persistedEvents.filter(
         (row) => (row.payload as { type?: string })?.type !== "orchestration_completed"
       );
+      const completionEvent = persistedEvents.find(
+        (row) => (row.payload as { type?: string })?.type === "orchestration_completed"
+      );
+      if (completionEvent) {
+        finalStatus = (completionEvent.payload as { status?: string })?.status ?? "completed";
+      }
       log.info(`replaying ${replayable.length} persisted events from DB (${persistedEvents.length} total)`);
       for (const row of replayable) {
         if (closed.value) break;
@@ -73,7 +81,7 @@ export async function GET(
 
     controller.enqueue(
       encoder.encode(
-        `data: ${JSON.stringify({ type: "orchestration_completed", status: "completed" })}\n\n`
+        `data: ${JSON.stringify({ type: "orchestration_completed", status: finalStatus })}\n\n`
       )
     );
   }

@@ -385,7 +385,7 @@ export async function orchestratorWorkflow(
   // ── Final save ──────────────────────────────────────────────────────────
   // Reached when: completion break, while exit (status !== active), or cancellation.
   const result: OrchestrationResult = {
-    status: state.status === "active" ? "cancelled" : state.status,
+    status: state.status === "active" ? "cancelled" : state.status as OrchestrationResult["status"],
     agentResults: Object.fromEntries(
       Array.from(state.agents.entries()).map(([id, a]) => [
         id,

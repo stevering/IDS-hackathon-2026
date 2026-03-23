@@ -29,7 +29,7 @@ export type OrchestrationStreamState = {
   /** Total orchestration duration */
   totalDurationMs: number;
   /** Orchestration completion status */
-  completedStatus: "completed" | "cancelled" | "timed_out" | null;
+  completedStatus: "completed" | "completed_with_errors" | "failed" | "cancelled" | "timed_out" | null;
   /** Connection error */
   error: string | null;
 };
@@ -114,7 +114,7 @@ export function useOrchestrationStream(workflowId: string | null) {
 
             case "orchestration_completed":
               if ("status" in data) {
-                const d = data as { status: "completed" | "cancelled" | "timed_out" };
+                const d = data as { status: OrchestrationStreamState["completedStatus"] };
                 next.completedStatus = d.status;
                 next.connected = false;
               }

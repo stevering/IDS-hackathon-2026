@@ -268,6 +268,51 @@ describe("checkCompletion", () => {
     expect(effect?.type).toBe("complete");
   });
 
+  it("sets status to 'failed' when single agent failed", () => {
+    const state = createOrchestratorState(makeParams([makeAgent("a")]));
+    state.agents.get("a")!.status = "failed";
+    state.agents.get("a")!.confirmedByAgent = true;
+
+    const effect = checkCompletion(state);
+    expect(effect?.type).toBe("complete");
+    expect(state.status).toBe("failed");
+    if (effect?.type === "complete") {
+      expect(effect.result.status).toBe("failed");
+    }
+  });
+
+  it("sets status to 'failed' when all agents failed", () => {
+    const state = createOrchestratorState(makeParams([makeAgent("a"), makeAgent("b")]));
+    state.agents.get("a")!.status = "failed";
+    state.agents.get("a")!.confirmedByAgent = true;
+    state.agents.get("b")!.status = "failed";
+    state.agents.get("b")!.confirmedByAgent = true;
+
+    const effect = checkCompletion(state);
+    expect(effect?.type).toBe("complete");
+    expect(state.status).toBe("failed");
+    if (effect?.type === "complete") {
+      expect(effect.result.status).toBe("failed");
+    }
+  });
+
+  it("sets status to 'completed_with_errors' when some agents failed and some completed", () => {
+    const state = createOrchestratorState(makeParams([makeAgent("a"), makeAgent("b"), makeAgent("c")]));
+    state.agents.get("a")!.status = "completed";
+    state.agents.get("a")!.confirmedByAgent = true;
+    state.agents.get("b")!.status = "failed";
+    state.agents.get("b")!.confirmedByAgent = true;
+    state.agents.get("c")!.status = "completed";
+    state.agents.get("c")!.confirmedByAgent = true;
+
+    const effect = checkCompletion(state);
+    expect(effect?.type).toBe("complete");
+    expect(state.status).toBe("completed_with_errors");
+    if (effect?.type === "complete") {
+      expect(effect.result.status).toBe("completed_with_errors");
+    }
+  });
+
   it("uses agentState.status=completed even when lastReport is missing", () => {
     const state = createOrchestratorState(makeParams([makeAgent("a"), makeAgent("b")]));
     // Agent A has a report

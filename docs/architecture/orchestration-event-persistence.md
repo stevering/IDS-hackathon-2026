@@ -14,7 +14,7 @@ These events form the narrative of a collaboration — who said what, what was d
 | `orchestrator_brief` | ~5 KB | The orchestrator's full plan/briefing sent before directives | `content` (markdown text with task description, agent list, instructions) |
 | `orchestrator_directive` | ~430 B | An instruction sent from orchestrator to a specific agent | `agentShortId`, `content` (the instruction text) |
 | `agent_report` | ~1.1 KB | An agent reporting progress or completion of a directive | `agentShortId`, `report` { status, summary, timestamp, changes[], nodeIds[] } |
-| `orchestration_completed` | ~58 B | Final event marking the end of the collab | `status` ("completed" / "cancelled" / "timed_out") |
+| `orchestration_completed` | ~58 B | Final event marking the end of the collab | `status` ("completed" / "completed_with_errors" / "failed" / "cancelled" / "timed_out") |
 
 Durable events are also written to the `messages` table for the orchestration conversation:
 - `orchestration_started` → role: `system`

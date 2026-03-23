@@ -502,13 +502,17 @@ function renderEvent(event: OrchestrationSSEEvent, index: number, agents: AgentV
             agents={agents}
             label={
               event.status === "completed" ? "Orchestration completed"
-                : event.status === "cancelled" ? "Orchestration cancelled"
-                  : "Orchestration timed out"
+                : event.status === "completed_with_errors" ? "Orchestration completed with errors"
+                  : event.status === "failed" ? "Orchestration failed"
+                    : event.status === "cancelled" ? "Orchestration cancelled"
+                      : "Orchestration timed out"
             }
             colorClass={
               event.status === "completed"
                 ? "bg-emerald-500/10 border-emerald-500/15 text-emerald-400/70"
-                : "bg-amber-500/10 border-amber-500/15 text-amber-400/70"
+                : event.status === "failed" || event.status === "completed_with_errors"
+                  ? "bg-red-500/10 border-red-500/15 text-red-400/70"
+                  : "bg-amber-500/10 border-amber-500/15 text-amber-400/70"
             }
           />
         </div>
