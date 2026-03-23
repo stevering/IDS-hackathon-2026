@@ -1000,8 +1000,8 @@ function processToolCall(
       // STANDBY mode: report to orchestrator but do NOT terminate the workflow.
       // The agent stays alive and can receive new directives.
       // Only the orchestrator can terminate via mark_agent_done → terminate signal.
-      // Use "in_progress" status so the orchestrator knows the agent is still alive
-      // and can receive more directives (status "completed" would trigger the dead-letter guard).
+      // Use "directive_done" status so the orchestrator guard allows sending a new directive.
+      // "completed" would set confirmedByAgent=true and block further directives.
       activities.push({ action: "tool_call", toolName: tc.name, summary: args.summary ?? "Directive completed." });
       const artifactsSuffix = args.artifacts?.nodeIds?.length
         ? ` [nodeIds: ${args.artifacts.nodeIds.join(", ")}]`
@@ -1010,8 +1010,8 @@ function processToolCall(
         type: "report_to_orchestrator",
         report: {
           agentShortId: state.agent.shortId,
-          status: "in_progress",
-          summary: `[DIRECTIVE DONE] ${args.summary ?? "Directive completed."}${artifactsSuffix} Waiting for next directive.`,
+          status: "directive_done",
+          summary: `${args.summary ?? "Directive completed."}${artifactsSuffix}`,
           artifacts: args.artifacts,
         },
       });

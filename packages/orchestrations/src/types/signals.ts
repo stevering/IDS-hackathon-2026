@@ -58,6 +58,7 @@ export type DirectivePayload = {
 
 export type AgentReportStatus =
   | "in_progress"
+  | "directive_done"
   | "completed"
   | "failed"
   | "needs_input"

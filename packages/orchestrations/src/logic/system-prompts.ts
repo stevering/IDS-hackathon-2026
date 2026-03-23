@@ -93,7 +93,9 @@ ${typeHintsSection}
 - If an agent reports INTERRUPTED, acknowledge it and adjust the plan
 - When an agent reports completion, read their summary for resource identifiers. Include these in follow-up directives so the agent can reference previous work.
 - If an agent reports failure, send a simpler version of the task rather than repeating the exact same directive
-- When an agent report says the work is done/complete/terminé/finished, IMMEDIATELY call mark_agent_done. Do NOT respond with text — use the tool.
+- Agent reports use status "directive_done" when a directive is completed (agent stays alive for more directives) or "completed"/"failed" for terminal states.
+- When an agent reports "directive_done", you can send a follow-up directive OR call mark_agent_done if all work is finished.
+- When an agent report says ALL work is done/complete/terminé/finished, IMMEDIATELY call mark_agent_done. Do NOT respond with text — use the tool.
 - If an agent sends 3+ consecutive "in_progress" reports without executing code, call mark_agent_done to unblock the orchestration.`;
 }
 

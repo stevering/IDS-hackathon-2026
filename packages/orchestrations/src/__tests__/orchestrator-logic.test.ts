@@ -613,7 +613,12 @@ describe("processOrchestratorLLMResponse", () => {
   it("rejects directive to agent with active directive (not yet completed)", () => {
     const state = createOrchestratorState(makeParams([makeAgent("a", "wf-a")]));
     state.agents.get("a")!.status = "active";
-    // No lastReport or lastReport.status !== "completed" → agent is still working
+    // Agent has an in_progress report → still working on a directive
+    state.agents.get("a")!.lastReport = {
+      status: "in_progress",
+      summary: "Working on it",
+      timestamp: new Date().toISOString(),
+    };
 
     const effects = processOrchestratorLLMResponse(state, "", [
       {
@@ -652,6 +657,44 @@ describe("processOrchestratorLLMResponse", () => {
     ]);
 
     // Directive should be sent — agent completed previous work
+    const directives = effects.filter((e) => e.type === "send_directive");
+    expect(directives).toHaveLength(1);
+  });
+
+  it("allows directive to agent in standby after directive_done report", () => {
+    const state = createOrchestratorState(makeParams([makeAgent("a", "wf-a")]));
+    state.agents.get("a")!.status = "active";
+    state.agents.get("a")!.lastReport = {
+      status: "directive_done",
+      summary: "Created root frame (ID: 123:456)",
+      timestamp: new Date().toISOString(),
+    };
+
+    const effects = processOrchestratorLLMResponse(state, "", [
+      {
+        id: "tc1",
+        name: "send_agent_directive",
+        arguments: { agentShortId: "a", content: "Add color palette to 123:456" },
+      },
+    ]);
+
+    const directives = effects.filter((e) => e.type === "send_directive");
+    expect(directives).toHaveLength(1);
+  });
+
+  it("allows first directive to agent with no lastReport", () => {
+    const state = createOrchestratorState(makeParams([makeAgent("a", "wf-a")]));
+    state.agents.get("a")!.status = "active";
+    // No lastReport — first directive after child workflow started
+
+    const effects = processOrchestratorLLMResponse(state, "", [
+      {
+        id: "tc1",
+        name: "send_agent_directive",
+        arguments: { agentShortId: "a", content: "Create root frame" },
+      },
+    ]);
+
     const directives = effects.filter((e) => e.type === "send_directive");
     expect(directives).toHaveLength(1);
   });

@@ -524,9 +524,13 @@ export function processOrchestratorLLMResponse(
         if (resolved && resolved.agent.agent.workflowId) {
           const { key: shortId, agent: agentState } = resolved;
 
-          // Guard: do not send a new directive while the agent is still working on one
-          if (agentState.status === "active" &&
-              (!agentState.lastReport || agentState.lastReport.status !== "completed")) {
+          // Guard: do not send a new directive while the agent is still working on one.
+          // Allow if: no lastReport yet (first directive) OR lastReport says directive is done (standby).
+          const hasActiveWork = agentState.status === "active" &&
+            agentState.lastReport != null &&
+            agentState.lastReport.status !== "completed" &&
+            agentState.lastReport.status !== "directive_done";
+          if (hasActiveWork) {
             const errMsg = `Agent ${shortId} is still working on a directive (status: active). ` +
               `Wait for the agent to report "completed" before sending a new directive.`;
             state.messageHistory.push({
@@ -555,6 +559,8 @@ export function processOrchestratorLLMResponse(
           }
 
           agentState.status = "active";
+          // Mark as working so the guard blocks duplicate directives in the same LLM response
+          agentState.lastReport = { status: "in_progress", summary: "Directive sent, waiting for agent.", timestamp: new Date().toISOString() };
           const payload: DirectivePayload = {
             directiveId: `dir-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
             content: args.content,
