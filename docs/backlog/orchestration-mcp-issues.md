@@ -253,6 +253,7 @@
 - **#18** — Agent report displayed twice
 - **#19** — Thinking text alongside tool call (solved by #14)
 - **#22** — Orchestration without explicit model uses free tier instead of user's BYOK default
+- **#23** — Multi-agent message source identification (XML metadata tags)
 
 ---
 
@@ -266,3 +267,77 @@
 2. If gateway key exists → use it with a sensible default model (e.g. the user's last selected model from `user_settings`, or a hardcoded default like `google/gemini-2.5-flash`)
 3. If no BYOK key → free tier with usage limit enforcement
 This also requires storing the user's preferred default model in `user_settings` so the resolver can pick it up without the frontend passing it explicitly.
+
+---
+
+## #23 — Multi-agent message source identification (XML metadata tags)
+
+**Context:** In orchestrations, all messages injected into LLM conversation histories use `role: "user"` regardless of the actual source (guardian engine, orchestrator, other agents, real user). The LLM cannot distinguish who sent what.
+**Bug:** Nudges, directives, agent reports, broadcasts, and user messages all look identical to the LLM. This causes confusion (e.g. agent replies to a guardian nudge as if it were a user message) and makes debugging harder.
+**Impact:** Medium — contributes to model confusion and text-based tool call fallbacks. Also affects UI readability.
+
+### Design
+
+**Two metadata formats** depending on the model:
+
+1. **XML tags** (default) — for models that handle XML well (kimi, Claude, Gemini, GPT):
+```xml
+<message from="guardian-engine" to="agent-#Figma-Desktop-pomipo" event="guardian_feedback">
+You must call a tool to make progress.
+</message>
+```
+
+```xml
+<message from="orchestrator" to="agent-#Figma-Desktop-pomipo" event="orchestrator_directive">
+Create the color palette in container 601:81
+</message>
+```
+
+```xml
+<message from="agent-#Figma-Desktop-pomipo" to="orchestrator" event="agent_report">
+Task done, node 601:81
+</message>
+```
+
+2. **Bracket prefix** (fallback) — for models that struggle with XML tags:
+```
+[from: guardian-engine | to: agent-#Figma-Desktop-pomipo | event: guardian_feedback]
+You must call a tool to make progress.
+```
+
+### Notes on format
+- **`event`** (not `type`) to avoid confusion with XML/HTML `type` attributes
+- Event names reuse the existing orchestration event vocabulary (same names as SSE events)
+- The LLM sees the event name and understands the context (a `guardian_feedback` is system feedback, an `orchestrator_directive` is a task assignment)
+
+### Model config table
+
+New Supabase table `guardian_model_config`:
+| Column | Type | Description |
+|---|---|---|
+| `model_id` | text PK | e.g. `"moonshotai/kimi-k2.5"` |
+| `message_metadata_format` | text | `"xml-message"` (default) or `"prefix"` |
+| `notes` | text | Why this model needs a specific format |
+
+Fallback: if model not in table → `"xml-message"`.
+
+### Event names (reuse existing vocabulary)
+
+| `event` value | Source → Target | When |
+|---|---|---|
+| `orchestrator_directive` | orchestrator → agent | `send_agent_directive` |
+| `agent_report` | agent → orchestrator | `report_to_orchestrator` |
+| `guardian_feedback` | guardian-engine → agent/orchestrator | Text-only response nudges, tool result injections |
+| `orchestrator_broadcast` | orchestrator → all | Text broadcast to active agents |
+| `user_input` | user → orchestrator | Human message via signal |
+| `peer_message` | agent → agent | Direct peer communication |
+| `orchestrator_brief` | guardian-engine → orchestrator | Initial task briefing |
+
+### Scope of changes
+
+- **Utility function** `wrapMessage(content, from, to, event, modelId)` → returns wrapped string based on model config
+- **All message injections** in `agent-logic.ts`, `orchestrator-logic.ts`, and workflow files
+- **System prompts** — explain the metadata format so the LLM knows what the tags mean
+- **UI** — display metadata as-is initially (don't hide), later parse for structured rendering
+- **DB** — metadata stored in `orchestration_events.payload` (already JSONB, no schema change)
+- **Gateway capabilities cache** — extend to also cache model config from `guardian_model_config`
