@@ -259,6 +259,13 @@ function resolveAgent(
   const withHash = agents.get(`#${stripped}`);
   if (withHash) return { key: `#${stripped}`, agent: withHash };
 
+  // Fuzzy match: LLMs often send just the unique suffix (e.g. "pomipo" for "#Figma-Desktop-pomipo")
+  for (const [key, agent] of agents) {
+    if (key.endsWith(`-${stripped}`) || key.endsWith(`-${rawShortId}`)) {
+      return { key, agent };
+    }
+  }
+
   return null;
 }
 
@@ -423,9 +430,24 @@ export function processOrchestratorLLMResponse(
     state.eventLog.push(event);
   }
 
-  // ── Text-only response (no tool calls) — legacy fallback ──────────────
+  // ── Text-only response (no tool calls) ──────────────────────────────
   if (!toolCalls || toolCalls.length === 0) {
-    // Try to parse [DIRECTIVE] blocks (backward compat with models that use text)
+    // Detect LLMs that write tool calls as text instead of structured tool_use.
+    // Same nudge as agent-logic.ts — shared guardian rule for orchestration mode.
+    const calledToolInText = /\[Called tool:\s*(\w+)\s*\(/.exec(content);
+    if (calledToolInText) {
+      const toolName = calledToolInText[1];
+      const nudge = `You wrote a tool call in your text response instead of using a structured tool call. ` +
+        `Do NOT write "[Called tool: ...]" in text — instead, invoke the tool "${toolName}" directly using the tool_use mechanism.`;
+      state.messageHistory.push({ role: "user", content: nudge });
+      effects.push({ type: "emit_event", event: { type: "orchestrator_text" as const, content: nudge, modelId } });
+      state.eventLog.push({ type: "orchestrator_text", content: nudge, modelId });
+      // Retry LLM — don't broadcast the broken text to agents
+      effects.push({ type: "call_llm", messages: [...state.messageHistory], tools: getOrchestratorTools(state) });
+      return effects;
+    }
+
+    // Legacy fallback: parse [DIRECTIVE] blocks (backward compat with models that use text)
     const directives = parseDirectives(content);
     for (const directive of directives) {
       const resolved = resolveAgent(state.agents, directive.agentShortId);

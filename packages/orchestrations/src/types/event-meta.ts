@@ -54,7 +54,7 @@ export function getEventMeta(event: OrchestrationSSEEvent): EventMeta {
       return { category: "message", direction: "guardian → orchestrator", subject: "task briefing", visibleInNormalMode: false };
 
     case "orchestrator_text":
-      return { category: "thinking", direction: "internal", subject: "orchestrator response", visibleInNormalMode: true };
+      return { category: "message", direction: "internal", subject: "orchestrator response", visibleInNormalMode: true };
 
     case "orchestrator_reasoning":
       return { category: "thinking", direction: "internal", subject: "orchestrator reasoning", visibleInNormalMode: false };
@@ -125,7 +125,7 @@ export function getActivityMeta(activity: AgentActivity): EventMeta {
       return { category: "thinking", direction: "internal", subject: "agent reasoning", visibleInNormalMode: false };
 
     case "assistant_text":
-      return { category: "thinking", direction: "internal", subject: "agent response", visibleInNormalMode: false };
+      return { category: "message", direction: "internal", subject: "agent response", visibleInNormalMode: false };
 
     case "tool_call":
       return { category: "llm-tool-call", direction: "agent → guardian", subject: "tool invocation", visibleInNormalMode: false };

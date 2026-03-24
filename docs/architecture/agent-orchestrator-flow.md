@@ -37,6 +37,26 @@ LLM responds with text, no toolCalls
 
 **Standby exception:** When the agent is in standby (`inStandby = true`, after `signal_task_complete`), text-only responses skip the nudge entirely and return `wait_for_input`. This prevents a cycle where broadcasts from the orchestrator wake the agent, it writes "awaiting directive" text, the nudge pushes it to retry, and it loops until FAILED — while the real directive sits in the queue.
 
+## Shared Guardian Rules (agent + orchestrator)
+
+Both agents and the orchestrator apply the same text-based tool call detection in orchestration mode:
+
+### `[Called tool:]` nudge
+When the LLM writes `[Called tool: toolName(...)]` in text instead of a structured tool call, Guardian nudges it to retry with proper `tool_use`. This prevents broken tool calls from being broadcast to agents (orchestrator) or silently ignored (agent).
+
+The nudge:
+- Does NOT count toward the idle text counter (the LLM tried, just used the wrong mechanism)
+- Retries the LLM call immediately
+- Prevents the text from being broadcast/forwarded
+
+### Event categories
+| Event type | Category | Meaning |
+|---|---|---|
+| `orchestrator_reasoning` | `thinking` | Internal reasoning (amber badge, dev-only) |
+| `orchestrator_text` | `message` | Public text response (blue badge) |
+| `reasoning` (agent) | `thinking` | Internal reasoning (amber badge, dev-only) |
+| `assistant_text` (agent) | `message` | Public text response (blue badge) |
+
 ## Orchestrator Directive Guard
 
 The orchestrator uses `send_agent_directive` tool calls to assign work to agents. A guard prevents sending a new directive to an agent that hasn't completed its current one.
