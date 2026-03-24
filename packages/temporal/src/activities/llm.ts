@@ -67,6 +67,47 @@ async function modelSupportsReasoning(modelId: string): Promise<boolean> {
 }
 
 // ---------------------------------------------------------------------------
+// Model config cache (per-model metadata format from guardian_model_config)
+// ---------------------------------------------------------------------------
+
+type MetadataFormat = "xml" | "bracket";
+
+let modelConfigCache: Map<string, MetadataFormat> = new Map();
+let modelConfigFetchedAt = 0;
+const MODEL_CONFIG_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
+
+async function refreshModelConfigCache(): Promise<void> {
+  try {
+    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL ?? process.env.STORAGE_SUPABASE_URL;
+    const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.STORAGE_SUPABASE_SERVICE_ROLE_KEY;
+    if (!supabaseUrl || !serviceKey) return;
+
+    const { createClient } = await import("@supabase/supabase-js");
+    const sb = createClient(supabaseUrl, serviceKey);
+    const { data } = await sb.from("guardian_model_config").select("model_id, metadata_format");
+    if (data) {
+      const newMap = new Map<string, MetadataFormat>();
+      for (const row of data) {
+        if (row.metadata_format === "xml" || row.metadata_format === "bracket") {
+          newMap.set(row.model_id, row.metadata_format);
+        }
+      }
+      modelConfigCache = newMap;
+    }
+    modelConfigFetchedAt = Date.now();
+  } catch {
+    // Non-fatal: keep existing cache, default to "xml"
+  }
+}
+
+async function getMetadataFormat(modelId: string): Promise<MetadataFormat> {
+  if (Date.now() - modelConfigFetchedAt > MODEL_CONFIG_TTL_MS) {
+    await refreshModelConfigCache();
+  }
+  return modelConfigCache.get(modelId) ?? "xml";
+}
+
+// ---------------------------------------------------------------------------
 // Interceptor types
 // ---------------------------------------------------------------------------
 
@@ -420,11 +461,14 @@ async function callLLMDirect(params: LLMCallParams): Promise<LLMCallResult> {
   // AI SDK v6 (LMS v3): reasoning parts have type "reasoning" (not "text")
   const reasoning = result.reasoningText ?? undefined;
 
+  const metadataFormat = await getMetadataFormat(resolved.modelId);
+
   return {
     content: result.text,
     reasoning,
     reasoningSimulated: !hasNativeReasoning && !!reasoning,
     modelId: resolved.modelId,
+    metadataFormat,
     toolCalls: result.toolCalls?.map((tc: Record<string, unknown>) => {
       // AI SDK v6: StaticToolCall has .args, DynamicToolCall (MCP) has .input
       const args = (tc.args ?? tc.input ?? {}) as Record<string, unknown>;

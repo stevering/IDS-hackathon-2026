@@ -253,7 +253,7 @@
 - **#18** — Agent report displayed twice
 - **#19** — Thinking text alongside tool call (solved by #14)
 - **#22** — Orchestration without explicit model uses free tier instead of user's BYOK default
-- **#23** — Multi-agent message source identification (XML metadata tags)
+- **#23** — Multi-agent message source identification (XML metadata tags) *(implemented)*
 
 ---
 

@@ -22,6 +22,7 @@ import type { AgentState, StartOrchestrationParams, LLMMessage, OrchestrationRes
 import { parseDirectives, parseAgentDoneMarkers } from "../logic/directive-parser.js";
 import { buildOrchestratorSystemPrompt } from "../logic/system-prompts.js";
 import type { LLMToolDefinition, LLMToolCall } from "../types/agents.js";
+import { wrapMessage, agentSource, type MetadataFormat } from "../logic/message-metadata.js";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -61,6 +62,10 @@ export type OrchestratorState = {
   maxDurationMs: number;
   /** Context data */
   context?: Record<string, unknown>;
+  /** Resolved model ID (set from params.model) */
+  model?: string;
+  /** Message metadata format — "xml" (default) or "bracket" (per-model config) */
+  metadataFormat?: MetadataFormat;
 };
 
 // ---------------------------------------------------------------------------
@@ -104,6 +109,7 @@ export function createOrchestratorState(params: StartOrchestrationParams): Orche
     eventLog: [],
     startedAt: Date.now(),
     maxDurationMs: params.maxDurationMs ?? DEFAULT_MAX_DURATION_MS,
+    model: params.model,
     context: params.context,
   };
 }
@@ -349,7 +355,7 @@ export function generateBriefAndFirstCall(state: OrchestratorState): Orchestrato
   // 1. System prompt
   state.messageHistory.push({
     role: "system",
-    content: buildOrchestratorSystemPrompt(state.task, agents),
+    content: buildOrchestratorSystemPrompt(state.task, agents, state.metadataFormat),
   });
 
   // 2. Synthetic user brief
@@ -369,7 +375,7 @@ export function generateBriefAndFirstCall(state: OrchestratorState): Orchestrato
 
   state.messageHistory.push({
     role: "user",
-    content: briefContent,
+    content: wrapMessage(briefContent, "guardian-engine", "orchestrator", "orchestrator_brief", state.metadataFormat),
   });
 
   // 3. Emit brief event so the UI shows the system kickoff
@@ -439,7 +445,8 @@ export function processOrchestratorLLMResponse(
       const toolName = calledToolInText[1];
       const nudge = `You wrote a tool call in your text response instead of using a structured tool call. ` +
         `Do NOT write "[Called tool: ...]" in text — instead, invoke the tool "${toolName}" directly using the tool_use mechanism.`;
-      state.messageHistory.push({ role: "user", content: nudge });
+      const wrappedNudge = wrapMessage(nudge, "guardian-engine", "orchestrator", "guardian_feedback", state.metadataFormat);
+      state.messageHistory.push({ role: "user", content: wrappedNudge });
       effects.push({ type: "emit_event", event: { type: "orchestrator_text" as const, content: nudge, modelId } });
       state.eventLog.push({ type: "orchestrator_text", content: nudge, modelId });
       // Retry LLM — don't broadcast the broken text to agents
@@ -748,11 +755,11 @@ export function processOrchestratorLLMResponse(
     (a) => a.status === "active" || a.status === "completed" || a.status === "failed" || a.status === "interrupted"
   );
   if (allAssigned) {
+    const allAssignedMsg = "All agents have received their directives and are now working. " +
+      "Do NOT send more directives — wait for agent reports before taking any action.";
     state.messageHistory.push({
       role: "user",
-      content:
-        "All agents have received their directives and are now working. " +
-        "Do NOT send more directives — wait for agent reports before taking any action.",
+      content: wrapMessage(allAssignedMsg, "guardian-engine", "orchestrator", "guardian_feedback", state.metadataFormat),
     });
   }
 
@@ -796,7 +803,8 @@ export function processReports(state: OrchestratorState): OrchestratorEffect[] {
     }
 
     // Inject report into LLM history
-    const reportMsg = `[Agent report from #${report.agentShortId} — ${report.status}]${report.summary ? `\n${report.summary}` : ""}`;
+    const reportBody = `[status: ${report.status}]${report.summary ? `\n${report.summary}` : ""}`;
+    const reportMsg = wrapMessage(reportBody, agentSource(report.agentShortId), "orchestrator", "agent_report", state.metadataFormat);
     state.messageHistory.push({ role: "user", content: reportMsg });
 
     // Emit orchestrator_input so the UI shows what Guardian sent to the orchestrator LLM
@@ -927,12 +935,10 @@ export function processUserInput(state: OrchestratorState): OrchestratorEffect[]
     });
 
     // Inject into orchestrator LLM
-    const prefix = input.targetAgentId
-      ? `[User input for #${input.targetAgentId}]`
-      : "[User input]";
+    const target = input.targetAgentId ? agentSource(input.targetAgentId) : "orchestrator";
     state.messageHistory.push({
       role: "user",
-      content: `${prefix} ${input.content}`,
+      content: wrapMessage(input.content, "user", target as "orchestrator", "user_input", state.metadataFormat),
     });
   }
 

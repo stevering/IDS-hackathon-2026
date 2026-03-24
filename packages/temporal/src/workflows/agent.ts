@@ -941,6 +941,7 @@ export async function agentWorkflow(input: AgentWorkflowInput): Promise<void> {
   const userSettings = (input.context as Record<string, unknown>)?.userSettings as Record<string, unknown> | undefined;
   state.devLLMDelegation = !!(userSettings?.devLLMDelegation);
   state.devSlowDelegation = !!(userSettings?.devSlowDelegation);
+  state.model = input.model;
 
   // Choose activity proxy based on slow delegation mode
   const { callLLM } = state.devSlowDelegation ? slowLLM : normalLLM;
@@ -1014,7 +1015,8 @@ export async function agentWorkflow(input: AgentWorkflowInput): Promise<void> {
     "orchestrator",
     peerAgents,
     input.task,
-    { hasExternalFigmaTools }
+    { hasExternalFigmaTools },
+    state.metadataFormat
   );
   state.messageHistory.push({
     role: "system",
@@ -1055,6 +1057,10 @@ export async function agentWorkflow(input: AgentWorkflowInput): Promise<void> {
             devLLMDelegation: state.devLLMDelegation,
           },
         });
+        // Update metadata format from LLM result (resolved per model config)
+        if (llmResult.metadataFormat) state.metadataFormat = llmResult.metadataFormat;
+        if (llmResult.modelId) state.model = llmResult.modelId;
+
         const responseEffects = processLLMResponse(
           state,
           llmResult.content,
@@ -1134,6 +1140,8 @@ async function executeLLMLoop(
         devLLMDelegation: state.devLLMDelegation,
       },
     });
+    if (llmResult.metadataFormat) state.metadataFormat = llmResult.metadataFormat;
+    if (llmResult.modelId) state.model = llmResult.modelId;
     const effects = processLLMResponse(state, llmResult.content, llmResult.toolCalls, llmResult.reasoning, llmResult.usage, llmResult.intercepted, llmResult.reasoningSimulated, llmResult.modelId);
 
     let needsContinue = false;

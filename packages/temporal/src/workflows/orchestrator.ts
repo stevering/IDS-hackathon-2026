@@ -448,6 +448,10 @@ async function executeOrchestratorLLMLoop(
       },
     });
 
+    // Update metadata format from LLM result (resolved per model config)
+    if (llmResult.metadataFormat) state.metadataFormat = llmResult.metadataFormat;
+    if (llmResult.modelId) state.model = llmResult.modelId;
+
     const effects = processOrchestratorLLMResponse(
       state,
       llmResult.content,

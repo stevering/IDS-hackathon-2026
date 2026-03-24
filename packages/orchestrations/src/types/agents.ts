@@ -144,6 +144,8 @@ export type LLMCallResult = {
   reasoningSimulated?: boolean;
   /** Actual model ID resolved by the worker (e.g. "moonshotai/kimi-k2.5", "xai/grok-4-1-fast-non-reasoning") */
   modelId?: string;
+  /** Message metadata format resolved from guardian_model_config (default: "xml") */
+  metadataFormat?: "xml" | "bracket";
   toolCalls?: LLMToolCall[];
   /** Token usage */
   usage?: {

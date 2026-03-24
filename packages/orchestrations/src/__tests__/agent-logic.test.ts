@@ -195,7 +195,8 @@ describe("processQueues", () => {
     expect(effects.some((e) => e.type === "call_llm")).toBe(true);
     expect(state.directiveQueue).toHaveLength(0);
     expect(state.messageHistory).toHaveLength(1);
-    expect(state.messageHistory[0].content).toContain("[Orchestrator task] Do stuff");
+    expect(state.messageHistory[0].content).toContain("Do stuff");
+    expect(state.messageHistory[0].content).toContain('event="orchestrator_directive"');
   });
 
   it("produces wait_for_input when queues are empty", () => {
@@ -221,7 +222,9 @@ describe("processQueues", () => {
     handlePeerMessage(state, { fromAgentId: "figma-2", content: "Hey" });
 
     processQueues(state);
-    expect(state.messageHistory[0].content).toBe("[Message from #figma-2] Hey");
+    expect(state.messageHistory[0].content).toContain("Hey");
+    expect(state.messageHistory[0].content).toContain('event="peer_message"');
+    expect(state.messageHistory[0].content).toContain('from="agent-#figma-2"');
   });
 
   it("injects broadcast messages with prefix", () => {
@@ -229,7 +232,9 @@ describe("processQueues", () => {
     handleBroadcast(state, { fromAgentId: "figma-2", content: "All" });
 
     processQueues(state);
-    expect(state.messageHistory[0].content).toBe("[Broadcast from #figma-2] All");
+    expect(state.messageHistory[0].content).toContain("All");
+    expect(state.messageHistory[0].content).toContain('event="orchestrator_broadcast"');
+    expect(state.messageHistory[0].content).toContain('to="all"');
   });
 
   it("injects sub-conv messages with prefix", () => {
@@ -241,9 +246,9 @@ describe("processQueues", () => {
     });
 
     processQueues(state);
-    expect(state.messageHistory[0].content).toBe(
-      "[Sub-conversation with #figma-2] Thread msg"
-    );
+    expect(state.messageHistory[0].content).toContain("Thread msg");
+    expect(state.messageHistory[0].content).toContain('event="peer_message"');
+    expect(state.messageHistory[0].content).toContain('from="agent-#figma-2"');
   });
 });
 

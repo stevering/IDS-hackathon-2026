@@ -31,7 +31,8 @@ const FIGMA_PLUGIN_ORCHESTRATOR_HINTS = `
 
 export function buildOrchestratorSystemPrompt(
   task: string,
-  agents: AgentId[]
+  agents: AgentId[],
+  metadataFormat: "xml" | "bracket" = "xml"
 ): string {
   const agentList = agents
     .map((a) => `- ${a.shortId} (${a.label}${a.fileName ? `, file: ${a.fileName}` : ""}, type: ${a.type})`)
@@ -96,7 +97,19 @@ ${typeHintsSection}
 - Agent reports use status "directive_done" when a directive is completed (agent stays alive for more directives) or "completed"/"failed" for terminal states.
 - When an agent reports "directive_done", you can send a follow-up directive OR call mark_agent_done if all work is finished.
 - When an agent report says ALL work is done/complete/terminé/finished, IMMEDIATELY call mark_agent_done. Do NOT respond with text — use the tool.
-- If an agent sends 3+ consecutive "in_progress" reports without executing code, call mark_agent_done to unblock the orchestration.`;
+- If an agent sends 3+ consecutive "in_progress" reports without executing code, call mark_agent_done to unblock the orchestration.
+
+## Message metadata
+${metadataFormat === "xml" ? `Messages in this conversation carry XML metadata tags that identify their source and purpose:
+- \`<message from="guardian-engine" event="orchestrator_brief">\` — system messages from the orchestration engine
+- \`<message from="agent-#..." event="agent_report">\` — reports and messages from agents
+- \`<message from="user" event="user_input">\` — input from the human user
+Use the "from" and "event" attributes to understand who is speaking and why. Do NOT reproduce these tags in your responses.`
+: `Messages in this conversation carry metadata prefixes that identify their source and purpose:
+- \`[from: guardian-engine | to: orchestrator | event: orchestrator_brief]\` — system messages from the orchestration engine
+- \`[from: agent-#... | to: orchestrator | event: agent_report]\` — reports and messages from agents
+- \`[from: user | to: orchestrator | event: user_input]\` — input from the human user
+Use the "from" and "event" fields to understand who is speaking and why. Do NOT reproduce these prefixes in your responses.`}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -108,7 +121,8 @@ export function buildAgentSystemPrompt(
   orchestratorShortId: string,
   peerAgents: AgentId[],
   task?: string,
-  options?: { hasExternalFigmaTools?: boolean }
+  options?: { hasExternalFigmaTools?: boolean },
+  metadataFormat: "xml" | "bracket" = "xml"
 ): string {
   const peerList = peerAgents
     .filter((a) => a.shortId !== agent.shortId)
@@ -291,5 +305,17 @@ ${figmaSection}
 - When your task is complete, you MUST call signal_task_complete with a summary
 - Keep your responses concise and action-oriented
 - If you need help from another agent, use send_peer_message or start_sub_conversation
-- Execute each task ONCE — do not repeat an action that already succeeded`;
+- Execute each task ONCE — do not repeat an action that already succeeded
+
+## Message metadata
+${metadataFormat === "xml" ? `Messages in this conversation carry XML metadata tags identifying their source:
+- \`<message from="orchestrator" event="orchestrator_directive">\` — your task assignment from the orchestrator
+- \`<message from="guardian-engine" event="guardian_feedback">\` — system warnings and feedback
+- \`<message from="agent-#..." event="peer_message">\` — messages from peer agents
+Read the "event" attribute to understand what action is expected. Do NOT reproduce these tags in your responses.`
+: `Messages in this conversation carry metadata prefixes identifying their source:
+- \`[from: orchestrator | to: agent-... | event: orchestrator_directive]\` — your task assignment from the orchestrator
+- \`[from: guardian-engine | to: agent-... | event: guardian_feedback]\` — system warnings and feedback
+- \`[from: agent-#... | to: agent-... | event: peer_message]\` — messages from peer agents
+Read the "event" field to understand what action is expected. Do NOT reproduce these prefixes in your responses.`}`;
 }

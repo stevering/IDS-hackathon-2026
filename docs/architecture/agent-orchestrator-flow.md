@@ -57,6 +57,47 @@ The nudge:
 | `reasoning` (agent) | `thinking` | Internal reasoning (amber badge, dev-only) |
 | `assistant_text` (agent) | `message` | Public text response (blue badge) |
 
+## Message Metadata Tags
+
+All `role: "user"` messages injected into LLM conversation histories are wrapped with XML metadata tags identifying the source, target, and event type.
+
+### XML format (default)
+
+```xml
+<message from="orchestrator" to="agent-#Figma-Desktop-pomipo" event="orchestrator_directive">
+Create the color palette in container 601:81
+</message>
+```
+
+### Bracket format (per-model fallback)
+
+```
+[from: orchestrator | to: agent-#Figma-Desktop-pomipo | event: orchestrator_directive]
+Create the color palette in container 601:81
+```
+
+### Event vocabulary
+
+| Event | From → To | When |
+|---|---|---|
+| `orchestrator_directive` | orchestrator → agent | Task assignment |
+| `agent_report` | agent → orchestrator | Directive completion/failure report |
+| `guardian_feedback` | guardian-engine → agent/orchestrator | Nudges, warnings, tool result summaries |
+| `orchestrator_broadcast` | orchestrator/agent → all | Broadcast to all agents |
+| `user_input` | user → orchestrator | Human message |
+| `peer_message` | agent → agent | Direct peer or sub-conversation message |
+| `orchestrator_brief` | guardian-engine → orchestrator | Initial task briefing |
+
+### Per-model config
+
+The `guardian_model_config` Supabase table stores per-model format preference. Models not in the table default to XML. The config is cached in-memory (24h TTL) in the Temporal worker, alongside the Gateway capabilities cache.
+
+### What is NOT wrapped
+
+- `role: "system"` — system prompt (already distinguished by role)
+- `role: "assistant"` — LLM's own output (the LLM knows it wrote this)
+- `role: "tool"` — tool results (already structured via `toolCallId`)
+
 ## Orchestrator Directive Guard
 
 The orchestrator uses `send_agent_directive` tool calls to assign work to agents. A guard prevents sending a new directive to an agent that hasn't completed its current one.

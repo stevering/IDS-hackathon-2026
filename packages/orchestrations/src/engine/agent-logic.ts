@@ -20,6 +20,7 @@ import type {
 } from "../types/signals.js";
 import type { LLMMessage, LLMToolCall, LLMToolDefinition, SubConversationState } from "../types/agents.js";
 import { FIGMA_API_QUICK_REFERENCE } from "../logic/figma-api-reference.js";
+import { wrapMessage, agentSource, type MetadataFormat } from "../logic/message-metadata.js";
 import * as acorn from "acorn";
 
 // ---------------------------------------------------------------------------
@@ -84,6 +85,10 @@ export type AgentWorkflowState = {
   directiveExecCount?: number;
   /** External tools (MCP) discovered at workflow startup */
   externalTools?: LLMToolDefinition[];
+  /** Resolved model ID (set from input.model, updated after first LLM call) */
+  model?: string;
+  /** Message metadata format — "xml" (default) or "bracket" (per-model config) */
+  metadataFormat?: MetadataFormat;
 };
 
 // ---------------------------------------------------------------------------
@@ -244,11 +249,15 @@ export function processQueues(state: AgentWorkflowState): AgentEffect[] {
   let hasNewInput = false;
 
   // Process directives
+  const fmt = state.metadataFormat;
+  const self: `agent-${string}` = agentSource(state.agent.shortId);
+
   while (state.directiveQueue.length > 0) {
     const directive = state.directiveQueue.shift()!;
+    const body = `${directive.content}${directive.expectedResult ? `\n\nExpected result: ${directive.expectedResult}` : ""}`;
     state.messageHistory.push({
       role: "user",
-      content: `[Orchestrator task] ${directive.content}${directive.expectedResult ? `\n\nExpected result: ${directive.expectedResult}` : ""}`,
+      content: wrapMessage(body, "orchestrator", self, "orchestrator_directive", fmt),
     });
     hasNewInput = true;
   }
@@ -258,7 +267,7 @@ export function processQueues(state: AgentWorkflowState): AgentEffect[] {
     const msg = state.peerMessageQueue.shift()!;
     state.messageHistory.push({
       role: "user",
-      content: `[Message from #${msg.fromAgentId}] ${msg.content}`,
+      content: wrapMessage(msg.content, agentSource(msg.fromAgentId), self, "peer_message", fmt),
     });
     hasNewInput = true;
   }
@@ -268,7 +277,7 @@ export function processQueues(state: AgentWorkflowState): AgentEffect[] {
     const msg = state.broadcastQueue.shift()!;
     state.messageHistory.push({
       role: "user",
-      content: `[Broadcast from #${msg.fromAgentId}] ${msg.content}`,
+      content: wrapMessage(msg.content, agentSource(msg.fromAgentId), "all", "orchestrator_broadcast", fmt),
     });
     hasNewInput = true;
   }
@@ -278,7 +287,7 @@ export function processQueues(state: AgentWorkflowState): AgentEffect[] {
     const msg = state.subConvMessageQueue.shift()!;
     state.messageHistory.push({
       role: "user",
-      content: `[Sub-conversation with #${msg.fromAgentId}] ${msg.content}`,
+      content: wrapMessage(msg.content, agentSource(msg.fromAgentId), self, "peer_message", fmt),
     });
     hasNewInput = true;
   }
@@ -541,11 +550,12 @@ export function processLLMResponse(
 
     if (idleCount === 3) {
       // Inject a nudge at 3 idle responses
+      const warningNudge = "WARNING: You have sent 3 text responses without executing any tool. " +
+        "Call signal_task_complete if your task is done, or call figma_plugin_execute to continue working. " +
+        "Do NOT send more status messages — take action.";
       state.messageHistory.push({
         role: "user",
-        content: "WARNING: You have sent 3 text responses without executing any tool. " +
-          "Call signal_task_complete if your task is done, or call figma_plugin_execute to continue working. " +
-          "Do NOT send more status messages — take action.",
+        content: wrapMessage(warningNudge, "guardian-engine", agentSource(state.agent.shortId), "guardian_feedback", state.metadataFormat),
       });
     }
 
@@ -554,7 +564,7 @@ export function processLLMResponse(
     const genericNudge = "You responded with text but did not call any tool. " +
       "You MUST call a tool to make progress. Call figma_plugin_execute or " +
       "figmaconsole_figma_execute to run Figma code, or signal_task_complete if your task is done.";
-    state.messageHistory.push({ role: "user", content: genericNudge });
+    state.messageHistory.push({ role: "user", content: wrapMessage(genericNudge, "guardian-engine", agentSource(state.agent.shortId), "guardian_feedback", state.metadataFormat) });
     activities.push({ action: "guardian_message", recipient: `agent ${state.agent.shortId}`, message: genericNudge });
     if (activities.length > 0) {
       effects.push({ type: "emit_activity", activities });
