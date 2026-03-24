@@ -98,6 +98,46 @@ The `guardian_model_config` Supabase table stores per-model format preference. M
 - `role: "assistant"` — LLM's own output (the LLM knows it wrote this)
 - `role: "tool"` — tool results (already structured via `toolCallId`)
 
+## SSE Event Traceability
+
+Every LLM input and output is emitted as an SSE event, persisted in `orchestration_events` (DB), and visible in the UI.
+
+### Orchestrator LLM events
+
+| LLM exchange | SSE event type | UI visibility |
+|---|---|---|
+| System prompt | `system_prompt` | dev mode (collapsed) |
+| Brief (task + agents) | `orchestrator_brief` | dev mode |
+| LLM reasoning | `orchestrator_reasoning` | dev mode |
+| LLM text response | `orchestrator_text` | normal mode |
+| LLM tool call | `orchestrator_tool_call` | dev mode |
+| Tool result | `orchestrator_tool_result` | dev mode |
+| Directive sent | `orchestrator_directive` | normal mode |
+| Agent report received | `orchestrator_input` + `agent_report` | normal mode (report) |
+| Guardian feedback (nudges) | `guardian_feedback` | normal mode (orange) |
+
+### Agent LLM events
+
+| LLM exchange | SSE event type (via `agent_activity`) | UI visibility |
+|---|---|---|
+| System prompt | `guardian_message [system_prompt]` | dev mode |
+| Directive received | `guardian_message [directive received]` | dev mode |
+| Broadcast received | `guardian_message [broadcast from...]` | dev mode |
+| LLM reasoning | `reasoning` | dev mode |
+| LLM text response | `assistant_text` | dev mode |
+| LLM tool call | `tool_call` | dev mode |
+| Tool result | `external_tool_result` | dev mode |
+| Code review / file review | `code_verified` / `file_review_llm_response` | dev mode |
+| Guardian nudge | `guardian_message` | dev mode |
+
+### Temporal signals (not directly traced)
+
+Temporal signals between workflows are not emitted as SSE events. Their effects are visible:
+- `directiveSignal` → `orchestrator_directive` + `agent_activity [directive received]`
+- `agentReportSignal` → `agent_report` + `orchestrator_input`
+- `terminateSignal` → `agent_status_changed`
+- `agentDirectorySignal` → not traced (infrastructure: peer routing table)
+
 ## Orchestrator Directive Guard
 
 The orchestrator uses `send_agent_directive` tool calls to assign work to agents. A guard prevents sending a new directive to an agent that hasn't completed its current one.
