@@ -754,22 +754,11 @@ export function processOrchestratorLLMResponse(
     }
   }
 
-  // If all agents are now active or done, inject a "wait" message so the LLM
-  // stops sending redundant directives and waits for agent reports instead.
-  const allAssigned = Array.from(state.agents.values()).every(
-    (a) => a.status === "active" || a.status === "completed" || a.status === "failed" || a.status === "interrupted"
-  );
-  if (allAssigned) {
-    const allAssignedMsg = "All agents have received their directives and are now working. " +
-      "Do NOT send more directives — wait for agent reports before taking any action.";
-    state.messageHistory.push({
-      role: "user",
-      content: wrapMessage(allAssignedMsg, "guardian-engine", "orchestrator", "guardian_feedback", state.metadataFormat),
-    });
-    const fbEvent = { type: "guardian_feedback" as const, content: allAssignedMsg, targetRole: "orchestrator" as const };
-    effects.push({ type: "emit_event", event: fbEvent });
-    state.eventLog.push(fbEvent);
-  }
+  // NOTE: The directive guard in send_agent_directive already blocks sending
+  // to busy agents (lastReport.status !== "completed"/"directive_done").
+  // No need for an extra "wait" nudge here — it was previously injected every
+  // time all agents were active, which incorrectly blocked follow-up directives
+  // after directive_done reports.
 
   // Signal continuation — LLM needs to see tool results
   effects.push({

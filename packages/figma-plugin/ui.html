@@ -1318,7 +1318,7 @@
         var counter = 0;
 
         function send(msgType, data, timeout) {
-            timeout = timeout || 10000;
+            timeout = timeout || 15000;
             return new Promise(function (resolve, reject) {
                 var requestId = '__proxy_' + (++counter);
                 var timer = setTimeout(function () {
@@ -1682,7 +1682,11 @@
                 px.release(n); return { success: true, instance: r };
             },
             CREATE_CHILD_NODE: async function (px, p) {
+                console.log('[CREATE_CHILD_NODE] parentId=' + p.parentId + ' nodeType=' + p.nodeType + ' props=' + JSON.stringify(p.properties));
+                var t0 = Date.now();
+                console.log('[CREATE_CHILD_NODE] Resolving parent node...');
                 var parentN = await getNode(px, p.parentId);
+                console.log('[CREATE_CHILD_NODE] Parent resolved in ' + (Date.now() - t0) + 'ms: ' + parentN);
                 var createMethod = 'createFrame';
                 var nodeType = (p.nodeType || 'FRAME').toUpperCase();
                 if (nodeType === 'RECTANGLE') createMethod = 'createRectangle';
@@ -1692,8 +1696,11 @@
                 else if (nodeType === 'POLYGON') createMethod = 'createPolygon';
                 else if (nodeType === 'STAR') createMethod = 'createStar';
                 else if (nodeType === 'VECTOR') createMethod = 'createVector';
+                console.log('[CREATE_CHILD_NODE] Creating ' + nodeType + ' via ' + createMethod);
                 var child = await px.call('figma', createMethod, []);
+                console.log('[CREATE_CHILD_NODE] Node created in ' + (Date.now() - t0) + 'ms, appending to parent...');
                 await px.call(parentN, 'appendChild', [child]);
+                console.log('[CREATE_CHILD_NODE] Appended in ' + (Date.now() - t0) + 'ms, applying props...');
                 var props = p.properties || {};
                 if (props.name) await px.set(child, 'name', props.name);
                 if (props.width && props.height) await px.call(child, 'resize', [props.width, props.height]);
@@ -1709,6 +1716,7 @@
                     await px.set(child, 'fills', fills);
                 }
                 var r = await px.snapshot(child, ['id', 'name', 'type', 'width', 'height']);
+                console.log('[CREATE_CHILD_NODE] Done in ' + (Date.now() - t0) + 'ms, node=' + JSON.stringify(r));
                 px.release(parentN, child); return { success: true, node: r };
             },
 
