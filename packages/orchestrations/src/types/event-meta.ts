@@ -23,15 +23,30 @@ export type EventCategory =
 
 export type EventDirection =
   | "internal"
-  | "guardian → orchestrator"
-  | "guardian → agent"
-  | "orchestrator → guardian"
-  | "agent → guardian"
-  | "guardian → figma"
-  | "figma → guardian"
-  | "user → orchestrator"
-  | "agent → agent"
+  | "guardian-to-orchestrator"
+  | "guardian-to-agent"
+  | "orchestrator-to-guardian"
+  | "orchestrator-to-all"
+  | "agent-to-guardian"
+  | "guardian-to-figma"
+  | "figma-to-guardian"
+  | "user-to-orchestrator"
+  | "agent-to-agent"
   | "broadcast";
+
+export const DIRECTION_LABELS: Record<EventDirection, string> = {
+  "internal": "internal",
+  "guardian-to-orchestrator": "Guardian → Orchestrator",
+  "guardian-to-agent": "Guardian → Agent",
+  "orchestrator-to-guardian": "Orchestrator → Guardian",
+  "orchestrator-to-all": "Orchestrator → All",
+  "agent-to-guardian": "Agent → Guardian",
+  "guardian-to-figma": "Guardian → Figma",
+  "figma-to-guardian": "Figma → Guardian",
+  "user-to-orchestrator": "User → Orchestrator",
+  "agent-to-agent": "Agent → Agent",
+  "broadcast": "broadcast",
+};
 
 export type EventMeta = {
   category: EventCategory;
@@ -51,40 +66,40 @@ export function getEventMeta(event: OrchestrationSSEEvent): EventMeta {
       return { category: "lifecycle", direction: "internal", subject: "orchestration launched", visibleInNormalMode: true };
 
     case "orchestrator_brief":
-      return { category: "message", direction: "guardian → orchestrator", subject: "task briefing", visibleInNormalMode: false };
+      return { category: "message", direction: "guardian-to-orchestrator", subject: "task briefing", visibleInNormalMode: false };
 
     case "orchestrator_text":
-      return { category: "message", direction: "internal", subject: "orchestrator response", visibleInNormalMode: true };
+      return { category: "message", direction: "orchestrator-to-all", subject: "orchestrator response", visibleInNormalMode: true };
 
     case "orchestrator_reasoning":
       return { category: "thinking", direction: "internal", subject: "orchestrator reasoning", visibleInNormalMode: false };
 
     case "orchestrator_tool_call":
-      return { category: "llm-tool-call", direction: "orchestrator → guardian", subject: "tool invocation", visibleInNormalMode: false };
+      return { category: "llm-tool-call", direction: "orchestrator-to-guardian", subject: "tool invocation", visibleInNormalMode: false };
 
     case "orchestrator_tool_result":
-      return { category: "llm-tool-result", direction: "guardian → orchestrator", subject: "tool result", visibleInNormalMode: false };
+      return { category: "llm-tool-result", direction: "guardian-to-orchestrator", subject: "tool result", visibleInNormalMode: false };
 
     case "orchestrator_directive":
-      return { category: "llm-tool-result", direction: "guardian → agent", subject: "directive delivery", visibleInNormalMode: true };
+      return { category: "llm-tool-result", direction: "guardian-to-agent", subject: "directive delivery", visibleInNormalMode: true };
 
     case "orchestrator_input":
-      return { category: "message", direction: "guardian → orchestrator", subject: "agent report forwarded", visibleInNormalMode: false };
+      return { category: "message", direction: "guardian-to-orchestrator", subject: "agent report forwarded", visibleInNormalMode: false };
 
     case "agent_status_changed":
       return { category: "lifecycle", direction: "internal", subject: "agent state change", visibleInNormalMode: true };
 
     case "agent_report":
-      return { category: "message", direction: "agent → guardian", subject: "task report", visibleInNormalMode: true };
+      return { category: "message", direction: "agent-to-guardian", subject: "task report", visibleInNormalMode: true };
 
     case "guardrail_blocked":
       return { category: "lifecycle", direction: "internal", subject: "action blocked", visibleInNormalMode: true };
 
     case "user_input_received":
-      return { category: "message", direction: "user → orchestrator", subject: "user instruction", visibleInNormalMode: true };
+      return { category: "message", direction: "user-to-orchestrator", subject: "user instruction", visibleInNormalMode: true };
 
     case "peer_message":
-      return { category: "message", direction: "agent → agent", subject: "peer communication", visibleInNormalMode: true };
+      return { category: "message", direction: "agent-to-agent", subject: "peer communication", visibleInNormalMode: true };
 
     case "broadcast_message":
       return { category: "message", direction: "broadcast", subject: "broadcast", visibleInNormalMode: true };
@@ -93,7 +108,7 @@ export function getEventMeta(event: OrchestrationSSEEvent): EventMeta {
       return { category: "lifecycle", direction: "internal", subject: "sub-conv opened", visibleInNormalMode: true };
 
     case "sub_conv_message":
-      return { category: "message", direction: "agent → agent", subject: "sub-conv message", visibleInNormalMode: true };
+      return { category: "message", direction: "agent-to-agent", subject: "sub-conv message", visibleInNormalMode: true };
 
     case "sub_conv_closed":
       return { category: "lifecycle", direction: "internal", subject: "sub-conv closed", visibleInNormalMode: true };
@@ -128,34 +143,34 @@ export function getActivityMeta(activity: AgentActivity): EventMeta {
       return { category: "message", direction: "internal", subject: "agent response", visibleInNormalMode: false };
 
     case "tool_call":
-      return { category: "llm-tool-call", direction: "agent → guardian", subject: "tool invocation", visibleInNormalMode: false };
+      return { category: "llm-tool-call", direction: "agent-to-guardian", subject: "tool invocation", visibleInNormalMode: false };
 
     case "code_review_passed":
-      return { category: "system-tool-result", direction: "guardian → agent", subject: "linter OK", visibleInNormalMode: false };
+      return { category: "system-tool-result", direction: "guardian-to-agent", subject: "linter OK", visibleInNormalMode: false };
 
     case "code_review_rejected":
-      return { category: "system-tool-result", direction: "guardian → agent", subject: "linter rejected", visibleInNormalMode: false };
+      return { category: "system-tool-result", direction: "guardian-to-agent", subject: "linter rejected", visibleInNormalMode: false };
 
     case "code_review_llm_approved":
-      return { category: "system-tool-result", direction: "guardian → agent", subject: "review approved", visibleInNormalMode: false };
+      return { category: "system-tool-result", direction: "guardian-to-agent", subject: "review approved", visibleInNormalMode: false };
 
     case "code_review_llm_rejected":
-      return { category: "system-tool-result", direction: "guardian → agent", subject: "review rejected", visibleInNormalMode: false };
+      return { category: "system-tool-result", direction: "guardian-to-agent", subject: "review rejected", visibleInNormalMode: false };
 
     case "code_executed":
-      return { category: "system-tool-result", direction: "figma → guardian", subject: "execution result", visibleInNormalMode: false };
+      return { category: "system-tool-result", direction: "figma-to-guardian", subject: "execution result", visibleInNormalMode: false };
 
     case "code_verified":
-      return { category: "system-tool-result", direction: "figma → guardian", subject: "verification", visibleInNormalMode: false };
+      return { category: "system-tool-result", direction: "figma-to-guardian", subject: "verification", visibleInNormalMode: false };
 
     case "file_review_llm_response":
-      return { category: "system-tool-result", direction: "guardian → agent", subject: "file review", visibleInNormalMode: false };
+      return { category: "system-tool-result", direction: "guardian-to-agent", subject: "file review", visibleInNormalMode: false };
 
     case "guardian_message":
-      return { category: "message", direction: "guardian → agent", subject: "tool result injected", visibleInNormalMode: false };
+      return { category: "message", direction: "guardian-to-agent", subject: "tool result injected", visibleInNormalMode: false };
 
     case "code_review_llm_response":
-      return { category: "system-tool-result", direction: "guardian → agent", subject: "review raw response", visibleInNormalMode: false };
+      return { category: "system-tool-result", direction: "guardian-to-agent", subject: "review raw response", visibleInNormalMode: false };
 
     default:
       return { category: "lifecycle", direction: "internal", subject: "unknown", visibleInNormalMode: false };
@@ -182,29 +197,19 @@ export function formatDirection(
     return meta.direction;
   }
 
+  // Use the label map as base, then resolve "agent" to actual shortId
+  const label = DIRECTION_LABELS[meta.direction];
+
   // Extract the agentShortId from the event (if present)
   const agentShortId = extractAgentShortId(event);
+  if (!agentShortId) return label;
 
-  // Build parts
-  const [from, to] = meta.direction.split(" → ");
+  // Replace "Agent" with the actual agent shortId
+  const agentLabel = showClientId
+    ? `${agentShortId} (${agents.find((a) => a.shortId === agentShortId)?.type ?? ""})`
+    : agentShortId;
 
-  const resolveActor = (actor: string): string => {
-    if (actor === "agent" && agentShortId) {
-      const agent = agents.find((a) => a.shortId === agentShortId);
-      const label = agentShortId;
-      if (showClientId && agent) {
-        return `${label} (${agent.type})`;
-      }
-      return label;
-    }
-    if (actor === "orchestrator") return "Orchestrator";
-    if (actor === "guardian") return "Guardian";
-    if (actor === "figma") return "Figma";
-    if (actor === "user") return "User";
-    return actor;
-  };
-
-  return `${resolveActor(from)} → ${resolveActor(to)}`;
+  return label.replace("Agent", agentLabel);
 }
 
 function extractAgentShortId(event: OrchestrationSSEEvent): string | undefined {
