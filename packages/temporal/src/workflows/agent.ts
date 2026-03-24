@@ -1023,6 +1023,15 @@ export async function agentWorkflow(input: AgentWorkflowInput): Promise<void> {
     content: systemPrompt,
   });
 
+  // Emit system prompt as activity so it appears in SSE stream + DB
+  try {
+    const handle = getExternalWorkflowHandle(state.orchestratorWorkflowId);
+    await handle.signal(agentActivitySignal, {
+      agentShortId: state.agent.shortId,
+      activities: [{ action: "guardian_message" as const, recipient: `agent ${state.agent.shortId}`, message: `[system_prompt]\n${systemPrompt}` }],
+    });
+  } catch { /* orchestrator may not be ready yet */ }
+
   // ── Main loop ────────────────────────────────────────────────────────────
   while (!state.completed && !state.disconnected) {
     // Wait for any input

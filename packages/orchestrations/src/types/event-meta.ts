@@ -119,6 +119,16 @@ export function getEventMeta(event: OrchestrationSSEEvent): EventMeta {
     case "error":
       return { category: "lifecycle", direction: "internal", subject: "error", visibleInNormalMode: true };
 
+    case "system_prompt": {
+      const spTarget = (event as { targetRole?: string }).targetRole;
+      return {
+        category: "lifecycle",
+        direction: spTarget === "agent" ? "guardian-to-agent" : "guardian-to-orchestrator",
+        subject: "system prompt",
+        visibleInNormalMode: false,
+      };
+    }
+
     case "guardian_feedback": {
       const target = (event as { targetRole?: string }).targetRole;
       return {

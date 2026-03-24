@@ -353,10 +353,14 @@ export function generateBriefAndFirstCall(state: OrchestratorState): Orchestrato
   const effects: OrchestratorEffect[] = [];
 
   // 1. System prompt
+  const systemPromptContent = buildOrchestratorSystemPrompt(state.task, agents, state.metadataFormat);
   state.messageHistory.push({
     role: "system",
-    content: buildOrchestratorSystemPrompt(state.task, agents, state.metadataFormat),
+    content: systemPromptContent,
   });
+  const spEvent = { type: "system_prompt" as const, content: systemPromptContent, targetRole: "orchestrator" as const };
+  effects.push({ type: "emit_event", event: spEvent });
+  state.eventLog.push(spEvent);
 
   // 2. Synthetic user brief
   const agentList = agents

@@ -252,6 +252,8 @@ export function processQueues(state: AgentWorkflowState): AgentEffect[] {
   const fmt = state.metadataFormat;
   const self: `agent-${string}` = agentSource(state.agent.shortId);
 
+  const incomingActivities: AgentActivity[] = [];
+
   while (state.directiveQueue.length > 0) {
     const directive = state.directiveQueue.shift()!;
     const body = `${directive.content}${directive.expectedResult ? `\n\nExpected result: ${directive.expectedResult}` : ""}`;
@@ -259,6 +261,7 @@ export function processQueues(state: AgentWorkflowState): AgentEffect[] {
       role: "user",
       content: wrapMessage(body, "orchestrator", self, "orchestrator_directive", fmt),
     });
+    incomingActivities.push({ action: "guardian_message", recipient: `agent ${state.agent.shortId}`, message: `[directive received] ${directive.content.slice(0, 200)}` });
     hasNewInput = true;
   }
 
@@ -269,6 +272,7 @@ export function processQueues(state: AgentWorkflowState): AgentEffect[] {
       role: "user",
       content: wrapMessage(msg.content, agentSource(msg.fromAgentId), self, "peer_message", fmt),
     });
+    incomingActivities.push({ action: "guardian_message", recipient: `agent ${state.agent.shortId}`, message: `[peer message from ${msg.fromAgentId}] ${msg.content.slice(0, 200)}` });
     hasNewInput = true;
   }
 
@@ -279,6 +283,7 @@ export function processQueues(state: AgentWorkflowState): AgentEffect[] {
       role: "user",
       content: wrapMessage(msg.content, agentSource(msg.fromAgentId), "all", "orchestrator_broadcast", fmt),
     });
+    incomingActivities.push({ action: "guardian_message", recipient: `agent ${state.agent.shortId}`, message: `[broadcast from ${msg.fromAgentId}] ${msg.content.slice(0, 200)}` });
     hasNewInput = true;
   }
 
@@ -289,7 +294,13 @@ export function processQueues(state: AgentWorkflowState): AgentEffect[] {
       role: "user",
       content: wrapMessage(msg.content, agentSource(msg.fromAgentId), self, "peer_message", fmt),
     });
+    incomingActivities.push({ action: "guardian_message", recipient: `agent ${state.agent.shortId}`, message: `[sub-conv from ${msg.fromAgentId}] ${msg.content.slice(0, 200)}` });
     hasNewInput = true;
+  }
+
+  // Emit incoming message activities
+  if (incomingActivities.length > 0) {
+    effects.push({ type: "emit_activity", activities: incomingActivities });
   }
 
   // Plugin disconnect

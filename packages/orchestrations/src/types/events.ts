@@ -56,6 +56,7 @@ export type OrchestrationSSEEvent =
   | { type: "agent_activity"; agentShortId: string; activities: AgentActivity[] }
   | { type: "orchestrator_input"; content: string; fromAgentShortId?: string }
   | { type: "guardian_feedback"; content: string; targetRole: "orchestrator" | "agent"; targetAgentShortId?: string }
+  | { type: "system_prompt"; content: string; targetRole: "orchestrator" | "agent"; targetAgentShortId?: string }
   | { type: "orchestration_completed"; status: "completed" | "completed_with_errors" | "failed" | "cancelled" | "timed_out" }
   | { type: "error"; message: string };
 

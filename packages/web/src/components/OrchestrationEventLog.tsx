@@ -54,6 +54,7 @@ function matchesAgentFilter(e: OrchestrationSSEEvent, agentFilter: string): bool
     case "orchestrator_tool_result":
     case "orchestrator_input":
     case "guardian_feedback":
+    case "system_prompt":
       return false;
     default:
       return false;
@@ -276,6 +277,30 @@ function renderEvent(event: OrchestrationSSEEvent, index: number, agents: AgentV
                 {event.usage && <span>{event.modelId ? " · " : ""}{event.usage.totalTokens} tokens ({event.usage.promptTokens} in + {event.usage.completionTokens} out)</span>}
               </div>
             )}
+          </EventBlock>
+        </div>
+      );
+    }
+
+    // ── System prompt ────────────────────────────────────────────────
+    case "system_prompt": {
+      const spTarget = event.targetRole === "agent" && event.targetAgentShortId
+        ? event.targetAgentShortId
+        : event.targetRole;
+      return (
+        <div key={index}>
+          <EventBlock
+            event={event}
+            agents={agents}
+            title="System Prompt"
+            subject={`→ ${spTarget}`}
+            preview={event.content.slice(0, 80)}
+            defaultOpen={false}
+            colorClass="border-white/10 bg-white/5 text-white/50"
+          >
+            <div className="text-[9px] text-white/40 leading-relaxed whitespace-pre-wrap max-h-60 overflow-y-auto">
+              {event.content}
+            </div>
           </EventBlock>
         </div>
       );
