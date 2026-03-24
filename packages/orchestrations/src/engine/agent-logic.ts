@@ -497,6 +497,17 @@ export function processLLMResponse(
       return effects;
     }
 
+    // If agent is in standby (completed a directive, waiting for next one),
+    // do NOT nudge — just wait for the next directive. Nudging creates a cycle
+    // where the agent writes "awaiting directive" text → nudge → repeat → FAILED.
+    if (state.inStandby) {
+      if (activities.length > 0) {
+        effects.push({ type: "emit_activity", activities });
+      }
+      effects.push({ type: "wait_for_input" });
+      return effects;
+    }
+
     // No tool calls detected — idle text loop detection
     // Only count idle texts AFTER the agent has received at least one directive.
     // Pre-directive idle (agent waiting for instructions) should not trigger auto-complete.

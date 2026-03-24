@@ -35,6 +35,8 @@ LLM responds with text, no toolCalls
 
 **Key behavior:** Text-only responses never generate `report_to_orchestrator(status: "in_progress")`. This prevents raw code/plans from being forwarded to the orchestrator as fake progress, which previously caused directive pileup.
 
+**Standby exception:** When the agent is in standby (`inStandby = true`, after `signal_task_complete`), text-only responses skip the nudge entirely and return `wait_for_input`. This prevents a cycle where broadcasts from the orchestrator wake the agent, it writes "awaiting directive" text, the nudge pushes it to retry, and it loops until FAILED — while the real directive sits in the queue.
+
 ## Orchestrator Directive Guard
 
 The orchestrator uses `send_agent_directive` tool calls to assign work to agents. A guard prevents sending a new directive to an agent that hasn't completed its current one.
