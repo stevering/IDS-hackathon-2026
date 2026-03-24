@@ -1,8 +1,11 @@
 /**
- * Condensed Figma Plugin API reference for the agent system prompt.
+ * Figma Plugin API reference constants for agent prompts.
  *
- * Injected when an agent calls lookup_figma_docs with mode "quick".
- * Covers the most common operations and gotchas that LLMs typically get wrong.
+ * Two exports:
+ * - FIGMA_API_QUICK_REFERENCE — full reference, used by lookup_figma_docs (mode "quick")
+ *   and by the fallback system prompt when no figmaconsole_ MCP tools are available.
+ * - FIGMA_API_EXECUTE_SUPPLEMENT — condensed gotchas + worked example, injected lazily
+ *   the first time an agent calls raw figma_execute when figmaconsole_ tools are available.
  *
  * Source: https://developers.figma.com/docs/plugins/api/
  */
@@ -205,4 +208,91 @@ child.layoutPositioning = "ABSOLUTE";    // "AUTO" | "ABSOLUTE" (absolute within
 15. Only Frame, Group, Component, ComponentSet support .appendChild(). Rectangle does NOT.
 16. figma object is sealed: Access mutable properties through figma.currentPage or node references
 17. Triangles: Use figma.createPolygon() with .pointCount = 3, NOT figma.createStar()
+`;
+
+// ---------------------------------------------------------------------------
+// Lazy supplement — injected on first figma_execute call when figmaconsole_ is primary
+// ---------------------------------------------------------------------------
+
+export const FIGMA_API_EXECUTE_SUPPLEMENT = `## Figma Plugin API — Reference for raw code execution
+
+You are now using figma_execute (raw Figma Plugin API code). Review these rules carefully.
+
+### Critical Gotchas
+1. **Colors 0-1 range**: \`{ r: 0.15, g: 0.39, b: 0.92 }\` — NOT 0-255, NOT hex. Hex conversion: \`#2563EB\` → \`{ r: 0x25/255, g: 0x63/255, b: 0xEB/255 }\`.
+2. **No alpha in solid fills/strokes**: Use \`{ type: 'SOLID', color: { r, g, b }, opacity: 0.3 }\` — NO \`a\` key. Only gradient stops and effects use \`{ r, g, b, a }\`.
+3. **Effects require blendMode + visible**: \`{ type: 'DROP_SHADOW', color: { r:0, g:0, b:0, a:0.25 }, offset: { x:0, y:4 }, radius: 8, spread: 0, visible: true, blendMode: 'NORMAL' }\`
+4. **Font loading**: MUST \`await figma.loadFontAsync({ family: "Inter", style: "Regular" })\` BEFORE setting \`.characters\` or \`.fontName\`.
+5. **No .paddingAll**: Set \`.paddingTop\`, \`.paddingRight\`, \`.paddingBottom\`, \`.paddingLeft\` individually.
+6. **width/height readonly**: Use \`.resize(w, h)\`, NOT \`.width = x\`.
+7. **children readonly**: Use \`.appendChild()\`, NOT \`.children = [...]\`. Only Frame/Group/Component support it — Rectangle does NOT.
+8. **Pages are infinite**: \`figma.currentPage\` has NO \`.width\`/\`.height\`. Use \`figma.viewport.center\`.
+9. **getNodeByIdAsync**: ALWAYS use async version. NEVER \`figma.getNodeById()\`.
+10. **Fresh scope**: Each call runs in a fresh JavaScript scope — variables do NOT persist between calls.
+11. **Auto-layout children**: Do NOT set \`.x\`/\`.y\` — positioned automatically. Use \`.layoutSizingHorizontal = "FILL"\` to stretch.
+12. **No TypeScript**: Code runs as plain JS — no \`as Type\` casts.
+13. **figma.closePlugin()**: NEVER call this — it kills the plugin bridge.
+14. **Auto-layout setup**: \`.layoutMode = "VERTICAL"\`, \`.itemSpacing\`, \`.primaryAxisSizingMode = "AUTO"\` (hug).
+
+### ID Handoff Pattern
+- Step 1: end with \`return node.id;\` to capture the container ID
+- Step 2+: start with \`const parent = await figma.getNodeByIdAsync("PREVIOUS_ID");\`
+- The system shows "Created node IDs: [...]" after each step — use these exact IDs
+
+### Recovery
+- Read the error carefully — most failures are: wrong property name, missing font load, alpha in solid fill
+- Fix the SPECIFIC issue and retry (do not skip ahead)
+- If the same error repeats twice, SIMPLIFY: remove optional features and create minimal structure
+- After 3 failures on one step, create a PLACEHOLDER (empty named frame) and move on
+
+### Worked Example: "Create a color palette"
+
+**Plan:**
+1. Create root frame (horizontal auto-layout) → returns frame ID
+2. Add 5 color swatches → needs frame ID from step 1
+
+**Step 1:**
+\`\`\`js
+const frame = figma.createFrame();
+frame.name = "Color Palette";
+frame.layoutMode = "HORIZONTAL";
+frame.itemSpacing = 16;
+frame.paddingTop = 24; frame.paddingRight = 24; frame.paddingBottom = 24; frame.paddingLeft = 24;
+frame.primaryAxisSizingMode = "AUTO";
+frame.counterAxisSizingMode = "AUTO";
+frame.fills = [{ type: 'SOLID', color: { r: 1, g: 1, b: 1 } }];
+frame.cornerRadius = 12;
+figma.currentPage.appendChild(frame);
+return frame.id;
+\`\`\`
+
+**Step 2:**
+\`\`\`js
+const parent = await figma.getNodeByIdAsync("123:456");
+const colors = [
+  { name: "Primary", r: 0.15, g: 0.39, b: 0.92 },
+  { name: "Secondary", r: 0.44, g: 0.19, b: 0.76 },
+];
+await figma.loadFontAsync({ family: "Inter", style: "Regular" });
+for (const c of colors) {
+  const swatch = figma.createFrame();
+  swatch.name = c.name;
+  swatch.layoutMode = "VERTICAL";
+  swatch.itemSpacing = 8;
+  swatch.primaryAxisSizingMode = "AUTO";
+  swatch.counterAxisSizingMode = "AUTO";
+  const circle = figma.createEllipse();
+  circle.resize(48, 48);
+  circle.fills = [{ type: 'SOLID', color: { r: c.r, g: c.g, b: c.b } }];
+  swatch.appendChild(circle);
+  const label = figma.createText();
+  label.characters = c.name;
+  label.fontSize = 12;
+  label.fills = [{ type: 'SOLID', color: { r: 0.2, g: 0.2, b: 0.2 } }];
+  swatch.appendChild(label);
+  parent.appendChild(swatch);
+}
+\`\`\`
+
+For detailed API docs on specific node types, call \`lookup_figma_docs({ topic: "FrameNode", mode: "full" })\`.
 `;

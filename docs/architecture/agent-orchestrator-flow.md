@@ -251,3 +251,49 @@ Every LLM call returns `modelId` (the actual resolved model, e.g. `"moonshotai/k
 ### Gateway capabilities cache
 
 The Temporal worker maintains an in-memory cache of the Vercel AI Gateway model catalog (`https://ai-gateway.vercel.sh/v1/models`), refreshed every 24h. The cache stores which model IDs have the `"reasoning"` tag, used to decide whether to apply the middleware fallback. Same pattern as `model-pricing.ts`.
+
+## Agent Figma Tool Strategy
+
+When Figma Console MCP tools (`figmaconsole_*`) are available, the agent system prompt is slimmed down to promote high-level tools over raw code execution.
+
+### Tool Priority (when figmaconsole_ available)
+
+```
+1. Dedicated figmaconsole_ tools (create_child, set_fills, set_text, resize_node, etc.)
+   → High-level, structured parameters, no Figma Plugin API knowledge needed
+
+2. figmaconsole_figma_execute (raw code) — LAST RESORT
+   → Only for operations with no dedicated tool (auto-layout, effects, gradients)
+   → Figma API reference is lazily injected on first use
+```
+
+### Slim vs Full System Prompt
+
+| Condition | Prompt variant | Figma section size |
+|---|---|---|
+| `hasExternalFigmaTools = true` (figmaconsole_ MCP connected) | **Slim**: tool priority + brief workflow, no API reference | ~40 lines (~1.5K tokens) |
+| `hasExternalFigmaTools = false` (no MCP, figma_plugin_execute only) | **Full**: phases 1/2/3, worked example, full API Quick Reference | ~260 lines (~8K tokens) |
+
+### Lazy API Reference Injection
+
+When the slim prompt is active and the agent calls `figma_execute` for the first time:
+
+```
+Agent calls figmaconsole_figma_execute (or figma_plugin_execute)
+│
+├─ state.figmaApiDocsInjected = false AND state.externalTools.length > 0
+│  → Inject FIGMA_API_EXECUTE_SUPPLEMENT as guardian_feedback message
+│  → Set state.figmaApiDocsInjected = true
+│  → Contains: 14 critical gotchas, ID handoff pattern, recovery rules, worked example
+│
+└─ state.figmaApiDocsInjected = true
+   → Skip (already injected)
+```
+
+The supplement (~80 lines) is injected as a `role: "user"` message with `event="guardian_feedback"` right after the tool result. This gives the agent the API context for its next code call without bloating the initial system prompt.
+
+### Tool List (getAgentTools)
+
+When `figmaconsole_figma_execute` is in `state.externalTools`:
+- Engine-built `figma_plugin_execute` is **not added** (avoids duplicate raw code capability)
+- `lookup_figma_docs` is always available (for on-demand full API docs)

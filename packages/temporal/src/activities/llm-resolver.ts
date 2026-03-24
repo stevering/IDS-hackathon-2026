@@ -24,7 +24,16 @@ export async function resolveModelForActivity(
   userId: string | undefined,
   requestedModel: string | undefined
 ): Promise<ResolvedModel> {
-  const modelStr = requestedModel ?? "";
+  let modelStr = requestedModel ?? "";
+
+  // If no model specified but user is authenticated, check their default model setting
+  if (!modelStr && userId) {
+    const defaultModel = await getUserDefaultModel(userId);
+    if (defaultModel) {
+      modelStr = defaultModel;
+    }
+  }
+
   const slashIdx = modelStr.indexOf("/");
   const requestedProvider = slashIdx > -1 ? modelStr.slice(0, slashIdx) : null;
   const requestedModelId = slashIdx > -1 ? modelStr.slice(slashIdx + 1) : modelStr;
@@ -97,6 +106,30 @@ async function buildDirectProviderModel(
     }
     default:
       return null;
+  }
+}
+
+/**
+ * Look up the user's default model from user_settings table.
+ * Returns the model string (e.g. "moonshotai/kimi-k2.5") or null.
+ */
+async function getUserDefaultModel(userId: string): Promise<string | null> {
+  try {
+    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL ?? process.env.STORAGE_SUPABASE_URL;
+    const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.STORAGE_SUPABASE_SERVICE_ROLE_KEY;
+    if (!supabaseUrl || !serviceKey) return null;
+
+    const supabase = createClient(supabaseUrl, serviceKey);
+    const { data, error } = await supabase
+      .from("user_settings")
+      .select("default_model")
+      .eq("user_id", userId)
+      .single();
+
+    if (error || !data?.default_model) return null;
+    return data.default_model as string;
+  } catch {
+    return null;
   }
 }
 

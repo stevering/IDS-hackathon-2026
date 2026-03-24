@@ -89,6 +89,8 @@ export type AgentWorkflowState = {
   model?: string;
   /** Message metadata format — "xml" (default) or "bracket" (per-model config) */
   metadataFormat?: MetadataFormat;
+  /** Whether the Figma API supplement has been lazy-injected (on first figma_execute call) */
+  figmaApiDocsInjected?: boolean;
 };
 
 // ---------------------------------------------------------------------------
@@ -504,7 +506,8 @@ export function processLLMResponse(
     if (codeBlockInText && content.includes("figma.")) {
       // Pattern: ```js\nconst frame = figma.createFrame()...\n``` — code intended for execution
       const nudge = `You wrote Figma code in a text code block but did not call a tool to execute it. ` +
-        `If you intended to run this code, call figmaconsole_figma_execute (or figma_plugin_execute) with the code as argument.`;
+        `If you intended to run this code, use a dedicated figmaconsole_ tool (create_child, set_fills, set_text, etc.) ` +
+        `or call figmaconsole_figma_execute as a last resort.`;
       injectToolResult(state, `nudge-${state.stepCount}`, nudge);
       activities.push({ action: "guardian_message", recipient: `agent ${state.agent.shortId}`, message: nudge });
       if (activities.length > 0) {
@@ -562,7 +565,7 @@ export function processLLMResponse(
     if (idleCount === 3) {
       // Inject a nudge at 3 idle responses
       const warningNudge = "WARNING: You have sent 3 text responses without executing any tool. " +
-        "Call signal_task_complete if your task is done, or call figma_plugin_execute to continue working. " +
+        "Call signal_task_complete if your task is done, or use a figmaconsole_ tool to continue working. " +
         "Do NOT send more status messages — take action.";
       state.messageHistory.push({
         role: "user",
@@ -573,8 +576,9 @@ export function processLLMResponse(
     // Don't report raw text as "progress" to orchestrator — it misleads.
     // Instead, nudge the LLM to use a tool and retry. The idle counter (above) is the guard.
     const genericNudge = "You responded with text but did not call any tool. " +
-      "You MUST call a tool to make progress. Call figma_plugin_execute or " +
-      "figmaconsole_figma_execute to run Figma code, or signal_task_complete if your task is done.";
+      "You MUST call a tool to make progress. Prefer dedicated figmaconsole_ tools " +
+      "(create_child, set_fills, set_text, etc.). Use figmaconsole_figma_execute only " +
+      "for operations with no dedicated tool, or signal_task_complete if your task is done.";
     state.messageHistory.push({ role: "user", content: wrapMessage(genericNudge, "guardian-engine", agentSource(state.agent.shortId), "guardian_feedback", state.metadataFormat) });
     activities.push({ action: "guardian_message", recipient: `agent ${state.agent.shortId}`, message: genericNudge });
     if (activities.length > 0) {
@@ -1312,27 +1316,35 @@ function getAgentTools(state: AgentWorkflowState): LLMToolDefinition[] {
     });
   }
 
-  // Add figma tool if agent has a plugin client — always static
+  // Add figma tools if agent has a plugin client.
+  // When figmaconsole_ MCP tools are available (including figmaconsole_figma_execute),
+  // skip the engine-built figma_plugin_execute to avoid duplicating the raw code capability.
   if (state.agent.pluginClientId) {
-    tools.push({
-      name: "figma_plugin_execute",
-      description:
-        "Execute JavaScript code in the Figma plugin. " +
-        "CRITICAL: Each call runs in a FRESH scope — variables do NOT persist between calls. " +
-        "Every call must be fully self-contained (declare all variables). " +
-        "Create parent containers AND their children in the SAME call — do not split across calls. " +
-        "Code can be up to ~100 lines if needed — prioritize completeness over brevity. " +
-        "After execution you receive: success/error + canvas diff + before/after screenshots + expert review. " +
-        "Fills/strokes use { r, g, b } — NO 'a' (alpha) key in color objects. " +
-        "Pages have no width/height — use figma.viewport.center for positioning.",
-      parameters: {
-        type: "object",
-        properties: {
-          code: { type: "string", description: "JavaScript code to execute in the Figma Plugin API" },
+    const hasExternalExecute = state.externalTools?.some(
+      (t) => t.name === "figmaconsole_figma_execute"
+    );
+
+    if (!hasExternalExecute) {
+      tools.push({
+        name: "figma_plugin_execute",
+        description:
+          "Execute JavaScript code in the Figma plugin. " +
+          "CRITICAL: Each call runs in a FRESH scope — variables do NOT persist between calls. " +
+          "Every call must be fully self-contained (declare all variables). " +
+          "Create parent containers AND their children in the SAME call — do not split across calls. " +
+          "Code can be up to ~100 lines if needed — prioritize completeness over brevity. " +
+          "After execution you receive: success/error + canvas diff + before/after screenshots + expert review. " +
+          "Fills/strokes use { r, g, b } — NO 'a' (alpha) key in color objects. " +
+          "Pages have no width/height — use figma.viewport.center for positioning.",
+        parameters: {
+          type: "object",
+          properties: {
+            code: { type: "string", description: "JavaScript code to execute in the Figma Plugin API" },
+          },
+          required: ["code"],
         },
-        required: ["code"],
-      },
-    });
+      });
+    }
 
     tools.push({
       name: "lookup_figma_docs",

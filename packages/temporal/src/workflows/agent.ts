@@ -32,6 +32,7 @@ import {
   type AgentEffect,
   buildAgentSystemPrompt,
   FIGMA_API_QUICK_REFERENCE,
+  FIGMA_API_EXECUTE_SUPPLEMENT,
 } from "@guardian/orchestrations";
 
 import type { AgentId, LLMMessage, LLMToolDefinition } from "@guardian/orchestrations";
@@ -756,8 +757,27 @@ async function handleReviewAndExecute(
     }],
   }, userId);
 
-  injectToolResult(state, effect.toolCallId, execResultJson, toolImages.length > 0 ? toolImages : undefined);
+  // Append Figma API supplement on first raw code execution (lazy injection for slim prompt)
+  const supplement = getFigmaApiSupplement(state);
+  injectToolResult(state, effect.toolCallId, execResultJson + supplement, toolImages.length > 0 ? toolImages : undefined);
   recordExecResult(state, execResult.success ?? false);
+}
+
+// ---------------------------------------------------------------------------
+// Lazy Figma API supplement injection
+// ---------------------------------------------------------------------------
+
+/**
+ * Get the Figma Plugin API supplement to append to the first figma_execute tool result.
+ *
+ * Returns the supplement text on first call (when slim prompt is active),
+ * or empty string on subsequent calls. Appended to the tool result content
+ * to avoid a separate role:"user" message that some providers reject.
+ */
+function getFigmaApiSupplement(state: AgentWorkflowState): string {
+  if (state.figmaApiDocsInjected || !state.externalTools?.length) return "";
+  state.figmaApiDocsInjected = true;
+  return `\n\n---\n\n[Figma API Reference — automatically provided on first code execution]\n\n${FIGMA_API_EXECUTE_SUPPLEMENT}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -905,7 +925,9 @@ async function handleExecuteExternalTool(
   if (before.screenshot) toolImages.push(before.screenshot);
   if (afterScreenshot) toolImages.push(afterScreenshot);
 
-  injectToolResult(state, effect.toolCallId, parts.join("\n\n"), toolImages.length > 0 ? toolImages : undefined);
+  // Append Figma API supplement on first figmaconsole_figma_execute call (lazy injection for slim prompt)
+  const supplement = effect.toolName === "figmaconsole_figma_execute" ? getFigmaApiSupplement(state) : "";
+  injectToolResult(state, effect.toolCallId, parts.join("\n\n") + supplement, toolImages.length > 0 ? toolImages : undefined);
 }
 
 /** Resolve server ID from prefixed tool name (e.g. "figmaconsole_create_child" → figma_console / create_child) */

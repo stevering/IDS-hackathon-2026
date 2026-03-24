@@ -147,8 +147,29 @@ You have Figma Console MCP tools (prefixed \`figmaconsole_\`). **You MUST use th
 `
     : "";
 
+  // Build the Figma section based on whether external figmaconsole_ tools are available.
+  // When figmaconsole_ is available: slim prompt, prefer high-level tools, lazy-inject API docs.
+  // When not available: full prompt with API reference (agent needs it for every figma_plugin_execute call).
   const figmaSection = agent.pluginClientId
-    ? `
+    ? (options?.hasExternalFigmaTools
+      ? `
+## Figma execution strategy
+${fcToolsSection}
+
+### Tool priority
+1. **Dedicated tools first**: \`figmaconsole_figma_create_child\`, \`figmaconsole_figma_set_fills\`, \`figmaconsole_figma_set_text\`, \`figmaconsole_figma_resize_node\`, \`figmaconsole_figma_move_node\`, \`figmaconsole_figma_clone_node\`, \`figmaconsole_figma_delete_node\`, \`figmaconsole_figma_rename_node\`, \`figmaconsole_figma_capture_screenshot\`, etc.
+2. **\`figmaconsole_figma_execute\` as last resort**: only for operations with no dedicated tool (e.g. complex auto-layout setup, effects, gradients). The system will automatically provide API documentation when you first use raw code execution.
+
+### Execution workflow
+- Write a numbered plan BEFORE executing any tool calls
+- Step 1: create root container. If using figma_execute, end with \`return node.id;\`
+- Step N: reference IDs from previous steps. If using figma_execute, start with \`const parent = await figma.getNodeByIdAsync("ID");\`
+- Each figma_execute call runs in a **FRESH scope** — variables do NOT persist between calls
+- After each call you receive: created node IDs, canvas diff, before/after screenshots, expert review verdict
+
+When calling signal_task_complete, include the main created node IDs in your summary.
+Example: "Created color palette frame (ID: 123:456) with 5 swatches inside container 100:200."`
+      : `
 ## Figma execution strategy
 ${fcToolsSection ? fcToolsSection : "You have access to a Figma plugin via figma_plugin_execute."}
 
@@ -193,68 +214,8 @@ If a step fails:
 - figma.currentPage has NO .width or .height — pages are infinite. Use figma.viewport.center.
 - If you need detailed docs, call lookup_figma_docs({ topic: "TextNode", mode: "full" }).
 
-### Worked example: "Create a color palette section"
-
-**Plan:**
-1. Create root frame (horizontal auto-layout) — needs: nothing — returns: frame ID
-2. Add 5 color swatches to the frame — needs: frame ID from step 1 — returns: nothing
-
-**Step 1 code:**
-\`\`\`js
-const frame = figma.createFrame();
-frame.name = "Color Palette";
-frame.layoutMode = "HORIZONTAL";
-frame.itemSpacing = 16;
-frame.paddingTop = 24;
-frame.paddingRight = 24;
-frame.paddingBottom = 24;
-frame.paddingLeft = 24;
-frame.primaryAxisSizingMode = "AUTO";
-frame.counterAxisSizingMode = "AUTO";
-frame.fills = [{ type: 'SOLID', color: { r: 1, g: 1, b: 1 } }];
-frame.cornerRadius = 12;
-figma.currentPage.appendChild(frame);
-return frame.id;
-\`\`\`
-→ System returns: Created node IDs: ["123:456"], File review: VERIFIED
-
-**Step 2 code:**
-\`\`\`js
-const parent = await figma.getNodeByIdAsync("123:456");
-const colors = [
-  { name: "Primary", r: 0.15, g: 0.39, b: 0.92 },
-  { name: "Secondary", r: 0.44, g: 0.19, b: 0.76 },
-  { name: "Success", r: 0.13, g: 0.73, b: 0.33 },
-  { name: "Warning", r: 0.98, g: 0.69, b: 0.01 },
-  { name: "Error", r: 0.91, g: 0.22, b: 0.21 },
-];
-await figma.loadFontAsync({ family: "Inter", style: "Regular" });
-for (const c of colors) {
-  const swatch = figma.createFrame();
-  swatch.name = c.name;
-  swatch.layoutMode = "VERTICAL";
-  swatch.itemSpacing = 8;
-  swatch.primaryAxisAlignItems = "CENTER";
-  swatch.counterAxisAlignItems = "CENTER";
-  swatch.primaryAxisSizingMode = "AUTO";
-  swatch.counterAxisSizingMode = "AUTO";
-  const circle = figma.createEllipse();
-  circle.resize(48, 48);
-  circle.fills = [{ type: 'SOLID', color: { r: c.r, g: c.g, b: c.b } }];
-  swatch.appendChild(circle);
-  const label = figma.createText();
-  label.characters = c.name;
-  label.fontSize = 12;
-  label.fills = [{ type: 'SOLID', color: { r: 0.2, g: 0.2, b: 0.2 } }];
-  swatch.appendChild(label);
-  parent.appendChild(swatch);
-}
-\`\`\`
-→ System returns: VERIFIED — 5 color swatches added to Color Palette frame
-→ Agent calls: signal_task_complete({ summary: "Created Color Palette (ID: 123:456) with 5 swatches" })
-
 ### Figma API Quick Reference
-${FIGMA_API_QUICK_REFERENCE}`
+${FIGMA_API_QUICK_REFERENCE}`)
     : "";
 
   // Ensure shortIds display with exactly one "#" prefix
