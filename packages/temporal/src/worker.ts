@@ -68,8 +68,8 @@ async function run() {
   setTimeout(() => process.exit(0), 1000).unref();
 }
 
-run().catch((err) => {
+run().catch(async (err) => {
   console.error("[temporal-worker] Fatal error:", err);
+  await closeStdioPool({}).catch(() => {});
   process.exit(1);
 });
-// force restart 1774176886

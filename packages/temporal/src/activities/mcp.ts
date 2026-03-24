@@ -76,12 +76,29 @@ type PoolEntry = {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   tools: Record<string, any>;
   lastUsed: number;
+  /** PID of the child process — grabbed right after spawn so we can kill it
+   *  even if `client.close()` fails to terminate the subprocess. */
+  pid?: number;
 };
 
 const stdioPool = new Map<string, PoolEntry>();
 const POOL_TTL_MS = 10 * 60 * 1000; // 10 min idle → close subprocess
 
 const poolLog = createLogger("mcp-pool");
+
+/** Kill a pool entry's subprocess. Tries client.close() first, then SIGTERM on PID. */
+function killPoolEntry(key: string, entry: PoolEntry): void {
+  try { entry.client.close(); } catch { /* ignore */ }
+  if (entry.pid) {
+    try {
+      process.kill(entry.pid, "SIGTERM");
+      poolLog.info(`Sent SIGTERM to subprocess PID ${entry.pid} (${key})`);
+    } catch {
+      // Process already exited — ignore ESRCH
+    }
+  }
+  stdioPool.delete(key);
+}
 
 // Periodic cleanup of idle subprocesses.
 // unref() so this timer doesn't prevent process exit during --watch restarts.
@@ -90,12 +107,25 @@ const poolCleanupTimer = setInterval(() => {
   for (const [key, entry] of stdioPool) {
     if (now - entry.lastUsed > POOL_TTL_MS) {
       poolLog.info(`Closing idle stdio client: ${key}`);
-      try { entry.client.close(); } catch { /* ignore */ }
-      stdioPool.delete(key);
+      killPoolEntry(key, entry);
     }
   }
 }, 60_000);
 poolCleanupTimer.unref();
+
+// Safety net: kill all subprocesses on SIGTERM/SIGINT if the normal shutdown
+// path in worker.ts doesn't run (e.g. parent process killed, crash).
+function emergencyPoolCleanup(signal: string): void {
+  if (stdioPool.size === 0) return;
+  poolLog.info(`Emergency cleanup on ${signal} — killing ${stdioPool.size} subprocess(es)`);
+  for (const [key, entry] of stdioPool) {
+    killPoolEntry(key, entry);
+  }
+}
+
+process.on("SIGTERM", () => emergencyPoolCleanup("SIGTERM"));
+process.on("SIGINT", () => emergencyPoolCleanup("SIGINT"));
+process.on("beforeExit", () => emergencyPoolCleanup("beforeExit"));
 
 // ---------------------------------------------------------------------------
 // Port file helpers — FC MCP subprocess publishes its WS port in /tmp
@@ -150,9 +180,13 @@ async function getOrCreateStdioClient(
   const client = await createMCPClient({ transport });
   const tools = await client.tools();
 
-  poolLog.info(`Stdio client ready: ${poolKey} — ${Object.keys(tools).length} tools`);
+  // Grab the subprocess PID before anything can clear it.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const pid = (transport as any).process?.pid as number | undefined;
 
-  const entry: PoolEntry = { client, tools, lastUsed: Date.now() };
+  poolLog.info(`Stdio client ready: ${poolKey} — ${Object.keys(tools).length} tools, PID ${pid ?? "unknown"}`);
+
+  const entry: PoolEntry = { client, tools, lastUsed: Date.now(), pid };
   stdioPool.set(poolKey, entry);
 
   // Discover the new subprocess's WS port by diffing port files
@@ -422,14 +456,13 @@ export async function executeMCPTool(params: {
     log.info(`Execution succeeded`, { result: JSON.stringify(result).slice(0, 200) });
     return { success: true, result };
   } catch (err) {
-    // If stdio client crashed, remove from pool so next call creates a fresh one
+    // If stdio client crashed, kill subprocess and remove from pool
     if (serverDef.transport === "stdio") {
       const poolKey = `${params.serverId}:${params.agentId ?? "default"}`;
       const entry = stdioPool.get(poolKey);
       if (entry) {
-        poolLog.info(`Removing crashed stdio client: ${poolKey}`);
-        try { entry.client.close(); } catch { /* ignore */ }
-        stdioPool.delete(poolKey);
+        poolLog.info(`Removing crashed stdio client: ${poolKey} (PID ${entry.pid ?? "unknown"})`);
+        killPoolEntry(poolKey, entry);
       }
     }
     log.error(`Execution failed`, { error: String(err) });
@@ -444,9 +477,18 @@ export async function executeMCPTool(params: {
 export async function closeStdioPool(params: { agentId?: string }): Promise<void> {
   for (const [key, entry] of stdioPool) {
     if (!params.agentId || key.endsWith(`:${params.agentId}`)) {
-      poolLog.info(`Closing stdio client: ${key}`);
-      try { entry.client.close(); } catch { /* ignore */ }
-      stdioPool.delete(key);
+      poolLog.info(`Closing stdio client: ${key} (PID ${entry.pid ?? "unknown"})`);
+      killPoolEntry(key, entry);
     }
   }
 }
+
+// ---------------------------------------------------------------------------
+// Test helpers — exposed for unit tests only
+// ---------------------------------------------------------------------------
+
+export const _testing = {
+  stdioPool,
+  killPoolEntry,
+  type: undefined as unknown as PoolEntry, // type export trick
+};
