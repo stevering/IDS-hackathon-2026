@@ -46,42 +46,60 @@ send_agent_directive(agentShortId, content)
 │
 ├─ Agent not found → Error: "not found"
 │
-├─ Agent status = "active" AND lastReport.status ≠ "completed"
-│  → Error: "Agent is still working on a directive. Wait for completed."
-│  → No directive sent
-│
 ├─ Agent confirmedByAgent AND status ∈ {failed, completed, interrupted}
 │  → Error: "Agent has already terminated"
 │  → No directive sent
 │
-└─ Otherwise
-   → Directive sent, agent status set to "active"
+├─ Agent status = "active" AND lastReport exists AND lastReport.status ∉ {"completed", "directive_done"}
+│  → Error: "Agent is still working on a directive."
+│  → No directive sent
+│
+└─ Otherwise (first directive with no lastReport, or agent in standby)
+   → Directive sent
+   → status = "active", lastReport = { status: "in_progress" }
 ```
+
+### Agent Report Statuses
+
+| Status | Meaning | Guard behavior |
+|---|---|---|
+| `"directive_done"` | Agent completed the directive, stays alive for more work (standby) | Allows new directive |
+| `"in_progress"` | Agent is actively working | Blocks new directive |
+| `"completed"` | Agent workflow terminated successfully | Terminal — blocks directive |
+| `"failed"` | Agent failed (idle loop, max steps) | Terminal — blocks directive |
+| `"interrupted"` | Plugin disconnected | Terminal — blocks directive |
 
 ### State Transitions
 
 ```
-Agent receives directive
+Child workflow started (orchestrator.ts)
   → status = "active", lastReport = undefined
 
+First directive sent (send_agent_directive)
+  → lastReport = { status: "in_progress" }
+  → Guard now blocks further directives
+
 Agent calls signal_task_complete
-  → report_to_orchestrator(status: "completed")
+  → report_to_orchestrator(status: "directive_done")
   → agent enters standby (inStandby = true, wait_for_input)
 
-Orchestrator receives completed report
-  → lastReport.status = "completed"
+Orchestrator receives directive_done report
+  → lastReport.status = "directive_done"
   → Can now send a new directive (guard passes)
 
-Agent receives new directive (standby)
-  → inStandby = false, resumes LLM loop
+New directive sent
+  → lastReport = { status: "in_progress" } (blocks duplicates)
+  → agent resumes LLM loop (inStandby = false)
+
+Orchestrator calls mark_agent_done
+  → terminate signal sent → agent workflow ends
 ```
 
-### Why Not Just Use Agent Status?
+### Key Design Decisions
 
-The guard checks `lastReport.status` instead of just `agentState.status` because:
-- `status = "active"` means "has a directive" but doesn't tell you if it's done
-- `lastReport.status = "completed"` means the agent finished and is in standby
-- Without `lastReport`, the agent hasn't reported anything yet → still working
+- **`directive_done` vs `completed`**: `signal_task_complete` reports `"directive_done"` (not `"completed"`) because `"completed"` sets `confirmedByAgent = true` and permanently blocks new directives. `"directive_done"` keeps the agent alive for sequential directives.
+- **`lastReport = in_progress` on send**: When a directive is sent, `lastReport` is immediately set to `{ status: "in_progress" }`. This prevents the LLM from sending duplicate directives in the same response (the guard sees "still working" for subsequent tool calls).
+- **No lastReport = first directive**: When `lastReport` is `null`, the agent hasn't received any directive yet. The guard allows the first directive through.
 
 ## Reporting to Orchestrator
 
@@ -89,7 +107,7 @@ Only these events generate `report_to_orchestrator`:
 
 | Trigger | Status | Summary |
 |---|---|---|
-| `signal_task_complete` tool call | `completed` | Agent-provided summary |
+| `signal_task_complete` tool call | `directive_done` | Agent-provided summary + node IDs |
 | Idle text loop (5 consecutive) | `failed` | "Agent FAILED: N text responses..." |
 | MAX_STEPS reached | `failed` | "Agent could not complete within N steps" |
 | Plugin disconnected | `interrupted` | "Plugin disconnected" |
