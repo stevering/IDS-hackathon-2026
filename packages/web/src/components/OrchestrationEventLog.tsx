@@ -53,6 +53,7 @@ function matchesAgentFilter(e: OrchestrationSSEEvent, agentFilter: string): bool
     case "orchestrator_tool_call":
     case "orchestrator_tool_result":
     case "orchestrator_input":
+    case "guardian_feedback":
       return false;
     default:
       return false;
@@ -275,6 +276,30 @@ function renderEvent(event: OrchestrationSSEEvent, index: number, agents: AgentV
                 {event.usage && <span>{event.modelId ? " · " : ""}{event.usage.totalTokens} tokens ({event.usage.promptTokens} in + {event.usage.completionTokens} out)</span>}
               </div>
             )}
+          </EventBlock>
+        </div>
+      );
+    }
+
+    // ── Guardian feedback ──────────────────────────────────────────────
+    case "guardian_feedback": {
+      const fbTarget = event.targetRole === "agent" && event.targetAgentShortId
+        ? `→ ${event.targetAgentShortId}`
+        : `→ ${event.targetRole}`;
+      return (
+        <div key={index}>
+          <EventBlock
+            event={event}
+            agents={agents}
+            title="Guardian"
+            subject={`feedback ${fbTarget}`}
+            preview={event.content}
+            defaultOpen={false}
+            colorClass="border-orange-500/20 bg-orange-500/5 text-orange-300"
+          >
+            <div className="text-xs text-orange-200/70 leading-relaxed whitespace-pre-wrap">
+              {event.content}
+            </div>
           </EventBlock>
         </div>
       );

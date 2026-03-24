@@ -447,8 +447,9 @@ export function processOrchestratorLLMResponse(
         `Do NOT write "[Called tool: ...]" in text — instead, invoke the tool "${toolName}" directly using the tool_use mechanism.`;
       const wrappedNudge = wrapMessage(nudge, "guardian-engine", "orchestrator", "guardian_feedback", state.metadataFormat);
       state.messageHistory.push({ role: "user", content: wrappedNudge });
-      effects.push({ type: "emit_event", event: { type: "orchestrator_text" as const, content: nudge, modelId } });
-      state.eventLog.push({ type: "orchestrator_text", content: nudge, modelId });
+      const fbEvent = { type: "guardian_feedback" as const, content: nudge, targetRole: "orchestrator" as const };
+      effects.push({ type: "emit_event", event: fbEvent });
+      state.eventLog.push(fbEvent);
       // Retry LLM — don't broadcast the broken text to agents
       effects.push({ type: "call_llm", messages: [...state.messageHistory], tools: getOrchestratorTools(state) });
       return effects;
@@ -761,6 +762,9 @@ export function processOrchestratorLLMResponse(
       role: "user",
       content: wrapMessage(allAssignedMsg, "guardian-engine", "orchestrator", "guardian_feedback", state.metadataFormat),
     });
+    const fbEvent = { type: "guardian_feedback" as const, content: allAssignedMsg, targetRole: "orchestrator" as const };
+    effects.push({ type: "emit_event", event: fbEvent });
+    state.eventLog.push(fbEvent);
   }
 
   // Signal continuation — LLM needs to see tool results
