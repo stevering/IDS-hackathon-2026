@@ -142,8 +142,12 @@ export function createAgentState(agent: AgentId): AgentWorkflowState {
 
 export function handleDirective(state: AgentWorkflowState, directive: DirectivePayload): void {
   state.directiveQueue.push(directive);
-  // Exit standby when a new directive arrives
-  state.inStandby = false;
+  // NOTE: do NOT set inStandby = false here. The main loop already wakes via
+  // directiveQueue.length > 0 in hasInput(). Setting inStandby = false prematurely
+  // disables the idle-text guard in processLLMResponse (line ~526) before the
+  // directive is actually injected into messageHistory by processQueues().
+  // inStandby is cleared in processQueues() when the directive is consumed.
+  //
   // Reset per-directive execution counter so signal_task_complete can verify work was done
   state.directiveExecCount = 0;
   // Store the latest directive content — used by file review instead of the global task
@@ -258,6 +262,9 @@ export function processQueues(state: AgentWorkflowState): AgentEffect[] {
 
   while (state.directiveQueue.length > 0) {
     const directive = state.directiveQueue.shift()!;
+    // Directive is now consumed — exit standby so the idle-text guard in
+    // processLLMResponse no longer short-circuits to wait_for_input.
+    state.inStandby = false;
     const body = `${directive.content}${directive.expectedResult ? `\n\nExpected result: ${directive.expectedResult}` : ""}`;
     state.messageHistory.push({
       role: "user",

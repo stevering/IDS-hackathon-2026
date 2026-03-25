@@ -37,6 +37,8 @@ LLM responds with text, no toolCalls
 
 **Standby exception:** When the agent is in standby (`inStandby = true`, after `signal_task_complete`), text-only responses skip the nudge entirely and return `wait_for_input`. This prevents a cycle where broadcasts from the orchestrator wake the agent, it writes "awaiting directive" text, the nudge pushes it to retry, and it loops until FAILED — while the real directive sits in the queue.
 
+**`inStandby` lifecycle:** The flag is set to `true` in `signal_task_complete` and cleared to `false` only when `processQueues()` consumes a directive from `directiveQueue`. Crucially, the signal handler `handleDirective()` does NOT clear `inStandby` — it only pushes to the queue. This prevents a race condition where a broadcast wakes the agent from standby, `handleDirective` clears `inStandby` before the directive is injected into `messageHistory`, and the idle-text guard is bypassed while the agent LLM loops in `executeLLMLoop` without ever seeing the directive.
+
 ## Shared Guardian Rules (agent + orchestrator)
 
 Both agents and the orchestrator apply the same text-based tool call detection in orchestration mode:
@@ -192,7 +194,9 @@ Orchestrator receives directive_done report
 
 New directive sent
   → lastReport = { status: "in_progress" } (blocks duplicates)
-  → agent resumes LLM loop (inStandby = false)
+  → directive queued in agent (directiveQueue)
+  → agent resumes main loop (directiveQueue.length > 0 wakes condition)
+  → processQueues() consumes directive → inStandby = false
 
 Orchestrator calls mark_agent_done
   → terminate signal sent → agent workflow ends
