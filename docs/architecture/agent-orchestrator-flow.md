@@ -256,6 +256,27 @@ Every LLM call returns `modelId` (the actual resolved model, e.g. `"moonshotai/k
 
 The Temporal worker maintains an in-memory cache of the Vercel AI Gateway model catalog (`https://ai-gateway.vercel.sh/v1/models`), refreshed every 24h. The cache stores which model IDs have the `"reasoning"` tag, used to decide whether to apply the middleware fallback. Same pattern as `model-pricing.ts`.
 
+## External MCP Tool: Error Detection (two layers)
+
+MCP tool execution has two failure modes, detected at different layers:
+
+### Layer 1: MCP `isError` (generic, all tools — `mcp.ts`)
+
+The MCP protocol's `CallToolResult` includes an `isError` boolean. `executeMCPTool` now checks this field after every execution. When `isError: true`:
+
+- Returns `{ success: false }` even though the transport succeeded
+- Extracts error text from the MCP content array for logging
+- Applies to **any** MCP server (Figma, GitHub, Supabase, etc.)
+
+### Layer 2: Figma code payload parsing (figma_execute specific — `agent.ts`)
+
+Some MCP servers (notably Figma Console) don't set `isError: true` when the JS code fails — they return `isError: false` with `{ success: false, error: "..." }` in the text payload. For `figma_execute` tools specifically, `handleExecuteExternalTool` parses the result payload to detect this. When Figma code failure is detected:
+
+- `recordExecResult(state, false)` — counts as a failed execution
+- The SSE activity shows `CODE ERROR` instead of `OK`
+- The canvas diff + file review pipeline is **skipped** — partial canvas changes from a failed execution should not be "verified" since the intent was not fulfilled
+- The raw result (with the error) is still injected as the tool result so the agent can read and fix the issue
+
 ## Agent Figma Tool Strategy
 
 When Figma Console MCP tools (`figmaconsole_*`) are available, the agent system prompt is slimmed down to promote high-level tools over raw code execution.

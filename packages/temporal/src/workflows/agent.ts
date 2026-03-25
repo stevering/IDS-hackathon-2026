@@ -861,9 +861,26 @@ async function handleExecuteExternalTool(
     agentId: state.agent.shortId,
   });
 
-  if (result.success) {
+  // For figma_execute tools, the MCP transport may succeed (result.success = true)
+  // while the Figma code itself fails (result.result contains { success: false }).
+  // Detect this and treat it as a partial failure so the agent knows the code errored.
+  let figmaCodeFailed = false;
+  if (result.success && resolved.rawName === "figma_execute") {
+    try {
+      const payload = typeof result.result === "string" ? JSON.parse(result.result)
+        : Array.isArray(result.result) ? JSON.parse(result.result.find((c: { type?: string; text?: string }) => c.type === "text")?.text ?? "{}")
+        : result.result;
+      if (payload && typeof payload === "object" && payload.success === false) {
+        figmaCodeFailed = true;
+      }
+    } catch { /* best-effort parsing */ }
+  }
+
+  if (result.success && !figmaCodeFailed) {
     recordExecResult(state, true);
     state.directiveExecCount = (state.directiveExecCount ?? 0) + 1;
+  } else if (result.success && figmaCodeFailed) {
+    recordExecResult(state, false);
   }
 
   // Emit tool result activity
@@ -871,10 +888,12 @@ async function handleExecuteExternalTool(
     type: "emit_activity",
     activities: [{
       action: "external_tool_result",
-      success: result.success ?? false,
-      summary: result.success
-        ? `${effect.toolName}: OK${result.result ? ` — ${JSON.stringify(result.result).slice(0, 200)}` : ""}`
-        : `${effect.toolName}: FAILED — ${result.error?.slice(0, 200) ?? "Unknown error"}`,
+      success: result.success ? !figmaCodeFailed : false,
+      summary: !result.success
+        ? `${effect.toolName}: FAILED — ${result.error?.slice(0, 200) ?? "Unknown error"}`
+        : figmaCodeFailed
+          ? `${effect.toolName}: CODE ERROR — ${JSON.stringify(result.result).slice(0, 200)}`
+          : `${effect.toolName}: OK${result.result ? ` — ${JSON.stringify(result.result).slice(0, 200)}` : ""}`,
     }],
   }, userId);
 
@@ -882,7 +901,9 @@ async function handleExecuteExternalTool(
   let verificationSummary: string | undefined;
   let afterScreenshot: string | undefined;
 
-  if (shouldCaptureDiff && result.success) {
+  // Skip diff/review when the Figma code itself reported failure — partial canvas
+  // changes may exist but the intent was not fulfilled, so "verified" would be misleading.
+  if (shouldCaptureDiff && result.success && !figmaCodeFailed) {
     try {
       const after = await captureCanvasDiff(clientId, userId, state.orchestratorWorkflowId, before);
       verificationSummary = after.diff;

@@ -372,6 +372,24 @@ export async function discoverMCPTools(params: {
 }
 
 // ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+/** Extract text from an MCP CallToolResult content array (best-effort). */
+function extractTextFromMCPResult(result: unknown): string {
+  try {
+    const r = result as Record<string, unknown>;
+    if (Array.isArray(r.content)) {
+      return r.content
+        .filter((c: Record<string, unknown>) => c.type === "text" && typeof c.text === "string")
+        .map((c: Record<string, unknown>) => c.text)
+        .join("\n");
+    }
+  } catch { /* best-effort */ }
+  return "";
+}
+
+// ---------------------------------------------------------------------------
 // executeMCPTool — called for each execute_external_tool effect
 // ---------------------------------------------------------------------------
 
@@ -419,6 +437,12 @@ export async function executeMCPTool(params: {
       log.info(`Executing via persistent stdio client...`, { args: JSON.stringify(params.arguments).slice(0, 500) });
       const result = await tool.execute(params.arguments, { toolCallId: `mcp-${Date.now()}` });
       entry.lastUsed = Date.now();
+      // MCP CallToolResult may have isError: true even when the transport succeeds
+      if (result && typeof result === "object" && (result as Record<string, unknown>).isError) {
+        const textContent = extractTextFromMCPResult(result);
+        log.warn(`Execution returned isError`, { req: params.toolName, error: textContent.slice(0, 200) });
+        return { success: false, result, error: textContent || "Tool reported an error" };
+      }
       log.info(`Execution succeeded`, { result: JSON.stringify(result).slice(0, 200) });
       return { success: true, result };
     }
@@ -453,6 +477,12 @@ export async function executeMCPTool(params: {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const result = await (tool as any).execute(params.arguments, { toolCallId: `mcp-${Date.now()}` });
     await client.close();
+    // MCP CallToolResult may have isError: true even when the transport succeeds
+    if (result && typeof result === "object" && (result as Record<string, unknown>).isError) {
+      const textContent = extractTextFromMCPResult(result);
+      log.warn(`Execution returned isError`, { req: params.toolName, error: textContent.slice(0, 200) });
+      return { success: false, result, error: textContent || "Tool reported an error" };
+    }
     log.info(`Execution succeeded`, { result: JSON.stringify(result).slice(0, 200) });
     return { success: true, result };
   } catch (err) {
