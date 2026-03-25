@@ -262,7 +262,7 @@ All output is printed to the terminal **and** written to `logs/dev.log` (gitigno
 ```bash
 pnpm dev:web              # Next.js only
 pnpm dev:mcp              # MCP server only
-pnpm dev:temporal          # Temporal worker only
+pnpm dev:temporal          # Temporal worker only (tsx --watch, auto-restarts on code changes)
 pnpm dev:temporal-server   # Temporal dev server only
 pnpm dev:overlay           # Electron overlay only
 pnpm dev:extension         # Chrome extension (watch)

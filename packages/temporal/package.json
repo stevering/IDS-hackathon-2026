@@ -13,7 +13,7 @@
     "build": "tsc --noEmit",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "dev": "dotenv-run -- node --import tsx/esm --watch --watch-path=src --watch-path=../orchestrations/src src/worker.ts",
+    "dev": "dotenv-run -- tsx --watch --watch-path=src --watch-path=../orchestrations/src src/worker.ts",
     "worker": "dotenv-run -- tsx src/worker.ts"
   },
   "dependencies": {

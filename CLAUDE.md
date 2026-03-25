@@ -10,11 +10,10 @@ Each time you modify a file, you have to update the documentation in:
 ## Dev environment
 
 - `pnpm dev` logs are written live to `logs/dev.log` at project root. Always check this file to verify server restarts, hot reloads, or errors — don't ask the user to paste terminal output.
-- The Temporal worker (`@guardian/temporal`) bundles workflows via webpack at startup. Changes in `packages/orchestrations/src/` trigger an auto-restart thanks to `--watch-path` in the dev script.
+- The Temporal worker (`@guardian/temporal`) uses `tsx --watch` with two watch paths: `src/` and `../orchestrations/src/`. Changes in either path auto-restart the worker (workflows, activities, and engine logic are all picked up).
+  - **Important**: do NOT switch back to `node --watch --import tsx/esm` — it has a bug where `--watch` and `--watch-path` flags are not propagated to the respawned child, so the worker only restarts once then stops watching.
 
 If you need a temprary directory for operations, create one here in the project root, in `tmp/`.
-
-- Activities in `packages/temporal/src/activities/` are NOT hot-reloaded — the Temporal worker must be restarted to pick up changes.
 
 ## LLM call delegation (dev-only)
 
