@@ -156,14 +156,9 @@ Create the admin account manually in Supabase Dashboard:
 
 ## Email Template
 
-Two copies of the invite email template exist:
+The invite email template is at `supabase/templates/invite.html` (single source of truth). It is used by Supabase local via `config.toml`. For production, paste its content into **Supabase Dashboard > Email Templates > Invite User**.
 
-| File | Used by |
-|------|---------|
-| `supabase/templates/invite.html` | Supabase local (via `config.toml`) |
-| `packages/web/src/app/admin/invite/email-template.html` | Reference for production (paste into Supabase Dashboard > Email Templates > Invite User) |
-
-Both files should be kept in sync. The template uses the Guardian logo (SVG base64), dark theme matching the app design, and `{{ .ConfirmationURL }}` for the magic link.
+The template uses the Guardian logo served from `/guardian-logo.svg` (via `{{ .SiteURL }}`), dark theme matching the app design, and `{{ .ConfirmationURL }}` for the magic link.
 
 ## Production Setup Checklist
 
