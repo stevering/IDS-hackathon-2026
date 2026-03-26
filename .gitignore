@@ -61,3 +61,6 @@ electron.vite.config.*.mjs
 # dev logs
 logs/
 tmp/
+
+# private internal repo (figdesys/guardian-internal)
+internal/
