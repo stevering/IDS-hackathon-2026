@@ -31,6 +31,8 @@ const PUBLIC_AUTH_ROUTES = [
   "/api/intercept",        // LLM intercept stream (dev-only) — protected by MCP service key
   "/api/admin",            // Admin routes — protected by Supabase auth + is_admin metadata
   "/api/signup/complete",  // Signup completion — protected by Supabase auth
+  "/api/signup/request-reinvite",  // Re-invite request — public, checks beta_invites table
+  "/api/signup/check-invite",      // Check invite status — public
 ];
 
 function getMcpCodeUrl(request: NextRequest): string | undefined {

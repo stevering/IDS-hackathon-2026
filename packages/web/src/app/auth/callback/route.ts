@@ -4,19 +4,24 @@ import { createServerClient } from "@supabase/ssr";
 
 /**
  * Auth callback handler for Supabase invite magic links.
- * Supabase redirects here after the user clicks the invite link.
- * We exchange the code for a session and redirect to profile completion.
+ *
+ * Two flows land here:
+ * - PKCE (prod): Supabase redirects with ?code=xxx → exchange for session → /signup/complete
+ * - Implicit error (local+prod): Supabase redirects with #error=... → no code →
+ *   redirect to /login (browser preserves the hash, login page handles it client-side)
  */
 export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
   const code = searchParams.get("code");
-  const next = searchParams.get("next") ?? "/signup/complete";
 
+  // No code = either an error (hash) or direct access. Redirect to login.
+  // The browser preserves the hash fragment during the redirect,
+  // so /login receives #error=... and handles it client-side.
   if (!code) {
     return NextResponse.redirect(new URL("/login", request.url));
   }
 
-  let response = NextResponse.redirect(new URL(next, request.url));
+  let response = NextResponse.redirect(new URL("/signup/complete", request.url));
 
   const supabase = createServerClient(
     process.env.NEXT_PUBLIC_STORAGE_SUPABASE_URL!,
@@ -44,7 +49,7 @@ export async function GET(request: NextRequest) {
 
   if (error) {
     console.error("[Auth Callback] Error exchanging code:", error.message);
-    return NextResponse.redirect(new URL("/login?error=invite_expired", request.url));
+    return NextResponse.redirect(new URL("/login", request.url));
   }
 
   return response;

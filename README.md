@@ -140,6 +140,7 @@ pnpm dev:proxy
 #### Install
 
 - Clone this repository with your favorite code editor (IDE)
+- Install [Docker Desktop](https://www.docker.com/products/docker-desktop/) (required for Supabase local)
 - Install [pnpm](https://pnpm.io/installation) if not already available (`npm install -g pnpm`)
 - Install all workspace dependencies from the repo root:
 ```bash
@@ -165,57 +166,32 @@ GITHUB_CLIENT_ID=GITHUB_CLIENT_ID
 GITHUB_CLIENT_SECRET=GITHUB_CLIENT_SECRET
 ```
 
-#### Guardian Auth — Database setup (fresh install)
+#### Database — Supabase
 
-Guardian Auth uses [Better Auth](https://www.better-auth.com/) backed by a PostgreSQL database (Vercel Postgres / Neon).
+Guardian uses [Supabase](https://supabase.com/) for authentication, data storage, and row-level security.
 
-**1. Provision a database**
-
-In the [Vercel dashboard](https://vercel.com/dashboard):
-- Go to **Storage** → **Create** → **Neon**
-- Follow the wizard (Hobby plan is free)
-- Once created, go to the database page → **`.env.local`** tab → copy `DATABASE_URL`
-
-**2. Add the required env vars to `.env.local`**
+**Local development** uses Supabase local (Docker-based). Make sure Docker Desktop is running, then:
 
 ```bash
-# Neon / Vercel Postgres connection string
-DATABASE_URL=postgres://...
-
-# Random secret used to sign auth tokens (generate one below)
-BETTER_AUTH_SECRET=<generated>
-
-# Public URL of the web app (used for cookie domain + OAuth callbacks)
-BETTER_AUTH_URL=http://localhost:3000        # dev
-# BETTER_AUTH_URL=https://your-domain.com   # prod
+pnpm dev:supabase        # Start Supabase local (runs in background via Docker)
+pnpm dev:supabase:stop   # Stop Supabase local
 ```
 
-Generate a strong secret:
-```bash
-openssl rand -base64 32
-```
+A seed file (`supabase/seed.sql`) creates a default admin account:
+- **Email:** `admin@guardian.local`
+- **Password:** `admin`
 
-**3. Run the database migration**
+`pnpm dev` automatically checks that Supabase local is running and offers to start it if not.
 
-Better Auth manages its own tables (`user`, `session`, `account`, …). Run the migration once after any schema change:
+Supabase local includes **Mailpit** (`http://127.0.0.1:54324`), a local email inbox that captures all emails (invite links, password resets, etc.) instead of sending them. Use it to test the invite flow.
 
-```bash
-cd packages/web
-dotenv-run -- npx @better-auth/cli migrate
-```
+**Production** uses a hosted Supabase project. The admin account must be created manually:
+1. Go to **Supabase Dashboard > Authentication > Users > Add user**
+2. Enter email and password, check **Auto Confirm**
+3. Click the user, **Edit user metadata**, add: `{"is_admin": true, "profile_completed": true}`
+4. Save
 
-> `dotenv-run` is required so that the CLI picks up `DATABASE_URL` from `.env.local`.
-> If `dotenv-run` is not installed globally: `npx dotenv-run -- npx @better-auth/cli migrate`
-
-**4. Dev vs prod database (Neon branching)**
-
-To avoid pointing your local dev environment at the production database, create a separate branch in Neon:
-
-- In the Neon dashboard → your project → **Branches** → **Create branch** (name it `dev`)
-- Copy the `DATABASE_URL` of the `dev` branch
-- Use it in your local `.env.local`; keep the `main` branch URL for the Vercel production environment variable
-
-This way, schema experiments and test accounts never touch production data.
+**Beta access:** The platform is invite-only. Admins invite users from `/admin/invite`. Invited users receive a magic link email, then complete their profile (name, role, Terms acceptance) before accessing the platform.
 
 #### MCP of code editor
 
@@ -243,6 +219,10 @@ This starts **everything**:
 
 | Service | Port | Package |
 |---|---|---|
+| Supabase Studio (admin UI) | 54323 | - (Docker, started separately) |
+| Supabase Mailpit (email inbox) | 54324 | - (Docker, started separately) |
+| Supabase (API) | 54321 | - (Docker, started separately) |
+| Supabase (DB) | 54322 | - (Docker, started separately) |
 | Next.js webapp | 3000 | `@guardian/web` |
 | MCP server (HTTP) | 3847 | `@guardian/mcp-server` |
 | Temporal dev server | 7233 | - |
@@ -260,12 +240,15 @@ All output is printed to the terminal **and** written to `logs/dev.log` (gitigno
 #### Individual services
 
 ```bash
-pnpm dev:web              # Next.js only
-pnpm dev:mcp              # MCP server only
-pnpm dev:temporal          # Temporal worker only (tsx --watch, auto-restarts on code changes)
-pnpm dev:temporal-server   # Temporal dev server only
-pnpm dev:overlay           # Electron overlay only
-pnpm dev:extension         # Chrome extension (watch)
+pnpm dev:supabase          # Supabase local (Docker, runs in background)
+pnpm dev:supabase:stop     # Stop Supabase local (data preserved)
+pnpm dev:supabase:reset    # Wipe all data and restart fresh (re-applies migrations + seed)
+pnpm dev:web               # Next.js only
+pnpm dev:mcp               # MCP server only
+pnpm dev:temporal           # Temporal worker only (tsx --watch, auto-restarts on code changes)
+pnpm dev:temporal-server    # Temporal dev server only
+pnpm dev:overlay            # Electron overlay only
+pnpm dev:extension          # Chrome extension (watch)
 ```
 
 #### Tests

@@ -7,6 +7,9 @@ In any AI chat, discuss in the user language, based on the user messages, ignori
 Each time you modify a file, you have to update the documentation in:
 - `docs/architecture/*.md`
 
+Each time you modify a file, if something changed and impacts the `README.md`, you have to update the documentation in:
+- `README.md`
+
 ## Dev environment
 
 - `pnpm dev` logs are written live to `logs/dev.log` at project root. Always check this file to verify server restarts, hot reloads, or errors — don't ask the user to paste terminal output.

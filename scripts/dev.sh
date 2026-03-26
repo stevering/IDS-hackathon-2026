@@ -8,6 +8,23 @@ set -e
 mkdir -p logs
 : > logs/dev.log
 
+# Check that Supabase local is running
+if ! npx supabase status > /dev/null 2>&1; then
+  echo ""
+  echo "⚠  Supabase local is not running."
+  echo ""
+  read -rp "   Start it now? (Y/n) " answer
+  if [[ "$answer" =~ ^[Nn] ]]; then
+    echo "   Skipping. Run 'pnpm dev:supabase' to start it manually."
+    echo "   To stop it later: 'pnpm dev:supabase:stop'"
+  else
+    echo "   Starting Supabase local..."
+    npx supabase start
+    echo "   Supabase is running in background. To stop it: 'pnpm dev:supabase:stop'"
+    echo ""
+  fi
+fi
+
 export FORCE_COLOR=1
 
 concurrently -k -n srv,apps -c yellow,cyan \
