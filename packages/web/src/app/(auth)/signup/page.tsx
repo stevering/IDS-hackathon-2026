@@ -1,91 +1,28 @@
 "use client";
 
-import { useState } from "react";
 import Link from "next/link";
-import { createClient } from "@/lib/supabase/client";
 
 export default function SignupPage() {
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-  const [name, setName] = useState("");
-  const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
-
-  async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault();
-    setError(null);
-    setLoading(true);
-
-    const supabase = createClient();
-    const { error } = await supabase.auth.signUp({
-      email,
-      password,
-      options: { data: { name } },
-    });
-
-    if (error) {
-      const msg = error.message?.toLowerCase() ?? "";
-      // Don't expose whether the account already exists (enumeration) → neutral message
-      const userMsg = msg.includes("password")
-        ? "Password must be at least 8 characters"
-        : "Unable to create account, please try again";
-      setError(userMsg);
-      setLoading(false);
-    } else {
-      window.location.href = "/";
-    }
-  }
-
   return (
     <div className="min-h-screen flex items-center justify-center px-4">
-      <div className="w-full max-w-sm">
-        <div className="mb-8 text-center">
+      <div className="w-full max-w-sm text-center">
+        <div className="mb-8">
           <div className="text-3xl mb-2">🛡</div>
           <h1 className="text-xl font-semibold">Guardian</h1>
-          <p className="text-sm text-white/50 mt-1">Create your account</p>
+          <p className="text-sm text-white/50 mt-1">Private Beta</p>
         </div>
 
-        <form onSubmit={handleSubmit} className="flex flex-col gap-3">
-          <input
-            type="text"
-            placeholder="Name"
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            required
-            className="w-full px-4 py-2.5 rounded-lg bg-white/5 border border-white/10 text-sm outline-none focus:border-white/30 transition-colors"
-          />
-          <input
-            type="email"
-            placeholder="Email"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            required
-            className="w-full px-4 py-2.5 rounded-lg bg-white/5 border border-white/10 text-sm outline-none focus:border-white/30 transition-colors"
-          />
-          <input
-            type="password"
-            placeholder="Password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            required
-            minLength={8}
-            className="w-full px-4 py-2.5 rounded-lg bg-white/5 border border-white/10 text-sm outline-none focus:border-white/30 transition-colors"
-          />
+        <div className="px-4 py-6 rounded-lg bg-white/[0.03] border border-white/[0.08] mb-6">
+          <p className="text-sm text-white/70 leading-relaxed">
+            Access to Guardian is currently <strong className="text-white">invite-only</strong>.
+          </p>
+          <p className="text-xs text-white/40 mt-3 leading-relaxed">
+            If you have received an invitation email, click the link in the email to create your account.
+            If you believe you should have access, contact your administrator.
+          </p>
+        </div>
 
-          {error && (
-            <p className="text-red-400 text-xs px-1">{error}</p>
-          )}
-
-          <button
-            type="submit"
-            disabled={loading}
-            className="w-full py-2.5 rounded-lg bg-white text-black text-sm font-medium disabled:opacity-40 transition-opacity mt-1"
-          >
-            {loading ? "Creating…" : "Create my account"}
-          </button>
-        </form>
-
-        <p className="text-center text-sm text-white/40 mt-6">
+        <p className="text-sm text-white/40">
           Already have an account?{" "}
           <Link href="/login" className="text-white/70 hover:text-white transition-colors">
             Sign in

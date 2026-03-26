@@ -5,7 +5,8 @@ import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
 
 export default function LoginPage() {
-  const [email, setEmail] = useState("");
+  const isDev = process.env.NODE_ENV === "development";
+  const [email, setEmail] = useState(isDev ? "admin@guardian.local" : "");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -78,7 +79,7 @@ export default function LoginPage() {
         <p className="text-center text-sm text-white/40 mt-6">
           Don&apos;t have an account?{" "}
           <Link href="/signup" className="text-white/70 hover:text-white transition-colors">
-            Sign up
+            Request access
           </Link>
         </p>
       </div>

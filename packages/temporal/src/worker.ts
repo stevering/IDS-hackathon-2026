@@ -3,9 +3,14 @@
  *
  * Registers workflows and activities, connects to the Temporal server,
  * and starts processing tasks from the guardian-orchestration queue.
+ *
+ * Supports three connection modes (auto-detected from env vars):
+ *   1. Local dev server — plain gRPC, no TLS (default)
+ *   2. Temporal Cloud API key — TLS + TEMPORAL_API_KEY
+ *   3. Temporal Cloud mTLS — TLS + base64-encoded client certificate pair
  */
 
-import { Worker, NativeConnection } from "@temporalio/worker";
+import { Worker, NativeConnection, type NativeConnectionOptions } from "@temporalio/worker";
 import { callLLM } from "./activities/llm.js";
 import { executeFigmaCode } from "./activities/figma-execute.js";
 import { checkPresence } from "./activities/presence.js";
@@ -17,11 +22,29 @@ async function run() {
   const address = process.env.TEMPORAL_ADDRESS ?? "localhost:7233";
   const namespace = process.env.TEMPORAL_NAMESPACE ?? "default";
   const taskQueue = process.env.TEMPORAL_TASK_QUEUE ?? "guardian-orchestration";
+  const apiKey = process.env.TEMPORAL_API_KEY;
+  const certB64 = process.env.TEMPORAL_CLIENT_CERT_BASE64;
+  const keyB64 = process.env.TEMPORAL_CLIENT_KEY_BASE64;
 
   console.log(`[temporal-worker] ⏳ Starting... (${new Date().toISOString()})`);
 
-  const connection = await NativeConnection.connect({ address });
-  console.log(`[temporal-worker] ⏳ Connected to Temporal (${address}), building workflow bundle...`);
+  const connOpts: NativeConnectionOptions = { address };
+
+  if (apiKey) {
+    connOpts.tls = true;
+    connOpts.apiKey = apiKey;
+  } else if (certB64 && keyB64) {
+    connOpts.tls = {
+      clientCertPair: {
+        crt: Buffer.from(certB64, "base64"),
+        key: Buffer.from(keyB64, "base64"),
+      },
+    };
+  }
+
+  const connection = await NativeConnection.connect(connOpts);
+  const mode = apiKey ? "Cloud (API key)" : certB64 ? "Cloud (mTLS)" : "local";
+  console.log(`[temporal-worker] ⏳ Connected to Temporal (${address}, ${mode}), building workflow bundle...`);
 
   const worker = await Worker.create({
     connection,

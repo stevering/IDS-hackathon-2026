@@ -29,6 +29,8 @@ const PUBLIC_AUTH_ROUTES = [
   "/api/orchestration",    // Temporal orchestration API — protected by Supabase auth
   "/api/user/settings",    // User collaboration settings — protected by Supabase auth
   "/api/intercept",        // LLM intercept stream (dev-only) — protected by MCP service key
+  "/api/admin",            // Admin routes — protected by Supabase auth + is_admin metadata
+  "/api/signup/complete",  // Signup completion — protected by Supabase auth
 ];
 
 function getMcpCodeUrl(request: NextRequest): string | undefined {
@@ -42,7 +44,13 @@ function getMcpCodeUrl(request: NextRequest): string | undefined {
 }
 
 // Pages accessible without being logged in
-const PUBLIC_PAGES = ["/login", "/signup", "/oauth/consent"];
+const PUBLIC_PAGES = ["/login", "/signup", "/oauth/consent", "/auth/callback"];
+
+// Pages that require auth but NOT a completed profile
+const ONBOARDING_PAGES = ["/signup/complete"];
+
+// Admin-only pages (checked via user_metadata.is_admin)
+const ADMIN_PAGES = ["/admin"];
 
 export async function proxy(request: NextRequest) {
   const { pathname, search } = request.nextUrl;
@@ -91,6 +99,25 @@ export async function proxy(request: NextRequest) {
 
     if (!user) {
       return NextResponse.redirect(new URL("/login", request.url));
+    }
+
+    const isOnboarding = ONBOARDING_PAGES.some((p) => pathname.startsWith(p));
+    const isAdmin = ADMIN_PAGES.some((p) => pathname.startsWith(p));
+    const profileCompleted = user.user_metadata?.profile_completed === true;
+
+    // Profile not completed yet — redirect to onboarding (except if already there)
+    if (!profileCompleted && !isOnboarding) {
+      return NextResponse.redirect(new URL("/signup/complete", request.url));
+    }
+
+    // Profile completed but trying to access onboarding — redirect to home
+    if (profileCompleted && isOnboarding) {
+      return NextResponse.redirect(new URL("/", request.url));
+    }
+
+    // Admin pages — check is_admin flag in user metadata
+    if (isAdmin && user.user_metadata?.is_admin !== true) {
+      return NextResponse.redirect(new URL("/", request.url));
     }
 
     return response;
