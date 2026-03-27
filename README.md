@@ -253,14 +253,40 @@ pnpm dev:extension          # Chrome extension (watch)
 
 #### Preview mode
 
-`pnpm dev:preview` launches a lean dev stack for testing against the preview environment. Only the packages that need local building/watching are started — the webapp and MCP server are served by Vercel.
+`pnpm dev:preview` launches a lean dev stack for testing the Figma plugin against the preview cloud environment. Only the packages that need local building are started — the webapp, MCP server, database and orchestration server are all in the cloud.
+
+##### Quick start (new developer)
+
+1. Clone the repo and install dependencies:
+   ```bash
+   git clone <repo-url> && cd IDS-hackathon-2026
+   pnpm install
+   ```
+
+2. Get the env files from an existing team member:
+   - `.env.local` — local defaults (Figma OAuth keys, MCP URLs)
+   - `.env.preview` — cloud credentials (Temporal Cloud, Supabase Cloud)
+
+3. Start the preview stack:
+   ```bash
+   pnpm dev:preview
+   ```
+   You should see: `☁  Preview mode` with the Temporal and Supabase cloud addresses.
+
+4. Import the plugin in Figma Desktop:
+   - Plugins > Development > **Import plugin from manifest...**
+   - Select `packages/figma-desktop-plugin/manifest.json`
+
+5. Open the plugin from the Plugins > Development menu. It loads `preview.guardian.figdesys.com` in the iframe.
+
+6. Log in with your beta account (invite-only). The webapp, chat, and collabs all run against the preview cloud.
+
+##### What runs locally
 
 ```bash
 pnpm dev              # full local stack (all packages + local Temporal + local Supabase)
 pnpm dev:preview      # lean preview stack (see below)
 ```
-
-**What runs locally with `dev:preview`:**
 
 | Process | Package | Purpose |
 |---|---|---|
@@ -270,16 +296,23 @@ pnpm dev:preview      # lean preview stack (see below)
 | Bridge (tsc watch) | `@guardian/bridge` | Shared types |
 | Temporal worker | `@guardian/temporal` | Connected to Temporal Cloud |
 
-**What is NOT started** (served by Vercel preview):
+##### What is NOT started (served by Vercel/cloud)
+
 - `@guardian/web` — webapp is on `preview.guardian.figdesys.com`
 - `@guardian/mcp-server` — MCP server is on Vercel
-- `@guardian/electron-overlay` — not needed
+- `@guardian/electron-overlay` — not needed for preview testing
 - Temporal dev server — using Temporal Cloud
 - Supabase local — using Supabase Cloud
 
-**Env loading:** `.env.local` (local defaults) → `.env.prod` (overrides Temporal Cloud + Supabase Cloud addresses).
+##### Env loading
 
-**Setup:** import the plugin manifest in Figma Desktop (Plugins > Development > Import from manifest) and reopen the plugin after each rebuild to pick up the new URL.
+`.env.local` (local defaults) → `.env.preview` (overrides Temporal Cloud + Supabase Cloud addresses). The Temporal worker runs without `dotenv-run` to ensure cloud env vars are not overridden by local defaults.
+
+##### Notes
+
+- **First connection can be slow**: the Figma plugin and the Chrome tab may take a few seconds to see each other via Supabase Realtime Presence (remote latency vs instant in local).
+- **After rebuilding the plugin**: close and reopen it in Figma to pick up the new `dist/ui.html`.
+- **Collabs require the Temporal worker**: if the worker is not running, orchestrations will queue indefinitely. Only one developer should run the worker per Temporal Cloud namespace to avoid task conflicts.
 
 #### Figma plugin build
 

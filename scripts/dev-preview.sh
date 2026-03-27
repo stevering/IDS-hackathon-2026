@@ -15,7 +15,7 @@
 #
 # Env loading:
 #   1. .env.local — local defaults (Figma keys, etc.)
-#   2. .env.prod — overrides cloud vars (Temporal Cloud, Supabase Cloud)
+#   2. .env.preview — overrides cloud vars (Temporal Cloud, Supabase Cloud)
 #   3. GUARDIAN_URL forced to preview
 
 set -e
@@ -27,10 +27,10 @@ if [ -f .env.local ]; then
   set +a
 fi
 
-# 2. Override with cloud values
-if [ -f .env.prod ]; then
+# 2. Override with preview/cloud values
+if [ -f .env.preview ]; then
   set -a
-  source .env.prod
+  source .env.preview
   set +a
 fi
 
