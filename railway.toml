@@ -4,3 +4,6 @@ dockerfilePath = "packages/temporal/Dockerfile"
 [deploy]
 restartPolicyType = "ON_FAILURE"
 restartPolicyMaxRetries = 5
+# No health check — this is a worker process, not an HTTP server
+healthcheckPath = ""
+healthcheckTimeout = 0
