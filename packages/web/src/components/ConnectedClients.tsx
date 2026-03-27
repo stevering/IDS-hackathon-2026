@@ -87,6 +87,7 @@ export function ConnectedClients({ clients: presenceClients, loading, connection
 
   // Merge DB clients with Realtime presence
   const onlineSet = new Set(presenceClients.map((c) => c.clientId));
+  const dbClientIds = new Set(dbClients.map((db) => db.client_id));
 
   const merged: MergedClient[] = dbClients.map((db) => {
     const rt = presenceClients.find((p) => p.clientId === db.client_id);
@@ -104,6 +105,25 @@ export function ConnectedClients({ clients: presenceClients, loading, connection
       figmaContext: rt?.figmaContext,
     };
   });
+
+  // Add presence-only clients not yet in the DB (e.g. just connected)
+  for (const rt of presenceClients) {
+    if (!dbClientIds.has(rt.clientId)) {
+      merged.push({
+        clientId: rt.clientId,
+        shortId: rt.shortId,
+        type: rt.type,
+        label: rt.label,
+        fileKey: rt.fileKey,
+        lastSeen: new Date(rt.connectedAt).toISOString(),
+        createdAt: new Date(rt.connectedAt).toISOString(),
+        online: true,
+        agentRole: rt.agentRole ?? "idle",
+        mcpInfo: rt.mcpInfo,
+        figmaContext: rt.figmaContext,
+      });
+    }
+  }
 
   // Sort: online first, then by last seen
   merged.sort((a, b) => {
