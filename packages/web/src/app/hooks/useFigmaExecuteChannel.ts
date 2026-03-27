@@ -234,31 +234,11 @@ export function useFigmaExecuteChannel(
     channelRef.current = channel;
 
     // Fallback: if no Realtime presence sync arrives within PRESENCE_SYNC_TIMEOUT_MS,
-    // poll the DB for active clients so the UI isn't stuck empty (common in preview deploys).
-    const fallbackTimer = setTimeout(async () => {
+    // just end the connecting state. We do NOT inject fake presence clients —
+    // only Realtime determines who is truly online.
+    const fallbackTimer = setTimeout(() => {
       if (presenceSynced) return;
-      console.warn("[ExecuteChannel] Presence sync timeout — falling back to DB polling");
-      try {
-        const res = await fetch("/api/clients?active=true");
-        if (res.ok) {
-          const { clients: dbClients } = await res.json();
-          if (!presenceSynced && Array.isArray(dbClients) && dbClients.length > 0) {
-            const fallback: PresenceClient[] = dbClients.map((db: { client_id: string; client_type: string; short_id: string; label?: string; file_key?: string; last_seen_at: string; agent_role?: string }) => ({
-              type: (db.client_type as ClientType) ?? "webapp",
-              clientId: db.client_id,
-              shortId: db.short_id,
-              label: db.label ?? db.client_type,
-              fileKey: db.file_key ?? undefined,
-              connectedAt: new Date(db.last_seen_at).getTime(),
-              presenceRef: "",
-              agentRole: (db.agent_role ?? "idle") as PresenceClient["agentRole"],
-            }));
-            setClients(fallback);
-          }
-        }
-      } catch {
-        // Ignore — Realtime will eventually sync
-      }
+      console.warn("[ExecuteChannel] Presence sync timeout — ending connecting state");
       setConnectionStatus("connected");
     }, PRESENCE_SYNC_TIMEOUT_MS);
 
