@@ -44,7 +44,7 @@ function capitalize(s: string) {
 
 export default function AccountPage() {
   const router = useRouter();
-  const { clients: presenceClients, loading: presenceLoading } = useGuardianPresence();
+  const { clients: presenceClients, loading: presenceLoading, connectionStatus: presenceConnectionStatus } = useGuardianPresence();
   const [keys, setKeys] = useState<StoredKey[]>([]);
   const [usage, setUsage] = useState<{
     daily: { total_tokens: number; input_tokens: number; output_tokens: number; cost_input_usd: number; cost_output_usd: number; limit: number };
@@ -982,7 +982,7 @@ export default function AccountPage() {
       </section>
 
       {/* Connected Clients */}
-      <ConnectedClients clients={presenceClients} loading={presenceLoading} />
+      <ConnectedClients clients={presenceClients} loading={presenceLoading} connectionStatus={presenceConnectionStatus} />
       </div>
   );
 }

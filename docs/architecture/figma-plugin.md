@@ -77,6 +77,14 @@ Figma plugins run in two isolated contexts. This is a Figma platform constraint,
                                                   (Supabase Realtime)
 ```
 
+### Presence resilience (preview/production)
+
+Supabase Realtime Presence can be slow to sync in preview/production (several seconds vs near-instant locally). Three mitigations:
+
+1. **Keepalive interval**: 10s (was 30s) — faster dead-connection detection and fresher presence.
+2. **Fallback DB polling**: if no Realtime `sync` event within 5s, `useFigmaExecuteChannel` and `useGuardianPresence` poll `/api/clients?active=true` to populate the client list from the DB. Once Realtime catches up, it overwrites the fallback.
+3. **Connection status**: hooks expose `connectionStatus` (`connecting` | `connected` | `reconnecting`). The `ConnectedClients` component shows a badge during connection establishment.
+
 In production: only the webapp bridge is active. No WS connections (blocked by `allowedDomains`).
 FC Bridge code exists in ui.html but is dead code (scan fails silently).
 Proxy handler and console capture exist in code.ts but are never triggered.

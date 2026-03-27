@@ -1150,7 +1150,7 @@ export default function Home() {
   // In trust mode: show ApprovalOverlay before each execution.
   const channelExecuteCode = gatedExecuteCode;
 
-  const { clients, clientId: myClientId, channelRef } = useFigmaExecuteChannel(channelExecuteCode, true, {
+  const { clients, clientId: myClientId, connectionStatus, channelRef } = useFigmaExecuteChannel(channelExecuteCode, true, {
     type: clientTypeForChannel,
     label: clientLabel,
     fileKey: clientFileKey,

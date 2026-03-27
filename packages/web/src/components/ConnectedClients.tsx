@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import type { PresenceClient } from "@/types/presence";
+import type { ConnectionStatus } from "@/app/hooks/useFigmaExecuteChannel";
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -66,11 +67,12 @@ type MergedClient = {
 type Props = {
   clients: PresenceClient[];  // Realtime presence (online clients)
   loading?: boolean;
+  connectionStatus?: ConnectionStatus;
 };
 
 // ── Component ───────────────────────────────────────────────────────────────
 
-export function ConnectedClients({ clients: presenceClients, loading }: Props) {
+export function ConnectedClients({ clients: presenceClients, loading, connectionStatus }: Props) {
   const [dbClients, setDbClients] = useState<DbClient[]>([]);
   const [dbLoading, setDbLoading] = useState(true);
 
@@ -133,6 +135,15 @@ export function ConnectedClients({ clients: presenceClients, loading }: Props) {
         <span className="ml-2 text-xs text-white/40">
           {onlineCount} online / {merged.length} registered
         </span>
+        {connectionStatus && connectionStatus !== "connected" && (
+          <span className={`ml-2 text-[10px] px-1.5 py-0.5 rounded ${
+            connectionStatus === "reconnecting"
+              ? "bg-amber-500/15 text-amber-400"
+              : "bg-blue-500/15 text-blue-400"
+          }`}>
+            {connectionStatus === "reconnecting" ? "reconnecting..." : "connecting..."}
+          </span>
+        )}
       </h2>
 
       {merged.length === 0 ? (

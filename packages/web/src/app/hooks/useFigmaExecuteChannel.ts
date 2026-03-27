@@ -7,7 +7,10 @@ import { parsePresenceState, type ClientType, type PresenceClient } from "@/type
 
 
 const CHANNEL_BASE = "guardian:execute";
-const PRESENCE_KEEPALIVE_MS = 30 * 1000; // Re-track presence every 30 seconds
+const PRESENCE_KEEPALIVE_MS = 10 * 1000; // Re-track presence every 10 seconds (faster sync in preview)
+const PRESENCE_SYNC_TIMEOUT_MS = 5 * 1000; // Fallback to DB polling if no Realtime sync within 5s
+
+export type ConnectionStatus = "connecting" | "connected" | "reconnecting";
 
 export type ClientInfo = {
   type: ClientType;
@@ -29,7 +32,7 @@ export function useFigmaExecuteChannel(
   clientInfo?: ClientInfo,
   eventLogRef?: React.RefObject<PluginEvent[]>,
   onOrchestrationDetected?: (workflowId: string) => void,
-): { clients: PresenceClient[]; clientId: string; channelRef: React.RefObject<ReturnType<ReturnType<typeof createClient>["channel"]> | null> } {
+): { clients: PresenceClient[]; clientId: string; connectionStatus: ConnectionStatus; channelRef: React.RefObject<ReturnType<ReturnType<typeof createClient>["channel"]> | null> } {
   const onOrchestrationDetectedRef = useRef(onOrchestrationDetected);
   onOrchestrationDetectedRef.current = onOrchestrationDetected;
   const busy = useRef(false);
@@ -37,6 +40,7 @@ export function useFigmaExecuteChannel(
   executeCodeRef.current = executeCode;
   const [userId, setUserId] = useState<string | null>(null);
   const [clients, setClients] = useState<PresenceClient[]>([]);
+  const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>("connecting");
   const [reconnectKey, setReconnectKey] = useState(0); // Increment to force full channel recreation
 
   // Self-generated stable client ID.
@@ -105,6 +109,7 @@ export function useFigmaExecuteChannel(
 
     const channelName = `${CHANNEL_BASE}:${userId}`;
     const supabase = createClient();
+    let presenceSynced = false;
     const channel = supabase.channel(channelName, {
       config: { presence: { key: userId } },
     });
@@ -180,6 +185,8 @@ export function useFigmaExecuteChannel(
         }
       })
       .on("presence", { event: "sync" }, () => {
+        presenceSynced = true;
+        setConnectionStatus("connected");
         handlePresenceSync(
           channel.presenceState() as Record<
             string,
@@ -226,6 +233,35 @@ export function useFigmaExecuteChannel(
 
     channelRef.current = channel;
 
+    // Fallback: if no Realtime presence sync arrives within PRESENCE_SYNC_TIMEOUT_MS,
+    // poll the DB for active clients so the UI isn't stuck empty (common in preview deploys).
+    const fallbackTimer = setTimeout(async () => {
+      if (presenceSynced) return;
+      console.warn("[ExecuteChannel] Presence sync timeout — falling back to DB polling");
+      try {
+        const res = await fetch("/api/clients?active=true");
+        if (res.ok) {
+          const { clients: dbClients } = await res.json();
+          if (!presenceSynced && Array.isArray(dbClients) && dbClients.length > 0) {
+            const fallback: PresenceClient[] = dbClients.map((db: { client_id: string; client_type: string; short_id: string; label?: string; file_key?: string; last_seen_at: string; agent_role?: string }) => ({
+              type: (db.client_type as ClientType) ?? "webapp",
+              clientId: db.client_id,
+              shortId: db.short_id,
+              label: db.label ?? db.client_type,
+              fileKey: db.file_key ?? undefined,
+              connectedAt: new Date(db.last_seen_at).getTime(),
+              presenceRef: "",
+              agentRole: (db.agent_role ?? "idle") as PresenceClient["agentRole"],
+            }));
+            setClients(fallback);
+          }
+        }
+      } catch {
+        // Ignore — Realtime will eventually sync
+      }
+      setConnectionStatus("connected");
+    }, PRESENCE_SYNC_TIMEOUT_MS);
+
     // Presence keepalive: periodically check connection health and re-track.
     // If the WebSocket is dead, increment reconnectKey to force a full channel recreation
     // (the useEffect will re-run, creating a new Supabase client + channel from scratch).
@@ -241,6 +277,7 @@ export function useFigmaExecuteChannel(
       if (!wsConnected) {
         console.warn("[ExecuteChannel] WebSocket dead, clearing clients and forcing full reconnect...");
         setClients([]);
+        setConnectionStatus("reconnecting");
         setReconnectKey((k) => k + 1); // Triggers useEffect cleanup + re-run
         return;
       }
@@ -251,11 +288,13 @@ export function useFigmaExecuteChannel(
       } catch {
         console.warn("[ExecuteChannel] Presence re-track failed, forcing full reconnect...");
         setClients([]);
+        setConnectionStatus("reconnecting");
         setReconnectKey((k) => k + 1);
       }
     }, PRESENCE_KEEPALIVE_MS);
 
     return () => {
+      clearTimeout(fallbackTimer);
       clearInterval(keepaliveTimer);
       channelRef.current = null;
       channel.unsubscribe();
@@ -305,5 +344,5 @@ export function useFigmaExecuteChannel(
     });
   }, [serverShortId]);
 
-  return { clients, clientId: clientId.current, channelRef };
+  return { clients, clientId: clientId.current, connectionStatus, channelRef };
 }

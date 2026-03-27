@@ -305,7 +305,7 @@ pnpm dev:preview      # lean preview stack (see below)
 
 ##### Notes
 
-- **First connection can be slow**: the Figma plugin and the Chrome tab may take a few seconds to see each other via Supabase Realtime Presence (remote latency vs instant in local).
+- **First connection can be slow**: the Figma plugin and the Chrome tab may take a few seconds to see each other via Supabase Realtime Presence (remote latency vs instant in local). A "connecting..." badge is shown during this time, and a fallback DB poll kicks in after 5s if Realtime hasn't synced yet.
 - **After rebuilding the plugin**: close and reopen it in Figma to pick up the new `dist/ui.html`.
 
 #### Figma plugin build
