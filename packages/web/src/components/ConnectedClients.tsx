@@ -166,9 +166,18 @@ export function ConnectedClients({ clients: presenceClients, loading, connection
     }
   }
 
-  // Sort by clientId (stable order) — avoids layout jumps when online status changes
-  // or when connectedAt updates on each presence re-track
-  merged.sort((a, b) => a.clientId.localeCompare(b.clientId));
+  // Stable sort: keep existing order, append newcomers at the end.
+  // On refresh, falls back to clientId order.
+  const knownOrder = useRef<string[]>([]);
+  const orderMap = new Map(knownOrder.current.map((id, i) => [id, i]));
+  merged.sort((a, b) => {
+    const ai = orderMap.get(a.clientId) ?? Infinity;
+    const bi = orderMap.get(b.clientId) ?? Infinity;
+    if (ai !== bi) return ai - bi;
+    // Both new — sort by clientId for determinism
+    return a.clientId.localeCompare(b.clientId);
+  });
+  knownOrder.current = merged.map((c) => c.clientId);
 
   const isLoading = loading || dbLoading;
 
