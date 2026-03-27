@@ -85,16 +85,20 @@ export function ConnectedClients({ clients: presenceClients, loading, connection
       .finally(() => setDbLoading(false));
   }, []);
 
-  // Re-fetch DB when a presence client disappears (may now be registered in DB as offline)
+  // Re-fetch DB when a presence client disappears (may now be registered in DB as offline).
+  // Small delay so the presence update and DB update land in a single visual batch.
   const prevPresenceCount = useRef(presenceClients.length);
   useEffect(() => {
     const prev = prevPresenceCount.current;
     prevPresenceCount.current = presenceClients.length;
     if (prev > presenceClients.length) {
-      fetch("/api/clients")
-        .then((res) => res.json())
-        .then(({ clients }) => setDbClients(clients ?? []))
-        .catch(() => {});
+      const timer = setTimeout(() => {
+        fetch("/api/clients")
+          .then((res) => res.json())
+          .then(({ clients }) => setDbClients(clients ?? []))
+          .catch(() => {});
+      }, 500);
+      return () => clearTimeout(timer);
     }
   }, [presenceClients.length]);
 
@@ -138,11 +142,9 @@ export function ConnectedClients({ clients: presenceClients, loading, connection
     }
   }
 
-  // Sort: online first, then by last seen
-  merged.sort((a, b) => {
-    if (a.online !== b.online) return a.online ? -1 : 1;
-    return new Date(b.lastSeen).getTime() - new Date(a.lastSeen).getTime();
-  });
+  // Sort by clientId (stable order) — avoids layout jumps when online status changes
+  // or when connectedAt updates on each presence re-track
+  merged.sort((a, b) => a.clientId.localeCompare(b.clientId));
 
   const isLoading = loading || dbLoading;
 
