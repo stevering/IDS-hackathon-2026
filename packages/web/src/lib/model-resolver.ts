@@ -10,7 +10,7 @@
  *  3. No keys → platform free tier (AI_GATEWAY_API_KEY + FREE_TIER_MODEL or XAI fallback)
  */
 
-import { xai } from "@ai-sdk/xai";
+import { createXai } from "@ai-sdk/xai";
 import { createOpenAI } from "@ai-sdk/openai";
 import { createAnthropic } from "@ai-sdk/anthropic";
 import { createGoogleGenerativeAI } from "@ai-sdk/google";
@@ -75,7 +75,7 @@ export function buildDirectProviderModel(provider: string, modelId: string, apiK
     case "google":
       return createGoogleGenerativeAI({ apiKey })(modelId);
     case "xai":
-      return xai(modelId);
+      return createXai({ apiKey })(modelId);
     default:
       return null;
   }

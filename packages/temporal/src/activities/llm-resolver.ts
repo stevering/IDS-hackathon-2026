@@ -122,8 +122,8 @@ async function buildDirectProviderModel(
       return createGoogleGenerativeAI({ apiKey })(modelId);
     }
     case "xai": {
-      const { xai } = await import("@ai-sdk/xai");
-      return xai(modelId);
+      const { createXai } = await import("@ai-sdk/xai");
+      return createXai({ apiKey })(modelId);
     }
     default:
       return null;
