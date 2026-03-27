@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import type { PresenceClient } from "@/types/presence";
 import type { ConnectionStatus } from "@/app/hooks/useFigmaExecuteChannel";
 
@@ -76,7 +76,7 @@ export function ConnectedClients({ clients: presenceClients, loading, connection
   const [dbClients, setDbClients] = useState<DbClient[]>([]);
   const [dbLoading, setDbLoading] = useState(true);
 
-  // Fetch all registered clients from DB
+  // Fetch all registered clients from DB on mount
   useEffect(() => {
     fetch("/api/clients")
       .then((res) => res.json())
@@ -84,6 +84,19 @@ export function ConnectedClients({ clients: presenceClients, loading, connection
       .catch(() => {})
       .finally(() => setDbLoading(false));
   }, []);
+
+  // Re-fetch DB when a presence client disappears (may now be registered in DB as offline)
+  const prevPresenceCount = useRef(presenceClients.length);
+  useEffect(() => {
+    const prev = prevPresenceCount.current;
+    prevPresenceCount.current = presenceClients.length;
+    if (prev > presenceClients.length) {
+      fetch("/api/clients")
+        .then((res) => res.json())
+        .then(({ clients }) => setDbClients(clients ?? []))
+        .catch(() => {});
+    }
+  }, [presenceClients.length]);
 
   // Merge DB clients with Realtime presence
   const onlineSet = new Set(presenceClients.map((c) => c.clientId));
