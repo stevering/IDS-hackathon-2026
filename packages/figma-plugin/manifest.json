@@ -1,6 +1,6 @@
 {
   "name": "Guardian Plugin",
-  "id": "8214941393675708447",
+  "id": "9214941393675708447",
   "api": "1.0.0",
   "main": "dist/code.js",
   "ui": "dist/ui.html",
@@ -20,7 +20,9 @@
       "https://api.openai.com",
       "https://api.anthropic.com",
       "https://fonts.googleapis.com",
-      "https://raw.githubusercontent.com"
+      "https://raw.githubusercontent.com",
+      "https://figma-console-mcp.southleft.com",
+      "wss://figma-console-mcp.southleft.com"
     ],
     "devAllowedDomains": [
       "http://localhost:3000",
@@ -40,6 +42,7 @@
       "https://preview.guardian.figdesys.com",
       "https://guardian.figdesys.com",
       "https://figma-console-mcp.southleft.com",
+      "wss://figma-console-mcp.southleft.com",
       "https://www.figma.com"
     ]
   }

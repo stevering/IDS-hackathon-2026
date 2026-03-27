@@ -1,6 +1,6 @@
 {
   "name": "Guardian Widget",
-  "id": "8601823178550169687",
+  "id": "9601823178550169687",
   "api": "1.0.0",
   "main": "dist/code.js",
   "capabilities": [],
@@ -22,7 +22,9 @@
       "https://fonts.googleapis.com",
       "https://raw.githubusercontent.com",
       "https://ids-hackathon-2026-ds-ai-guardian.vercel.app",
-      "https://guardian.figdesys.com"
+      "https://guardian.figdesys.com",
+      "https://figma-console-mcp.southleft.com",
+      "wss://figma-console-mcp.southleft.com"
     ],
     "devAllowedDomains": [
       "http://localhost:3000",
@@ -39,6 +41,7 @@
       "ws://localhost:9232",
       "https://preview.guardian.figdesys.com",
       "https://figma-console-mcp.southleft.com",
+      "wss://figma-console-mcp.southleft.com",
       "https://www.figma.com"
     ]
   }

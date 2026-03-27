@@ -536,10 +536,14 @@ Override: `ENABLE_LOCAL_MCP=true` bypasses all three guards (for staging/testing
 |---|---|---|
 | LLM providers (Google, OpenAI, Anthropic, X.AI) | ✅ | ✅ |
 | Google Fonts, GitHub raw | ✅ | ✅ |
+| `https://figma-console-mcp.southleft.com` | ✅ | ✅ |
+| `wss://figma-console-mcp.southleft.com` | ✅ | ✅ |
 | `localhost:3000` (webapp) | ❌ | ✅ |
 | `ws://localhost:3002` (Electron) | ❌ | ✅ |
 | `ws://localhost:9223-9232` (FC MCP) | ❌ | ✅ |
 | Vercel/figdesys.com URLs | ❌ | ✅ |
+
+In cloud mode (`isCloudMode` — iframe loads `https://` URL), the plugin skips local WS scans (ports 9223-9232) and Electron overlay connection (localhost:3002) to avoid console spam. FC Cloud Relay (WSS) is used instead for `figmaconsole_*` write tools.
 
 In a published plugin, `devAllowedDomains` is ignored — the FC Bridge scan fails silently (no WS available).
 

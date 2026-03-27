@@ -64,8 +64,40 @@ Vercel (packages/web)                    Temporal Cloud
 - **Worker** must run on a persistent host (not Vercel serverless) — it long-polls the task queue.
 - Both use the same env vars and auto-detect the connection mode.
 
+## Preview Worker — Railway
+
+The preview environment worker runs on **Railway** (Amsterdam, `eu-west`).
+
+- **Project**: `guardian` → Environment: `preview`
+- **Service**: `temporal-worker`
+- **Dockerfile**: `packages/temporal/Dockerfile`
+- **Branch**: `feat/preview` (auto-deploy on push)
+- **Env vars**: Temporal Cloud + Supabase Cloud + `NEXT_PUBLIC_STORAGE_SUPABASE_ANON_KEY` (required for Realtime broadcasts)
+
+The Dockerfile installs `ca-certificates` (required for TLS to Temporal Cloud on `node:22-slim`).
+
+### Supabase Realtime — anon key requirement
+
+Broadcasts to the plugin (e.g., `connect_fc_cloud_relay`, `connect_fc_port`) must use the **anon key**, not the service-role key. Supabase Cloud Realtime rejects service-role WebSocket connections with `CHANNEL_ERROR`.
+
+## MCP OAuth
+
+The MCP server on Vercel (`/api/mcp`) supports OAuth 2.0 for external clients (e.g., Claude Code):
+
+- `/.well-known/oauth-authorization-server` — RFC 8414 metadata
+- `/.well-known/oauth-protected-resource/api/mcp` — RFC 9728 resource metadata
+- `/api/mcp/oauth/authorize` — proxies to Supabase OAuth
+- `/api/mcp/oauth/token` — proxies to Supabase OAuth
+- `/api/mcp/oauth/register` — proxies to Supabase Dynamic Client Registration
+
+All OAuth endpoints proxy to Supabase Auth (`/auth/v1/oauth/*`) with the `apikey` header injected. The MCP route returns 401 with `WWW-Authenticate` header when no valid Bearer token is provided.
+
 ## Files
 
 - `packages/temporal/src/client.ts` — Client factory (API routes)
 - `packages/temporal/src/worker.ts` — Worker entry point
+- `packages/temporal/Dockerfile` — Railway deployment
+- `packages/web/src/lib/mcp-oauth.ts` — OAuth helpers
+- `packages/web/src/app/api/mcp/oauth/` — OAuth proxy routes
+- `packages/web/src/app/.well-known/` — Discovery endpoints
 - `turbo.json` — Env var declarations for build pipeline
