@@ -541,10 +541,25 @@ A build-time split (`BUILD_TARGET=marketplace|desktop`) is planned to strip FC B
 ## Build
 
 ```bash
-pnpm --filter @guardian/figma-plugin build   # esbuild code.ts → dist/code.js
+pnpm --filter @guardian/figma-plugin build   # esbuild code.ts → dist/code.js + dist/ui.html
 pnpm --filter @guardian/figma-plugin dev     # watch mode (auto-rebuild on code.ts change)
 ```
 
-`ui.html` is served directly (not compiled). Changes require plugin reload in Figma (close + reopen, or esbuild watch triggers Figma auto-reload for code.ts changes only).
+### GUARDIAN_URL environment variable
+
+The webapp URL embedded in the plugin iframe is configurable at build time via the `GUARDIAN_URL` env var (default: `http://localhost:3000`).
+
+```bash
+# Local dev (default)
+pnpm --filter @guardian/figma-plugin build
+
+# Preview environment
+GUARDIAN_URL=https://preview.guardian.figdesys.com pnpm --filter @guardian/figma-plugin build
+
+# Production
+GUARDIAN_URL=https://guardian.figdesys.com pnpm --filter @guardian/figma-plugin build
+```
+
+`ui.html` contains the placeholder `__GUARDIAN_URL__` which is replaced at build time → `dist/ui.html`. The manifest points to `dist/ui.html` (not the source `ui.html`). Both the plugin and widget builds perform this substitution.
 
 `bridge.ts` is imported by both plugin `code.ts` and widget `widget-src/code.tsx`, bundled by esbuild into each.

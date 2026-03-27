@@ -5,6 +5,9 @@
   "description": "Guardian Desktop Plugin — dev/local variant with enablePrivatePluginApi (figma.fileKey access)",
   "scripts": {
     "build": "node build.mjs",
-    "dev": "node build.mjs --watch"
+    "build:preview": "GUARDIAN_URL=https://preview.guardian.figdesys.com node build.mjs",
+    "build:prod": "GUARDIAN_URL=https://guardian.figdesys.com node build.mjs",
+    "dev": "node build.mjs --watch",
+    "dev:preview": "GUARDIAN_URL=https://preview.guardian.figdesys.com node build.mjs --watch"
   }
 }

@@ -27,9 +27,7 @@ fi
 
 export FORCE_COLOR=1
 
-concurrently -k -n srv,apps -c yellow,cyan \
-  "temporal server start-dev" \
-  "FORCE_COLOR=1 turbo run dev \
+TURBO_FILTERS="\
     --filter=@guardian/web \
     --filter=@guardian/mcp-server \
     --filter=@guardian/figma-plugin \
@@ -37,7 +35,11 @@ concurrently -k -n srv,apps -c yellow,cyan \
     --filter=@guardian/figma-widget \
     --filter=@guardian/bridge \
     --filter=@guardian/electron-overlay \
-    --filter=@guardian/temporal" \
+    --filter=@guardian/temporal"
+
+concurrently -k -n srv,apps -c yellow,cyan \
+  "temporal server start-dev" \
+  "FORCE_COLOR=1 turbo run dev $TURBO_FILTERS" \
   2>&1 | node -e "
 const fs = require('fs');
 const out = fs.createWriteStream('logs/dev.log');

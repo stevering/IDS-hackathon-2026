@@ -26,7 +26,7 @@ async function run() {
   const certB64 = process.env.TEMPORAL_CLIENT_CERT_BASE64;
   const keyB64 = process.env.TEMPORAL_CLIENT_KEY_BASE64;
 
-  console.log(`[temporal-worker] ⏳ Starting... (${new Date().toISOString()})`);
+  console.log(`[temporal-worker] ⏳ Starting... (${new Date().toISOString()}) address=${address} namespace=${namespace} apiKey=${apiKey ? "set" : "unset"}`);
 
   const connOpts: NativeConnectionOptions = { address };
 

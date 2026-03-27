@@ -24,6 +24,7 @@ import * as esbuild from 'esbuild';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const pluginDir = resolve(__dirname, '../figma-plugin');
 const isWatch = process.argv.includes('--watch');
+const GUARDIAN_URL = process.env.GUARDIAN_URL || 'http://localhost:3000';
 
 mkdirSync('dist', { recursive: true });
 
@@ -40,7 +41,8 @@ ${pluginCode}
 }
 `;
   writeFileSync('dist/code.js', merged);
-  copyFileSync(resolve(pluginDir, 'ui.html'), 'dist/ui.html');
+  const uiHtml = readFileSync(resolve(pluginDir, 'ui.html'), 'utf8');
+  writeFileSync('dist/ui.html', uiHtml.replace('__GUARDIAN_URL__', GUARDIAN_URL));
 }
 
 // ── Single build ────────────────────────────────────────────────────────────

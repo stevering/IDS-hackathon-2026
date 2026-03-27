@@ -251,6 +251,48 @@ pnpm dev:overlay            # Electron overlay only
 pnpm dev:extension          # Chrome extension (watch)
 ```
 
+#### Preview mode
+
+`pnpm dev:preview` launches a lean dev stack for testing against the preview environment. Only the packages that need local building/watching are started — the webapp and MCP server are served by Vercel.
+
+```bash
+pnpm dev              # full local stack (all packages + local Temporal + local Supabase)
+pnpm dev:preview      # lean preview stack (see below)
+```
+
+**What runs locally with `dev:preview`:**
+
+| Process | Package | Purpose |
+|---|---|---|
+| Figma plugin (watch) | `@guardian/figma-plugin` | Build `dist/ui.html` → `preview.guardian.figdesys.com` |
+| Desktop plugin (watch) | `@guardian/figma-desktop-plugin` | Copy from plugin build |
+| Widget (watch) | `@guardian/figma-widget` | Copy from plugin build |
+| Bridge (tsc watch) | `@guardian/bridge` | Shared types |
+| Temporal worker | `@guardian/temporal` | Connected to Temporal Cloud |
+
+**What is NOT started** (served by Vercel preview):
+- `@guardian/web` — webapp is on `preview.guardian.figdesys.com`
+- `@guardian/mcp-server` — MCP server is on Vercel
+- `@guardian/electron-overlay` — not needed
+- Temporal dev server — using Temporal Cloud
+- Supabase local — using Supabase Cloud
+
+**Env loading:** `.env.local` (local defaults) → `.env.prod` (overrides Temporal Cloud + Supabase Cloud addresses).
+
+**Setup:** import the plugin manifest in Figma Desktop (Plugins > Development > Import from manifest) and reopen the plugin after each rebuild to pick up the new URL.
+
+#### Figma plugin build
+
+The webapp URL loaded in the plugin iframe is configurable via the `GUARDIAN_URL` env var (default: `http://localhost:3000`):
+
+```bash
+pnpm --filter @guardian/figma-plugin build            # localhost (default)
+pnpm --filter @guardian/figma-plugin build:preview     # preview.guardian.figdesys.com
+pnpm --filter @guardian/figma-plugin build:prod        # guardian.figdesys.com
+```
+
+All plugin variants (`figma-plugin`, `figma-desktop-plugin`, `figma-widget`) respect `GUARDIAN_URL`.
+
 #### Tests
 
 ```bash
