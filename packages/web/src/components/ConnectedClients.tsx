@@ -116,7 +116,18 @@ export function ConnectedClients({ clients: presenceClients, loading, connection
   if (isLoading) {
     return (
       <section className="mb-8 p-4 rounded-xl bg-white/[0.04] border border-white/[0.08]">
-        <h2 className="text-sm font-medium mb-3">Clients</h2>
+        <h2 className="text-sm font-medium mb-3">
+          Clients
+          {connectionStatus && connectionStatus !== "connected" && (
+            <span className={`ml-2 text-[10px] px-1.5 py-0.5 rounded ${
+              connectionStatus === "reconnecting"
+                ? "bg-amber-500/15 text-amber-400"
+                : "bg-blue-500/15 text-blue-400"
+            }`}>
+              {connectionStatus === "reconnecting" ? "reconnecting..." : "connecting..."}
+            </span>
+          )}
+        </h2>
         <div className="space-y-2">
           {[1, 2].map((i) => (
             <div key={i} className="h-16 rounded-xl bg-white/[0.03] animate-pulse" />
