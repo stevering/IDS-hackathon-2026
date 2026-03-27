@@ -79,11 +79,29 @@ Figma plugins run in two isolated contexts. This is a Figma platform constraint,
 
 ### Presence resilience (preview/production)
 
-Supabase Realtime Presence can be slow to sync in preview/production (several seconds vs near-instant locally). Three mitigations:
+Supabase Realtime Presence can be slow to sync in preview/production (several seconds vs near-instant locally). The presence system addresses this with several layers:
 
-1. **Keepalive interval**: 10s (was 30s) — faster dead-connection detection and fresher presence.
-2. **Fallback DB polling**: if no Realtime `sync` event within 5s, `useFigmaExecuteChannel` and `useGuardianPresence` poll `/api/clients?active=true` to populate the client list from the DB. Once Realtime catches up, it overwrites the fallback.
-3. **Connection status**: hooks expose `connectionStatus` (`connecting` | `connected` | `reconnecting`). The `ConnectedClients` component shows a badge during connection establishment.
+#### Connection lifecycle
+
+1. **Keepalive interval**: 10s — re-tracks presence frequently and detects dead WS connections fast.
+2. **Fallback timeout**: if no Realtime `sync` event within 5s (`PRESENCE_SYNC_TIMEOUT_MS`), the hooks end the loading state so the UI stops showing skeletons. No fake clients are injected — only Realtime determines who is truly online.
+3. **Connection status**: both `useFigmaExecuteChannel` and `useGuardianPresence` expose `connectionStatus` (`connecting` | `connected` | `reconnecting`). The `ConnectedClients` component shows a blue "connecting..." or amber "reconnecting..." badge.
+4. **Dead WS detection**: keepalive checks `socket.isConnected()` every 10s. If dead, clears clients, sets `reconnecting`, and forces full channel recreation via `reconnectKey`.
+5. **Visibility change**: when a tab returns from hidden to visible, presence is re-tracked and state re-synced (handles overnight idle).
+
+#### Client list behavior (`ConnectedClients`)
+
+- **DB + Realtime merge**: DB clients (fetched at mount) are merged with Realtime presence. Presence determines online/offline status.
+- **Presence-only clients**: clients connected via Realtime but not yet registered in DB appear immediately as online. They are cached in a ref so that when they disconnect, they transition to offline instead of disappearing.
+- **Re-fetch on leave**: when a presence client disappears, the DB is re-fetched to pick up newly registered entries.
+- **Stable ordering**: clients keep their display position across all state changes (joins, leaves, reconnects). New clients append at the bottom. Order resets to `clientId` alphabetical only on page refresh (F5).
+- **Debug helper**: `window.__guardianPresenceDebug.forceReconnect()` triggers a manual reconnect cycle for testing.
+
+#### Test coverage (48 tests)
+
+- `useFigmaExecuteChannel.test.ts` — connection status, keepalive, execute_request broadcast, WS dead detection, subscribe errors, visibility change
+- `useGuardianPresence.test.ts` — sync, fallback timeout, WS dead detection, recovery, unauthenticated, debug helper
+- `ConnectedClients.test.tsx` — loading/badges, DB+presence merge, presence-only lifecycle, stable ordering, F5 reset, type icons/labels, MCP/Figma context display
 
 In production: only the webapp bridge is active. No WS connections (blocked by `allowedDomains`).
 FC Bridge code exists in ui.html but is dead code (scan fails silently).
