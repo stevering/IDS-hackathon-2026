@@ -106,7 +106,9 @@ After discovering agents #Figma-Desktop-abc (file: Homepage) and #Figma-Desktop-
         )
       }
 
-      const cloudUrl = process.env.GUARDIAN_CLOUD_URL || "http://localhost:3000"
+      const cloudUrl = process.env.GUARDIAN_CLOUD_URL
+        || process.env.NEXT_PUBLIC_BASE_URL
+        || (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : "http://localhost:3000")
       const serviceKey = process.env.STORAGE_SUPABASE_SERVICE_ROLE_KEY || ""
 
       // Discover user's connected MCP servers for tool injection
