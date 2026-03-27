@@ -85,22 +85,36 @@ export function ConnectedClients({ clients: presenceClients, loading, connection
       .finally(() => setDbLoading(false));
   }, []);
 
-  // Re-fetch DB when a presence client disappears (may now be registered in DB as offline).
-  // Small delay so the presence update and DB update land in a single visual batch.
-  const prevPresenceCount = useRef(presenceClients.length);
+  // Cache presence-only clients so they transition to offline smoothly
+  // instead of disappearing when they leave presence but aren't yet in DB.
+  const seenPresenceOnly = useRef<Map<string, MergedClient>>(new Map());
+
+  // Re-fetch DB when a presence client disappears (may now be registered in DB as offline)
+  const prevPresenceIds = useRef(new Set<string>());
   useEffect(() => {
-    const prev = prevPresenceCount.current;
-    prevPresenceCount.current = presenceClients.length;
-    if (prev > presenceClients.length) {
-      const timer = setTimeout(() => {
-        fetch("/api/clients")
-          .then((res) => res.json())
-          .then(({ clients }) => setDbClients(clients ?? []))
-          .catch(() => {});
-      }, 500);
-      return () => clearTimeout(timer);
+    const currentIds = new Set(presenceClients.map((c) => c.clientId));
+    const prevIds = prevPresenceIds.current;
+    prevPresenceIds.current = currentIds;
+
+    // Check if any client left
+    let clientLeft = false;
+    for (const id of prevIds) {
+      if (!currentIds.has(id)) { clientLeft = true; break; }
     }
-  }, [presenceClients.length]);
+    if (clientLeft) {
+      fetch("/api/clients")
+        .then((res) => res.json())
+        .then(({ clients }) => {
+          setDbClients(clients ?? []);
+          // Clean up cached presence-only entries that are now in DB
+          const dbIds = new Set((clients ?? []).map((c: DbClient) => c.client_id));
+          for (const id of seenPresenceOnly.current.keys()) {
+            if (dbIds.has(id)) seenPresenceOnly.current.delete(id);
+          }
+        })
+        .catch(() => {});
+    }
+  }, [presenceClients]);
 
   // Merge DB clients with Realtime presence
   const onlineSet = new Set(presenceClients.map((c) => c.clientId));
@@ -123,10 +137,11 @@ export function ConnectedClients({ clients: presenceClients, loading, connection
     };
   });
 
-  // Add presence-only clients not yet in the DB (e.g. just connected)
+  // Add presence-only clients (not yet in DB) — cache them so they
+  // transition to offline instead of disappearing when they leave presence.
   for (const rt of presenceClients) {
     if (!dbClientIds.has(rt.clientId)) {
-      merged.push({
+      const entry: MergedClient = {
         clientId: rt.clientId,
         shortId: rt.shortId,
         type: rt.type,
@@ -138,7 +153,16 @@ export function ConnectedClients({ clients: presenceClients, loading, connection
         agentRole: rt.agentRole ?? "idle",
         mcpInfo: rt.mcpInfo,
         figmaContext: rt.figmaContext,
-      });
+      };
+      seenPresenceOnly.current.set(rt.clientId, entry);
+      merged.push(entry);
+    }
+  }
+
+  // Show cached presence-only clients that left presence as offline
+  for (const [id, cached] of seenPresenceOnly.current) {
+    if (!onlineSet.has(id) && !dbClientIds.has(id)) {
+      merged.push({ ...cached, online: false });
     }
   }
 
