@@ -48,18 +48,18 @@ export async function resolveModel(
     return resolveFreeTier(userId);
   }
 
-  // ── Check user's Vercel AI Gateway key first ──────────────────────────────
-  const { data: gatewaySecret } = await supabase.rpc("get_api_key", { p_provider: "gateway" });
-  if (gatewaySecret) {
-    const gw = createGateway({ apiKey: gatewaySecret });
-    return { model: gw(modelStr), isFreeTier: false, supportsWebSearch: false, modelId: modelStr };
-  }
-
-  // ── Check user's direct provider key ──────────────────────────────────────
+  // ── Check user's direct provider key first ─────────────────────────────────
   const { data: providerSecret } = await supabase.rpc("get_api_key", { p_provider: requestedProvider });
   if (providerSecret) {
     const model = buildDirectProviderModel(requestedProvider, requestedModelId, providerSecret);
     if (model) return { model, isFreeTier: false, supportsWebSearch: false, modelId: modelStr };
+  }
+
+  // ── Fallback: Vercel AI Gateway key ───────────────────────────────────────
+  const { data: gatewaySecret } = await supabase.rpc("get_api_key", { p_provider: "gateway" });
+  if (gatewaySecret) {
+    const gw = createGateway({ apiKey: gatewaySecret });
+    return { model: gw(modelStr), isFreeTier: false, supportsWebSearch: false, modelId: modelStr };
   }
 
   // ── No matching key → fall back to free tier ──────────────────────────────

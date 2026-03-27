@@ -64,19 +64,40 @@ export async function resolveModelForActivity(
     return data as string;
   }
 
-  // Check gateway key first
-  const gatewaySecret = await getUserApiKey("gateway");
-  if (gatewaySecret) {
-    const { createGateway } = await import("@ai-sdk/gateway");
-    const gw = createGateway({ apiKey: gatewaySecret });
-    return { model: gw(modelStr), isFreeTier: false, modelId: modelStr };
-  }
+  // Find the user's default API key provider
+  const { data: defaultKeyRow } = await supabase
+    .from("user_api_keys")
+    .select("provider")
+    .eq("user_id", userId)
+    .eq("is_default", true)
+    .single();
+  const defaultProvider = (defaultKeyRow?.provider as string) ?? null;
 
-  // Check direct provider key
+  // 1. Try the exact provider matching the requested model
   const providerSecret = await getUserApiKey(requestedProvider);
   if (providerSecret) {
     const model = await buildDirectProviderModel(requestedProvider, requestedModelId, providerSecret);
     if (model) return { model, isFreeTier: false, modelId: modelStr };
+  }
+
+  // 2. If the default key is a gateway, route through it
+  if (defaultProvider === "gateway") {
+    const gatewaySecret = await getUserApiKey("gateway");
+    if (gatewaySecret) {
+      const { createGateway } = await import("@ai-sdk/gateway");
+      const gw = createGateway({ apiKey: gatewaySecret });
+      return { model: gw(modelStr), isFreeTier: false, modelId: modelStr };
+    }
+  }
+
+  // 3. Fallback: try gateway even if not default (for models not matching any direct provider)
+  if (defaultProvider !== "gateway") {
+    const gatewaySecret = await getUserApiKey("gateway");
+    if (gatewaySecret) {
+      const { createGateway } = await import("@ai-sdk/gateway");
+      const gw = createGateway({ apiKey: gatewaySecret });
+      return { model: gw(modelStr), isFreeTier: false, modelId: modelStr };
+    }
   }
 
   return resolveFreeTier();
