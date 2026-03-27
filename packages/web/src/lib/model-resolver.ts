@@ -10,7 +10,7 @@
  *  3. No keys → platform free tier (AI_GATEWAY_API_KEY + FREE_TIER_MODEL or XAI fallback)
  */
 
-import { createXai } from "@ai-sdk/xai";
+import { createXai, xai } from "@ai-sdk/xai";
 import { createOpenAI } from "@ai-sdk/openai";
 import { createAnthropic } from "@ai-sdk/anthropic";
 import { createGoogleGenerativeAI } from "@ai-sdk/google";
