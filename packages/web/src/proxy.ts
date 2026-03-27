@@ -33,6 +33,9 @@ const PUBLIC_AUTH_ROUTES = [
   "/api/signup/complete",  // Signup completion — protected by Supabase auth
   "/api/signup/request-reinvite",  // Re-invite request — public, checks beta_invites table
   "/api/signup/check-invite",      // Check invite status — public
+  "/api/mcp/oauth",                // MCP OAuth proxy endpoints (authorize, token, register)
+  "/api/mcp",                      // MCP server — handles its own auth (Bearer JWT)
+  "/.well-known",                  // OAuth/MCP discovery endpoints
 ];
 
 function getMcpCodeUrl(request: NextRequest): string | undefined {

@@ -87,6 +87,23 @@ async function handleMcpRequest(request: Request): Promise<Response> {
     // Authenticate and extract userId
     const userId = await extractUserId(request);
 
+    // Return 401 with OAuth discovery hint when no valid token is provided
+    if (!userId) {
+      const host = request.headers.get("x-forwarded-host") ?? request.headers.get("host") ?? "localhost";
+      const proto = request.headers.get("x-forwarded-proto") ?? "https";
+      const resourceUrl = `${proto}://${host}/api/mcp`;
+      return Response.json(
+        { error: "Unauthorized", message: "Valid Bearer token required." },
+        {
+          status: 401,
+          headers: {
+            ...CORS_HEADERS,
+            "WWW-Authenticate": `Bearer resource_metadata="${resourceUrl}"`,
+          },
+        },
+      );
+    }
+
     // Create a fresh stateless MCP server + transport
     const server = createGuardianServer(userId);
     const transport = new WebStandardStreamableHTTPServerTransport({
