@@ -5,6 +5,7 @@
 # Run:    docker run --env-file .env guardian-worker
 
 FROM node:22-slim AS base
+RUN apt-get update && apt-get install -y ca-certificates && rm -rf /var/lib/apt/lists/*
 RUN corepack enable pnpm
 
 WORKDIR /app

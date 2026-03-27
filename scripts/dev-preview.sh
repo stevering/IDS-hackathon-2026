@@ -4,11 +4,11 @@
 # What runs:
 #   - Figma plugin + desktop-plugin + widget (watch, iframe → preview.guardian.figdesys.com)
 #   - bridge (shared types, tsc watch)
-#   - Temporal worker → Temporal Cloud (without dotenv-run)
 #
-# What does NOT run (served by Vercel preview):
+# What does NOT run (served by cloud):
 #   - @guardian/web (webapp is on preview.guardian.figdesys.com)
 #   - @guardian/mcp-server (MCP is on Vercel)
+#   - @guardian/temporal (worker runs on Railway)
 #   - @guardian/electron-overlay (not needed for preview testing)
 #   - Temporal dev server (using Temporal Cloud)
 #   - Supabase local (using Supabase Cloud)
@@ -37,20 +37,9 @@ fi
 # 3. Preview-specific
 export GUARDIAN_URL="${GUARDIAN_URL:-https://preview.guardian.figdesys.com}"
 export FORCE_COLOR=1
-export TEMPORAL_ADDRESS TEMPORAL_NAMESPACE TEMPORAL_API_KEY
 
 mkdir -p logs
 : > logs/dev.log
-
-LOG_PIPE='node -e "
-const fs = require(\"fs\");
-const out = fs.createWriteStream(\"logs/dev.log\");
-const strip = s => s.replace(/\x1b\[[0-9;?]*[A-Za-z]/g, \"\");
-process.stdin.setEncoding(\"utf8\");
-process.stdin.on(\"data\", d => { process.stdout.write(d); out.write(strip(d)); });
-process.stdin.on(\"end\", () => out.end());
-process.on(\"SIGINT\", () => { out.end(); process.exit(); });
-"'
 
 TURBO_FILTERS="\
     --filter=@guardian/figma-plugin \
@@ -58,13 +47,17 @@ TURBO_FILTERS="\
     --filter=@guardian/figma-widget \
     --filter=@guardian/bridge"
 
-echo "☁  Preview mode"
+echo "☁  Preview mode (plugin build only — worker runs on Railway)"
 echo "   Plugin URL:  $GUARDIAN_URL"
-echo "   Temporal:    $TEMPORAL_ADDRESS"
-echo "   Supabase:    ${STORAGE_SUPABASE_URL:-unset}"
 echo ""
 
-concurrently -k -n build,worker -c cyan,yellow \
-  "FORCE_COLOR=1 turbo run dev $TURBO_FILTERS" \
-  "pnpm --filter @guardian/temporal run dev:cloud" \
-  2>&1 | eval "$LOG_PIPE"
+FORCE_COLOR=1 turbo run dev $TURBO_FILTERS \
+  2>&1 | node -e "
+const fs = require('fs');
+const out = fs.createWriteStream('logs/dev.log');
+const strip = s => s.replace(/\x1b\[[0-9;?]*[A-Za-z]/g, '');
+process.stdin.setEncoding('utf8');
+process.stdin.on('data', d => { process.stdout.write(d); out.write(strip(d)); });
+process.stdin.on('end', () => out.end());
+process.on('SIGINT', () => { out.end(); process.exit(); });
+"

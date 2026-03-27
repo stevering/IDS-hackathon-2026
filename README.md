@@ -294,25 +294,19 @@ pnpm dev:preview      # lean preview stack (see below)
 | Desktop plugin (watch) | `@guardian/figma-desktop-plugin` | Copy from plugin build |
 | Widget (watch) | `@guardian/figma-widget` | Copy from plugin build |
 | Bridge (tsc watch) | `@guardian/bridge` | Shared types |
-| Temporal worker | `@guardian/temporal` | Connected to Temporal Cloud |
 
-##### What is NOT started (served by Vercel/cloud)
+##### What runs in the cloud
 
-- `@guardian/web` — webapp is on `preview.guardian.figdesys.com`
-- `@guardian/mcp-server` — MCP server is on Vercel
-- `@guardian/electron-overlay` — not needed for preview testing
-- Temporal dev server — using Temporal Cloud
-- Supabase local — using Supabase Cloud
-
-##### Env loading
-
-`.env.local` (local defaults) → `.env.preview` (overrides Temporal Cloud + Supabase Cloud addresses). The Temporal worker runs without `dotenv-run` to ensure cloud env vars are not overridden by local defaults.
+- `@guardian/web` — webapp on `preview.guardian.figdesys.com` (Vercel)
+- `@guardian/mcp-server` — MCP server on Vercel
+- `@guardian/temporal` — Temporal worker on Railway (always-on)
+- Temporal server — Temporal Cloud
+- Supabase — Supabase Cloud
 
 ##### Notes
 
 - **First connection can be slow**: the Figma plugin and the Chrome tab may take a few seconds to see each other via Supabase Realtime Presence (remote latency vs instant in local).
 - **After rebuilding the plugin**: close and reopen it in Figma to pick up the new `dist/ui.html`.
-- **Collabs require the Temporal worker**: if the worker is not running, orchestrations will queue indefinitely. Only one developer should run the worker per Temporal Cloud namespace to avoid task conflicts.
 
 #### Figma plugin build
 
