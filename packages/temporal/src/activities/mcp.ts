@@ -208,10 +208,13 @@ async function getOrCreateStdioClient(
   }
 
   // Notify the Guardian plugin to connect to this port immediately
+  // Use anon key (not service-role) because Supabase Cloud Realtime rejects service-role connections
   if (newPort && userId && pluginClientId) {
     try {
-      const supabase = createServiceClient();
-      const ch = supabase.channel(`guardian:execute:${userId}`);
+      const anonKey = process.env.NEXT_PUBLIC_STORAGE_SUPABASE_ANON_KEY ?? process.env.STORAGE_SUPABASE_ANON_KEY;
+      const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL ?? process.env.STORAGE_SUPABASE_URL ?? "";
+      const broadcastClient = createClient(supabaseUrl, anonKey ?? "");
+      const ch = broadcastClient.channel(`guardian:execute:${userId}`);
       await new Promise<void>((resolve) => {
         ch.subscribe((status) => {
           if (status === "SUBSCRIBED") resolve();
@@ -474,9 +477,13 @@ export async function pairFCCloudRelay(params: {
     log.info(`Pairing code: ${code}`);
 
     // Broadcast the code to the plugin via Supabase Realtime
+    // Use anon key (not service-role) because Supabase Cloud Realtime rejects service-role connections
     if (params.pluginClientId) {
       try {
-        const ch = supabase.channel(`guardian:execute:${params.userId}`);
+        const anonKey = process.env.NEXT_PUBLIC_STORAGE_SUPABASE_ANON_KEY ?? process.env.STORAGE_SUPABASE_ANON_KEY;
+        const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL ?? process.env.STORAGE_SUPABASE_URL ?? "";
+        const anonClient = createClient(supabaseUrl, anonKey ?? "");
+        const ch = anonClient.channel(`guardian:execute:${params.userId}`);
         await new Promise<void>((resolve) => {
           ch.subscribe((status) => {
             if (status === "SUBSCRIBED") resolve();
