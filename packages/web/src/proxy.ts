@@ -67,7 +67,8 @@ export async function proxy(request: NextRequest) {
     pathname.startsWith("/api/") ||
     pathname.startsWith("/_next/") ||
     pathname.startsWith("/favicon") ||
-    pathname.startsWith("/proxy-local/"); // proxy endpoints — not HTML pages, handled by next.config rewrites or middleware proxy logic
+    pathname.startsWith("/proxy-local/") || // proxy endpoints — not HTML pages, handled by next.config rewrites or middleware proxy logic
+    pathname.startsWith("/.well-known/");   // OAuth/MCP discovery endpoints — public, no auth
 
   if (!isApiOrStatic && !PUBLIC_PAGES.some((p) => pathname.startsWith(p))) {
     let response = NextResponse.next({ request });
