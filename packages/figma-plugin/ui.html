@@ -1305,6 +1305,13 @@
                 }
                 return;
             }
+            // Cloud relay connection triggered by orchestration (production/preview)
+            if (event.data.type === 'CONNECT_FC_CLOUD_RELAY' && event.data.data?.code) {
+                if (typeof window.__connectFCCloudRelay === 'function') {
+                    window.__connectFCCloudRelay(event.data.data.code);
+                }
+                return;
+            }
             parent.postMessage({ pluginMessage: event.data }, '*');
         }
     });
@@ -1954,6 +1961,41 @@
         // Start scanning + periodic rescan to discover new servers
         scanAndConnect();
         setInterval(function () { scanAndConnect(); }, 15000);
+
+        // Expose cloud relay connect for Southleft Figma Console (production/preview)
+        // Called when the webapp receives a connect_fc_cloud_relay broadcast from Supabase
+        var _fcCloudRelayWs = null;
+        window.__connectFCCloudRelay = function(code) {
+            if (_fcCloudRelayWs && _fcCloudRelayWs.readyState <= 1) {
+                console.log('[FC Bridge] Cloud relay already connected');
+                return;
+            }
+            var relayUrl = 'wss://figma-console-mcp.southleft.com/ws/pair?code=' + code;
+            console.log('[FC Bridge] Cloud relay connecting with code ' + code);
+            try {
+                _fcCloudRelayWs = new WebSocket(relayUrl);
+                _fcCloudRelayWs.onopen = function() {
+                    console.log('[FC Bridge] Cloud relay connected');
+                    activeConnections.push({ port: 'cloud', ws: _fcCloudRelayWs });
+                    attachWsHandlers(_fcCloudRelayWs, 'cloud');
+                    initializeConnection(_fcCloudRelayWs);
+                    // Override onclose to clean up cloud relay state
+                    var originalOnClose = _fcCloudRelayWs.onclose;
+                    _fcCloudRelayWs.onclose = function(event) {
+                        console.log('[FC Bridge] Cloud relay disconnected');
+                        _fcCloudRelayWs = null;
+                        if (originalOnClose) originalOnClose(event);
+                    };
+                };
+                _fcCloudRelayWs.onerror = function() {
+                    console.log('[FC Bridge] Cloud relay connection FAILED for code ' + code);
+                    _fcCloudRelayWs = null;
+                };
+            } catch(e) {
+                console.error('[FC Bridge] Cloud relay error:', e);
+                _fcCloudRelayWs = null;
+            }
+        };
 
         // Expose instant connect for Temporal subprocess notification
         // Called when the webapp receives a connect_fc_port broadcast from Supabase

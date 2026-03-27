@@ -1044,6 +1044,22 @@ export async function agentWorkflow(input: AgentWorkflowInput): Promise<void> {
         agentId: input.agent.shortId,
         pluginClientId: input.agent.pluginClientId,
       });
+
+      // Auto-pair cloud relay for Southleft Figma Console (production/preview)
+      // This allows figmaconsole_* write tools to reach the plugin via Southleft's cloud relay
+      const needsCloudRelay =
+        input.mcpServerIds.includes("figma_console") &&
+        !input.mcpServerIds.includes("figma_console_local");
+      if (needsCloudRelay && input.agent.pluginClientId) {
+        try {
+          await mcpActivities.pairFCCloudRelay({
+            userId: input.userId,
+            pluginClientId: input.agent.pluginClientId,
+          });
+        } catch {
+          // Non-fatal: write tools may fail but read tools still work
+        }
+      }
     } catch {
       // Non-fatal: agent continues with static tools only
       state.externalTools = [];

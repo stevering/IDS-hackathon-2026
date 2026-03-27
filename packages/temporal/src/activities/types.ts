@@ -90,6 +90,11 @@ export interface MCPActivities {
     agentId?: string;
   }): Promise<{ success: boolean; result?: unknown; error?: string }>;
 
+  pairFCCloudRelay(params: {
+    userId: string;
+    pluginClientId?: string;
+  }): Promise<{ success: boolean; code?: string; error?: string }>;
+
   closeStdioPool(params: {
     agentId?: string;
   }): Promise<void>;

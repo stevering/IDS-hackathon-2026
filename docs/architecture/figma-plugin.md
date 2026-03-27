@@ -391,12 +391,21 @@ Legend: **FC** = Figma Console MCP WS method, **G** = Guardian-only handler, **O
 
 ### Collab integration (Temporal → FC MCP → Plugin)
 
-When a Guardian collab orchestration starts, each agent workflow:
+Two connection modes depending on the environment:
+
+**Local dev** (stdio subprocess):
 1. Launches a **persistent stdio subprocess** `npx figma-console-mcp` (1 per agent, pooled in the Temporal worker)
 2. Discovers the subprocess's WS port via `/tmp/figma-console-mcp-{port}.json`
 3. **Broadcasts `connect_fc_port`** via Supabase Realtime → webapp forwards → plugin connects instantly (<1s)
 4. **Polls `figma_get_status`** until the plugin is confirmed connected
 5. Agent LLM calls `figmaconsole_*` tools → routed through the persistent subprocess → WS → Guardian FC Bridge → Proxy → code.ts
+
+**Production/preview** (Southleft cloud relay):
+1. Agent workflow detects `figma_console` (not `figma_console_local`) in mcpServerIds
+2. Calls `pairFCCloudRelay` activity → connects to Southleft HTTP MCP → calls `figma_pair_plugin` → gets 6-char pairing code
+3. **Broadcasts `connect_fc_cloud_relay`** via Supabase Realtime → webapp forwards → plugin auto-connects to `wss://figma-console-mcp.southleft.com/ws/pair?code=XXXXXX`
+4. Cloud relay WebSocket established → added to FC Bridge handler pool (same handlers as local WS)
+5. Agent LLM calls `figmaconsole_*` tools → routed through Southleft HTTP → cloud relay → WS → Guardian FC Bridge → Proxy → code.ts
 
 **Key fixes for AI SDK v6 compatibility:**
 - Tool parameters extracted from `inputSchema.jsonSchema` (not `parameters` which is `undefined` for MCP tools)

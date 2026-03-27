@@ -393,6 +393,117 @@ function extractTextFromMCPResult(result: unknown): string {
 // executeMCPTool — called for each execute_external_tool effect
 // ---------------------------------------------------------------------------
 
+/**
+ * Pair the Guardian plugin with the Southleft cloud relay.
+ * Calls figma_pair_plugin on the Southleft MCP server, then broadcasts
+ * the pairing code to the plugin via Supabase Realtime so it auto-connects.
+ */
+export async function pairFCCloudRelay(params: {
+  userId: string;
+  pluginClientId?: string;
+}): Promise<{ success: boolean; code?: string; error?: string }> {
+  const log = createLogger("cloud-relay", { u: params.userId.slice(0, 8) });
+
+  const serverDef = getServerDef("figma_console");
+  if (!serverDef || serverDef.transport === "stdio") {
+    return { success: false, error: "figma_console server not configured" };
+  }
+
+  // Get the user's Southleft OAuth token
+  const supabase = createServiceClient();
+  const { data: tokensJson, error } = await supabase.rpc("get_mcp_connection_service", {
+    p_user_id: params.userId,
+    p_server_id: "figma_console",
+  });
+
+  if (error || !tokensJson) {
+    log.warn("No Southleft token", { error: error?.message });
+    return { success: false, error: "No Southleft token — user must connect Figma Console in account settings" };
+  }
+
+  const tokens = JSON.parse(tokensJson);
+  if (!tokens.access_token) {
+    return { success: false, error: "Southleft token has no access_token" };
+  }
+
+  try {
+    // Connect to Southleft MCP and call figma_pair_plugin
+    log.info("Calling figma_pair_plugin on Southleft...");
+    const client = await connectHTTP(serverDef as Extract<MCPServerDef, { transport: "http" | "sse" }>, tokens.access_token);
+    const tools = await client.tools();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const pairTool = tools["figma_pair_plugin"] as any;
+
+    if (!pairTool) {
+      await client.close();
+      return { success: false, error: "figma_pair_plugin tool not found on Southleft server" };
+    }
+
+    const result = await pairTool.execute({}, { toolCallId: `pair-${Date.now()}` });
+    await client.close();
+
+    // Extract pairing code from the result
+    // figma_pair_plugin returns { pairingCode: "ABCDEF", ... } or MCP content array
+    const resultText = typeof result === "string" ? result : JSON.stringify(result);
+    let code: string | undefined;
+
+    // Try structured field first
+    if (result && typeof result === "object") {
+      const obj = result as Record<string, unknown>;
+      if (typeof obj.pairingCode === "string") {
+        code = obj.pairingCode;
+      }
+    }
+
+    // Fallback: extract from text (look for "pairing code" context to avoid false positives)
+    if (!code) {
+      const contextMatch = resultText.match(/(?:pairing\s*(?:code)?|code)\s*[:\s]*([A-HJ-NP-Z2-9]{6})/i);
+      if (contextMatch) code = contextMatch[1].toUpperCase();
+    }
+
+    // Last resort: any 6-char code using Southleft's alphabet (excludes 0/O/1/I)
+    if (!code) {
+      const rawMatch = resultText.match(/\b([A-HJ-NP-Z2-9]{6})\b/);
+      if (rawMatch) code = rawMatch[1];
+    }
+
+    if (!code) {
+      log.warn("Could not extract pairing code from result", { result: resultText.slice(0, 500) });
+      return { success: false, error: "Could not extract pairing code from figma_pair_plugin result" };
+    }
+    log.info(`Pairing code: ${code}`);
+
+    // Broadcast the code to the plugin via Supabase Realtime
+    if (params.pluginClientId) {
+      try {
+        const ch = supabase.channel(`guardian:execute:${params.userId}`);
+        await new Promise<void>((resolve) => {
+          ch.subscribe((status) => {
+            if (status === "SUBSCRIBED") resolve();
+          });
+        });
+        await ch.send({
+          type: "broadcast",
+          event: "connect_fc_cloud_relay",
+          payload: { code, targetClientId: params.pluginClientId },
+        });
+        log.info(`Broadcast connect_fc_cloud_relay (code ${code}) to plugin ${params.pluginClientId}`);
+        ch.unsubscribe();
+      } catch (err) {
+        log.warn(`Failed to broadcast connect_fc_cloud_relay: ${err}`);
+      }
+    }
+
+    // Wait for plugin to connect to the relay
+    await sleep(3000);
+
+    return { success: true, code };
+  } catch (err) {
+    log.error(`pairFCCloudRelay failed: ${err instanceof Error ? err.message : String(err)}`);
+    return { success: false, error: `Cloud relay pairing failed: ${err instanceof Error ? err.message : String(err)}` };
+  }
+}
+
 export async function executeMCPTool(params: {
   userId: string;
   serverId: string;

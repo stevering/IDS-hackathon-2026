@@ -198,6 +198,15 @@ export function useFigmaExecuteChannel(
           window.parent.postMessage({ source: "figpal-webapp", type: "CONNECT_FC_PORT", data: { port } }, "*");
         }
       })
+      .on("broadcast", { event: "connect_fc_cloud_relay" }, (payload) => {
+        const { code, targetClientId } = payload.payload as { code: string; targetClientId?: string };
+        if (targetClientId && targetClientId !== clientId.current) return;
+        if (clientInfoRef.current?.type !== "figma-plugin") return;
+        console.log(`[ExecuteChannel] Forwarding connect_fc_cloud_relay (code ${code}) to plugin`);
+        if (typeof window !== "undefined") {
+          window.parent.postMessage({ source: "figpal-webapp", type: "CONNECT_FC_CLOUD_RELAY", data: { code } }, "*");
+        }
+      })
       .subscribe(async (status) => {
         if (status === "SUBSCRIBED") {
           await retrackPresence();
