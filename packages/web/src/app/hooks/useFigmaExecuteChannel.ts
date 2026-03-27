@@ -200,8 +200,15 @@ export function useFigmaExecuteChannel(
       })
       .on("broadcast", { event: "connect_fc_cloud_relay" }, (payload) => {
         const { code, targetClientId } = payload.payload as { code: string; targetClientId?: string };
-        if (targetClientId && targetClientId !== clientId.current) return;
-        if (clientInfoRef.current?.type !== "figma-plugin") return;
+        console.log(`[ExecuteChannel] Received connect_fc_cloud_relay broadcast`, { code, targetClientId, myClientId: clientId.current, myType: clientInfoRef.current?.type });
+        if (targetClientId && targetClientId !== clientId.current) {
+          console.log(`[ExecuteChannel] Skipping — targetClientId mismatch (${targetClientId} !== ${clientId.current})`);
+          return;
+        }
+        if (clientInfoRef.current?.type !== "figma-plugin") {
+          console.log(`[ExecuteChannel] Skipping — not a figma-plugin client (type=${clientInfoRef.current?.type})`);
+          return;
+        }
         console.log(`[ExecuteChannel] Forwarding connect_fc_cloud_relay (code ${code}) to plugin`);
         if (typeof window !== "undefined") {
           window.parent.postMessage({ source: "figpal-webapp", type: "CONNECT_FC_CLOUD_RELAY", data: { code } }, "*");

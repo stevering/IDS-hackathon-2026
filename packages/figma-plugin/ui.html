@@ -648,6 +648,11 @@
 
 
 <script>
+    // Detect if the plugin is in cloud mode (iframe loads a remote URL, not localhost)
+    const _guardianIframeSrc = document.getElementById('webview-iframe')?.getAttribute('src') || '';
+    const isCloudMode = _guardianIframeSrc.startsWith('https://');
+    if (isCloudMode) console.log('[Guardian] Cloud mode detected — skipping local WS scans');
+
     const mainAvatar = document.getElementById('main-avatar');
     const selectionStats = document.getElementById('selection-stats');
     const statusEl = document.getElementById('status');
@@ -1307,8 +1312,11 @@
             }
             // Cloud relay connection triggered by orchestration (production/preview)
             if (event.data.type === 'CONNECT_FC_CLOUD_RELAY' && event.data.data?.code) {
+                console.log('[FC Bridge] Received CONNECT_FC_CLOUD_RELAY with code ' + event.data.data.code);
                 if (typeof window.__connectFCCloudRelay === 'function') {
                     window.__connectFCCloudRelay(event.data.data.code);
+                } else {
+                    console.warn('[FC Bridge] __connectFCCloudRelay not available yet');
                 }
                 return;
             }
@@ -1958,9 +1966,13 @@
             });
         }
 
-        // Start scanning + periodic rescan to discover new servers
-        scanAndConnect();
-        setInterval(function () { scanAndConnect(); }, 15000);
+        // Start scanning + periodic rescan to discover new servers (local dev only)
+        if (!isCloudMode) {
+            scanAndConnect();
+            setInterval(function () { scanAndConnect(); }, 15000);
+        } else {
+            console.log('[FC Bridge] Skipping local port scan (cloud mode)');
+        }
 
         // Expose cloud relay connect for Southleft Figma Console (production/preview)
         // Called when the webapp receives a connect_fc_cloud_relay broadcast from Supabase
@@ -2030,6 +2042,10 @@
     // This inline version mirrors that code for browser/Figma plugin context.
     // ───────────────────────────────────────────────────────────────────────────
     (function initGuardianBridge() {
+        if (isCloudMode) {
+            console.log('[Guardian Bridge] Skipping Electron overlay connection (cloud mode)');
+            return;
+        }
         const BRIDGE_PORT = 3002;
         let ws = null;
         let clientId = null;
