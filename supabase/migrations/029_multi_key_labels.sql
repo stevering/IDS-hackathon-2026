@@ -67,7 +67,7 @@ BEGIN
   END IF;
 
   -- Store secret in vault
-  INSERT INTO vault.secrets (secret) VALUES (p_secret) RETURNING id INTO v_vault_id;
+  SELECT vault.create_secret(p_secret) INTO v_vault_id;
 
   -- Create key record
   INSERT INTO user_api_keys (user_id, provider, vault_id, label, key_hint, default_model)
@@ -116,8 +116,7 @@ BEGIN
 
   -- Update secret if provided
   IF p_secret IS NOT NULL THEN
-    DELETE FROM vault.secrets WHERE id = v_old_vault;
-    INSERT INTO vault.secrets (secret) VALUES (p_secret) RETURNING id INTO v_vault_id;
+    PERFORM vault.update_secret(v_old_vault, p_secret);
 
     -- Generate key hint
     IF length(p_secret) >= 6 THEN
@@ -127,7 +126,7 @@ BEGIN
     END IF;
 
     UPDATE user_api_keys
-    SET vault_id = v_vault_id, key_hint = v_hint, updated_at = now()
+    SET key_hint = v_hint, updated_at = now()
     WHERE id = p_key_id;
   END IF;
 

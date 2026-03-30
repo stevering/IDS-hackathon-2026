@@ -61,20 +61,18 @@ BEGIN
   WHERE user_id = v_user_id AND provider = p_provider;
 
   IF v_key_id IS NOT NULL THEN
-    -- Delete old secret from vault
-    DELETE FROM vault.secrets WHERE id = v_old_vault;
-    -- Store new secret
-    INSERT INTO vault.secrets (secret) VALUES (p_secret) RETURNING id INTO v_vault_id;
+    -- Update existing vault secret
+    PERFORM vault.update_secret(v_old_vault, p_secret);
     -- Update key record
     UPDATE user_api_keys
-    SET vault_id = v_vault_id,
+    SET
         default_model = COALESCE(p_default_model, default_model),
         updated_at = now()
     WHERE id = v_key_id;
     RETURN v_key_id;
   ELSE
     -- Store secret in vault
-    INSERT INTO vault.secrets (secret) VALUES (p_secret) RETURNING id INTO v_vault_id;
+    SELECT vault.create_secret(p_secret) INTO v_vault_id;
     -- Create key record
     INSERT INTO user_api_keys (user_id, provider, vault_id, default_model)
     VALUES (v_user_id, p_provider, v_vault_id, p_default_model)

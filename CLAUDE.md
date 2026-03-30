@@ -70,6 +70,7 @@ When pushing code that includes DB migrations, follow this order:
 - **Migration order matters**: if migration N+1 depends on N, apply them sequentially.
 - **Rétrocompatibilité**: prefer `ADD COLUMN IF NOT EXISTS`, `CREATE OR REPLACE`, `DROP IF EXISTS` to avoid errors if re-applied.
 - **Breaking RPCs**: if a migration changes a function signature (e.g., `delete_api_key(TEXT)` → `delete_api_key(UUID)`), always `DROP` the old signature first to avoid overload ambiguity.
+- **Vault access**: NEVER use `INSERT INTO vault.secrets` — use `SELECT vault.create_secret(secret)` instead. NEVER use `DELETE FROM vault.secrets` + re-insert — use `PERFORM vault.update_secret(id, new_secret)`. Direct vault table access fails with "permission denied for function _crypto_aead_det_noncegen" because `postgres` is not superuser on Supabase cloud. The `vault.create_secret()` and `vault.update_secret()` functions are owned by `supabase_admin` (SECURITY DEFINER) and bypass this restriction.
 
 ### Rollback procedure
 
