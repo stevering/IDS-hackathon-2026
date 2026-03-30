@@ -183,7 +183,7 @@ export function ConnectedClients({ clients: presenceClients, loading, connection
 
   if (isLoading) {
     return (
-      <section className="mb-8 p-4 rounded-xl bg-white/[0.04] border border-white/[0.08]">
+      <section className="mb-8 p-4 rounded-xl bg-white/[0.06] border border-white/[0.1] backdrop-blur-lg backdrop-saturate-[1.3]">
         <h2 className="text-sm font-medium mb-3">
           Clients
           {connectionStatus && connectionStatus !== "connected" && (
@@ -208,7 +208,7 @@ export function ConnectedClients({ clients: presenceClients, loading, connection
   const onlineCount = merged.filter((c) => c.online).length;
 
   return (
-    <section className="mb-8 p-4 rounded-xl bg-white/[0.04] border border-white/[0.08]">
+    <section className="mb-8 p-4 rounded-xl bg-white/[0.06] border border-white/[0.1] backdrop-blur-lg backdrop-saturate-[1.3]">
       <h2 className="text-sm font-medium mb-3">
         Clients
         <span className="ml-2 text-xs text-white/40">

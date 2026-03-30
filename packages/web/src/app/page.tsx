@@ -12,6 +12,7 @@ import { TargetSelector, type TargetItem } from "@/components/TargetSelector";
 import { UserMenu } from "@/components/UserMenu";
 import { EditableClientId } from "@/components/EditableClientId";
 import { GlassDropdown } from "@/components/GlassDropdown";
+import { PeekBanner } from "@/components/PeekBanner";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import remarkBreaks from "remark-breaks";
@@ -1319,11 +1320,17 @@ export default function Home() {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const sendMessageEarlyRef = useRef<((msg: { text: string }) => void) | null>(null);
   const [input, setInput] = useState("");
-  // selectedModel: "provider/model-id" for BYOK (e.g. "openai/gpt-4o"),
-  // or legacy bare string for free-tier XAI (e.g. "grok-4-1-fast-non-reasoning")
-  const [selectedModel, setSelectedModel] = useState<string>("grok-4-1-fast-non-reasoning");
-  const [byokKeys, setByokKeys] = useState<{ provider: string; is_default: boolean }[]>([]);
+  // selectedModel: "provider/model-id" (e.g. "openai/gpt-4o" or "google/gemini-2.5-flash")
+  const [selectedModel, setSelectedModel] = useState<string>("");
+  // selectedSource: "included" (platform quota) or "byok" (user's own key)
+  const [selectedSource, setSelectedSource] = useState<"included" | "byok" | null>(null);
+  // Which BYOK key is selected (by ID) — set when user picks a model from a specific key
+  const [selectedKeyId, setSelectedKeyId] = useState<string | null>(null);
+  const modelReady = selectedSource !== null;
+  const [byokKeys, setByokKeys] = useState<{ id: string; provider: string; label: string | null; key_hint: string | null; is_default: boolean; default_model: string | null }[]>([]);
   const [gatewayModels, setGatewayModels] = useState<GatewayModel[]>([]);
+  // Native model catalogs per direct-provider key (enriched with gateway metadata server-side)
+  const [nativeModels, setNativeModels] = useState<Record<string, { id: string; name: string; owned_by: string; tags?: string[]; context_window?: number; max_tokens?: number; gatewayId?: string }[]>>({});
   const [modelDropdownOpen, setModelDropdownOpen] = useState(false);
   const [modelSearch, setModelSearch] = useState("");
   const modelBtnRef = useRef<HTMLButtonElement>(null);
@@ -1537,47 +1544,71 @@ export default function Home() {
     setModelSearch("");
   }, []);
 
-  // Load user's BYOK keys + full model catalog + default model on mount
+
+  // Load user's BYOK keys + full model catalog + settings on mount
   useEffect(() => {
     Promise.all([
       fetch("/api/user/api-keys").then((r) => r.ok ? r.json() : { keys: [] }),
       fetch("/api/gateway-models").then((r) => r.ok ? r.json() : { models: [] }).catch(() => ({ models: [] })),
-      fetch("/api/user/settings").then((r) => r.ok ? r.json() : { defaultModel: null }).catch(() => ({ defaultModel: null })),
-    ]).then(([keysData, gwData, settingsData]: [Record<string, unknown>, Record<string, unknown>, { defaultModel: string | null }]) => {
-      const keys: { provider: string; is_default: boolean }[] = (keysData.keys ?? []) as { provider: string; is_default: boolean }[];
+      fetch("/api/user/settings").then((r) => r.ok ? r.json() : { defaultModel: null, usageSource: "included" }).catch(() => ({ defaultModel: null, usageSource: "included" })),
+    ]).then(async ([keysData, gwData, settingsData]: [Record<string, unknown>, Record<string, unknown>, { defaultModel: string | null; usageSource?: string }]) => {
+      const keys = (keysData.keys ?? []) as { id: string; provider: string; label: string | null; key_hint: string | null; is_default: boolean; default_model: string | null }[];
       const models: GatewayModel[] = (gwData.models ?? []) as GatewayModel[];
       const userDefaultModel: string | null = settingsData.defaultModel ?? null;
+      const userUsageSource = settingsData.usageSource === "byok" ? "byok" : "included";
       setByokKeys(keys);
       setGatewayModels(models);
+      setSelectedSource(userUsageSource);
 
-      // Priority: user's saved default model > first model from default key's provider
-      if (userDefaultModel && models.length > 0) {
-        // Verify the saved model is still accessible with current keys
-        const hasGateway = keys.some((k) => k.provider === "gateway");
-        const directProviders = new Set(keys.filter((k) => k.provider !== "gateway").map((k) => k.provider));
-        const getModelValue = (m: GatewayModel) =>
-          hasGateway ? m.id : `${m.owned_by}/${m.id.split("/").pop()}`;
-        const isAccessible = keys.length === 0 || models.some((m) => getModelValue(m) === userDefaultModel);
-        if (isAccessible) {
-          setSelectedModel(userDefaultModel);
-          return;
+      // Fetch native model catalogs for all direct-provider keys in parallel
+      const directKeys = keys.filter((k) => k.provider !== "gateway");
+      const nativePromises = directKeys.map((key) =>
+        fetch(`/api/user/api-keys/models?keyId=${key.id}`)
+          .then((r) => r.ok ? r.json() : null)
+          .then((data) => ({ keyId: key.id, models: data?.models ?? [] }))
+          .catch(() => ({ keyId: key.id, models: [] as { id: string; name: string; owned_by: string }[] }))
+      );
+
+      // Wait for ALL native catalogs before showing the selector
+      const nativeResults = await Promise.all(nativePromises);
+      const nativeMap: Record<string, { id: string; name: string; owned_by: string }[]> = {};
+      for (const { keyId, models: nModels } of nativeResults) {
+        if (nModels.length > 0) nativeMap[keyId] = nModels;
+      }
+      setNativeModels(nativeMap);
+
+      if (userUsageSource === "byok" && keys.length > 0) {
+        const defaultKey = keys.find((k) => k.is_default);
+        if (defaultKey) {
+          setSelectedKeyId(defaultKey.id);
+          if (defaultKey.default_model) {
+            setSelectedModel(defaultKey.default_model);
+            setSelectedSource(userUsageSource);
+            return;
+          }
+          // Fallback: first model from the key's native catalog or gateway
+          const keyNative = nativeMap[defaultKey.id];
+          if (keyNative?.length) {
+            setSelectedModel(`${defaultKey.provider}/${keyNative[0].id}`);
+            setSelectedSource(userUsageSource);
+            return;
+          }
+          if (defaultKey.provider === "gateway" && models.length > 0) {
+            setSelectedModel(models[0].id);
+            setSelectedSource(userUsageSource);
+            return;
+          }
         }
       }
 
-      // Fallback: auto-select first model matching the default key's provider
-      const defaultKey = keys.find((k) => k.is_default);
-      if (defaultKey && models.length > 0) {
-        const firstMatch = defaultKey.provider === "gateway"
-          ? models[0]
-          : models.find((m) => m.owned_by === defaultKey.provider);
-        if (firstMatch) {
-          setSelectedModel(
-            defaultKey.provider === "gateway"
-              ? firstMatch.id
-              : `${defaultKey.provider}/${firstMatch.id.split("/").pop()}`
-          );
-        }
+      // Included mode: use user's saved default model
+      if (userDefaultModel) {
+        setSelectedModel(userDefaultModel);
+      } else {
+        setSelectedModel("google/gemini-2.5-flash");
       }
+      setSelectedKeyId(null);
+      setSelectedSource(userUsageSource);
     }).catch(() => {});
   }, []);
 
@@ -1602,6 +1633,10 @@ export default function Home() {
   figmaOAuthRef.current = figmaOAuth;
   const selectedModelRef = useRef(selectedModel);
   selectedModelRef.current = selectedModel;
+  const selectedSourceRef = useRef(selectedSource);
+  selectedSourceRef.current = selectedSource;
+  const selectedKeyIdRef = useRef(selectedKeyId);
+  selectedKeyIdRef.current = selectedKeyId;
   const gatewayModelsRef = useRef(gatewayModels);
   gatewayModelsRef.current = gatewayModels;
   const selectedNodeRef = useRef(selectedNode);
@@ -1950,10 +1985,16 @@ export default function Home() {
           const effectiveMcps = enabledMcpsRef.current;
           // Is the plugin context from our own plugin (local) or from a remote target?
           const isLocalPlugin = !!figmaPluginContextRef.current;
-          // Check if model supports native reasoning via Gateway catalog tags
-          const selectedGw = gatewayModelsRef.current.find((m: { id: string }) => m.id === selectedModelRef.current);
-          const modelSupportsReasoning = selectedGw ? (selectedGw as { tags?: string[] }).tags?.includes("reasoning") ?? false : false;
-          return { figmaMcpUrl: figmaMcpUrlRef.current || (figmaOAuthRef.current ? "https://mcp.figma.com/mcp" : ""), figmaAccessToken: figmaAccessTokenRef.current, codeProjectPath: codeProjectPathRef.current, figmaOAuth: figmaOAuthRef.current, model: selectedModelRef.current, selectedNode: selectedNodeRef.current, tunnelSecret: tunnelSecretRef.current, enabledMcps: effectiveMcps, figmaPluginContext: pluginContext, isLocalPlugin, targetClientId, agentRole: 'idle' as const, connectedAgents: otherAgents, supportsReasoning: modelSupportsReasoning };
+          // Check if model supports native reasoning — via enriched native tags or gateway tags
+          const curModel = selectedModelRef.current;
+          const selectedGw = gatewayModelsRef.current.find((m: { id: string }) => m.id === curModel);
+          const gwReasoning = selectedGw ? (selectedGw as { tags?: string[] }).tags?.includes("reasoning") ?? false : false;
+          const curKeyId = selectedKeyIdRef.current;
+          const nativeList = curKeyId ? nativeModels[curKeyId] : undefined;
+          const nativeMatch = nativeList?.find((m) => m.id === curModel || `${m.owned_by}/${m.id}` === curModel);
+          const nativeReasoning = nativeMatch?.tags?.includes("reasoning") ?? false;
+          const modelSupportsReasoning = gwReasoning || nativeReasoning;
+          return { figmaMcpUrl: figmaMcpUrlRef.current || (figmaOAuthRef.current ? "https://mcp.figma.com/mcp" : ""), figmaAccessToken: figmaAccessTokenRef.current, codeProjectPath: codeProjectPathRef.current, figmaOAuth: figmaOAuthRef.current, model: selectedModelRef.current, source: selectedSourceRef.current, keyId: selectedKeyIdRef.current, selectedNode: selectedNodeRef.current, tunnelSecret: tunnelSecretRef.current, enabledMcps: effectiveMcps, figmaPluginContext: pluginContext, isLocalPlugin, targetClientId, agentRole: 'idle' as const, connectedAgents: otherAgents, supportsReasoning: modelSupportsReasoning };
         },
       }),
     [],
@@ -1961,6 +2002,8 @@ export default function Home() {
 
   // Ref to break the retry loop on errors (declared before useChat so callbacks can access it)
   const chatErrorRecoveryRef = useRef(false);
+  const [chatErrorMsg, setChatErrorMsg] = useState<string | null>(null);
+  const [errorCount, setErrorCount] = useState(0);
 
   // Serialize figma_plugin_execute calls — the AI can issue multiple in the same turn,
   // but concurrent addToolResult calls corrupt the SDK's internal state, causing
@@ -2068,8 +2111,10 @@ export default function Home() {
     // Auto-send tool results back to the server when all tool calls are resolved
     sendAutomaticallyWhen: lastAssistantMessageIsCompleteWithToolCalls,
     onError: (err) => {
-      console.error("[Chat] useChat error — breaking retry loop:", err.message);
+      console.warn("[Chat] useChat error — breaking retry loop:", err.message);
       chatErrorRecoveryRef.current = true;
+      setChatErrorMsg(err.message);
+      setErrorCount((c) => c + 1);
     },
   });
 
@@ -3586,13 +3631,9 @@ export default function Home() {
 
           {/* Selection changed block — disabled for now */}
 
-          {error && errorVisible && (
+          {error && errorVisible && error?.message?.includes("429") && (
             <div className="mb-4 p-3 bg-red-500/10 border border-red-500/20 rounded-lg text-sm text-red-400 break-words">
-              {error?.message?.includes("429") ? (
-                <>Daily free tier limit reached (500k tokens). <a href="/account" className="underline hover:text-red-300">Add your own API key</a> for unlimited access.</>
-              ) : (
-                <>Error: {error?.message ?? "Unknown error"}</>
-              )}
+              Daily free tier limit reached. <a href="/account" className="underline hover:text-red-300">Add your own API key</a> for unlimited access.
             </div>
           )}
 
@@ -3625,9 +3666,38 @@ export default function Home() {
                 </div>
               )}
               </div>
+              <div className="relative mx-auto max-w-3xl">
+                {/* PeekBanner — anchored above the form, slides behind it on retract */}
+                <div className="absolute bottom-full left-0 right-0 mb-2 z-0">
+                  <PeekBanner key={errorCount} open={!!chatErrorMsg} onClose={() => setChatErrorMsg(null)}>
+                    {(() => {
+                      if (!chatErrorMsg) return null;
+                      let msg = chatErrorMsg;
+                      try {
+                        const parsed = JSON.parse(msg);
+                        if (parsed.error) msg = parsed.error;
+                      } catch { /* not JSON */ }
+                      const segments = msg.split(/(https?:\/\/[^\s]+|\n)/g);
+                      return (
+                        <div className="px-4 py-2.5 pr-16 rounded-xl bg-red-500/10 border border-red-500/20 backdrop-blur-lg text-xs text-red-300">
+                          <span className="font-medium">Error: </span>
+                          {segments.map((seg: string, i: number) =>
+                            seg.startsWith("http") ? (
+                              <a key={i} href={seg} target="_blank" rel="noopener noreferrer" className="underline text-red-200 hover:text-white break-all">{seg}</a>
+                            ) : seg === "\n" ? (
+                              <br key={i} />
+                            ) : (
+                              <span key={i}>{seg}</span>
+                            )
+                          )}
+                        </div>
+                      );
+                    })()}
+                  </PeekBanner>
+                </div>
               <form
                 onSubmit={onSubmit}
-                className="relative mx-auto max-w-3xl rounded-2xl border border-white/30 overflow-visible"
+                className="relative z-10 rounded-2xl border border-white/30 overflow-visible"
                 style={{ background: "rgba(10,10,10,0.25)", backdropFilter: "blur(6px) saturate(1.3)", boxShadow: "0 8px 40px rgba(0,0,0,0.6), 0 2px 8px rgba(0,0,0,0.4), 0 1px 0 rgba(255,255,255,0.05) inset" }}
               >
                 <textarea
@@ -3673,119 +3743,211 @@ export default function Home() {
                   </div>
                   {/* Right: model picker + send */}
                   <div className="flex items-center gap-2">
-                  {byokKeys.length === 0 ? (
-                    /* Free tier */
-                    <div className="flex items-center gap-2">
-                      <span className="text-xs text-white/55">
-                        Free tier · Grok
-                      </span>
-                      <Link
-                        href="/account"
-                        className="text-xs text-violet-400 hover:text-violet-300 transition-colors underline underline-offset-2"
-                      >
-                        Add API key
-                      </Link>
-                    </div>
-                  ) : (
-                    /* BYOK — model picker */
-                    <div className="relative">
-                      {(() => {
-                        const hasGateway = byokKeys.some((k) => k.provider === "gateway");
-                        const directProviders = new Set(byokKeys.filter((k) => k.provider !== "gateway").map((k) => k.provider));
-                        const visibleModels = hasGateway
-                          ? gatewayModels
-                          : gatewayModels.filter((m) => directProviders.has(m.owned_by));
-                        const getModelValue = (m: GatewayModel) =>
-                          hasGateway ? m.id : `${m.owned_by}/${m.id.split("/").pop()}`;
+                  {/* Model selector — segmented: Included + My Keys */}
+                  <div className="relative">
+                    {!modelReady ? (
+                      <div className="flex items-center gap-1.5 px-2 py-1">
+                        <div className="h-4 w-14 rounded bg-white/10 animate-pulse" />
+                        <div className="h-4 w-24 rounded bg-white/[0.06] animate-pulse" />
+                      </div>
+                    ) : (() => {
+                      // Included models (free tier)
+                      const FREE_TIER_IDS = ["google/gemini-2.5-flash", "google/gemini-2.5-pro"];
+                      const includedModels = gatewayModels.filter((m) => FREE_TIER_IDS.includes(m.id));
 
-                        const selectedGw = visibleModels.find((m) => getModelValue(m) === selectedModel);
-                        const selectedLabel = selectedGw
-                          ? `${selectedGw.name}${selectedGw.tags?.includes("reasoning") ? " ✦" : ""}`
-                          : selectedModel;
+                      // BYOK models grouped by key
+                      const hasGateway = byokKeys.some((k) => k.provider === "gateway");
+                      const directProviders = new Set(byokKeys.filter((k) => k.provider !== "gateway").map((k) => k.provider));
+                      const byokModels = hasGateway
+                        ? gatewayModels
+                        : gatewayModels.filter((m) => directProviders.has(m.owned_by));
+                      const byokGrouped = byokModels.reduce<Record<string, GatewayModel[]>>((acc, m) => {
+                        (acc[m.owned_by] ??= []).push(m);
+                        return acc;
+                      }, {});
 
-                        const grouped = visibleModels.reduce<Record<string, GatewayModel[]>>((acc, m) => {
-                          (acc[m.owned_by] ??= []).push(m);
-                          return acc;
-                        }, {});
+                      const query = modelSearch.toLowerCase();
 
-                        const query = modelSearch.toLowerCase();
-                        const filteredGrouped = Object.entries(grouped).reduce<Record<string, GatewayModel[]>>((acc, [provider, models]) => {
-                          const filtered = models.filter((m) =>
-                            m.name.toLowerCase().includes(query) || provider.toLowerCase().includes(query)
-                          );
-                          if (filtered.length > 0) acc[provider] = filtered;
-                          return acc;
-                        }, {});
+                      // Current label
+                      const selectedGw = gatewayModels.find((m) => m.id === selectedModel);
+                      // Source tag: "Included" or the selected key label
+                      const activeKey = selectedSource === "byok" && selectedKeyId
+                        ? byokKeys.find((k) => k.id === selectedKeyId) ?? byokKeys.find((k) => k.is_default) ?? byokKeys[0]
+                        : selectedSource === "byok"
+                          ? byokKeys.find((k) => k.is_default) ?? byokKeys[0]
+                          : null;
+                      const sourceTag = selectedSource === "included"
+                        ? "Included"
+                        : activeKey?.label ?? "BYOK";
+                      // Find friendly name from gateway or enriched native catalog
+                      const nativeKeyModels = activeKey ? nativeModels[activeKey.id] : undefined;
+                      const nativeMatch = nativeKeyModels?.find((m) => m.id === selectedModel || `${m.owned_by}/${m.id}` === selectedModel);
+                      const displayModel = selectedGw ?? nativeMatch;
+                      const selectedLabel = displayModel
+                        ? `${displayModel.name}${displayModel.tags?.includes("reasoning") ? " ✦" : ""}`
+                        : selectedModel;
 
-                        return (
-                          <>
-                            <button
-                              ref={modelBtnRef}
-                              type="button"
-                              onClick={() => { setModelDropdownOpen(!modelDropdownOpen); setModelSearch(""); }}
-                              className="flex items-center gap-1.5 px-2 py-1 rounded-lg text-xs text-white/50 hover:text-white/80 transition-colors cursor-pointer max-w-[200px]"
+                      return (
+                        <>
+                          <button
+                            ref={modelBtnRef}
+                            type="button"
+                            onClick={() => { setModelDropdownOpen(!modelDropdownOpen); setModelSearch(""); }}
+                            className="flex items-center gap-1.5 px-2 py-1 rounded-lg text-xs text-white/50 hover:text-white/80 transition-colors cursor-pointer max-w-[220px]"
+                          >
+                            <span className={`shrink-0 text-[9px] px-1 py-0.5 rounded font-medium ${selectedSource === "included" ? "bg-violet-600/30 text-violet-300" : "bg-emerald-600/30 text-emerald-300"}`}>
+                              {activeKey?.is_default && <span className="mr-0.5">★</span>}{sourceTag}
+                            </span>
+                            <span className="truncate">{selectedLabel}</span>
+                            <svg
+                              width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                              strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
+                              className={`shrink-0 transition-transform ${modelDropdownOpen ? "rotate-180" : ""}`}
                             >
-                              <span className="truncate">{selectedLabel}</span>
-                              <svg
-                                width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                                strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
-                                className={`shrink-0 transition-transform ${modelDropdownOpen ? "rotate-180" : ""}`}
-                              >
-                                <path d="M6 9l6 6 6-6" />
-                              </svg>
-                            </button>
+                              <path d="M6 9l6 6 6-6" />
+                            </svg>
+                          </button>
 
-                            <GlassDropdown open={modelDropdownOpen} onClose={handleModelDropdownClose} anchorRef={modelBtnRef} side="top" align="right" width={256}>
-                                <div className="p-2 border-b border-white/[0.06]">
-                                  <input
-                                    type="text"
-                                    placeholder="Search models..."
-                                    value={modelSearch}
-                                    onChange={(e) => setModelSearch(e.target.value)}
-                                    autoFocus
-                                    className="w-full px-2.5 py-1.5 rounded-md bg-white/5 border border-white/10 text-xs outline-none focus:border-white/25 transition-colors placeholder:text-white/25"
-                                  />
+                          <GlassDropdown open={modelDropdownOpen} onClose={handleModelDropdownClose} anchorRef={modelBtnRef} side="top" align="right" width={280}>
+                              <div className="p-2 border-b border-white/[0.06]">
+                                <input
+                                  type="text"
+                                  placeholder="Search models..."
+                                  value={modelSearch}
+                                  onChange={(e) => setModelSearch(e.target.value)}
+                                  autoFocus
+                                  className="w-full px-2.5 py-1.5 rounded-md bg-white/5 border border-white/10 text-xs outline-none focus:border-white/25 transition-colors placeholder:text-white/25"
+                                />
+                              </div>
+                              <div className="max-h-60 overflow-y-auto py-1">
+                                {/* ── Included section ── */}
+                                <div className="px-3 py-1.5 text-[10px] font-semibold text-violet-400/60 uppercase tracking-wider border-b border-white/[0.04] mb-0.5">
+                                  Included (Free tier)
                                 </div>
-                                <div className="max-h-60 overflow-y-auto py-1">
-                                  {Object.entries(filteredGrouped).map(([provider, models]) => (
-                                    <div key={provider}>
-                                      <div className="px-3 py-1.5 text-[10px] font-semibold text-white/30 uppercase tracking-wider">
-                                        {provider.charAt(0).toUpperCase() + provider.slice(1)}
-                                      </div>
-                                      {models.map((m) => {
-                                        const value = getModelValue(m);
-                                        const isReasoning = m.tags?.includes("reasoning");
-                                        return (
-                                          <button
-                                            key={m.id}
-                                            type="button"
-                                            onClick={() => {
-                                              setSelectedModel(value);
-                                              setModelDropdownOpen(false);
-                                              setModelSearch("");
-                                            }}
-                                            className={`w-full text-left px-3 py-1.5 text-xs transition-colors cursor-pointer ${
-                                              selectedModel === value
-                                                ? "bg-violet-600/30 text-white"
-                                                : "text-white/60 hover:bg-white/5 hover:text-white/90"
-                                            }`}
-                                          >
-                                            {m.name}{isReasoning ? <span title="Supports reasoning">{" "}✦</span> : ""}
-                                          </button>
-                                        );
-                                      })}
-                                    </div>
+                                {includedModels
+                                  .filter((m) => !query || m.name.toLowerCase().includes(query))
+                                  .map((m) => (
+                                    <button
+                                      key={`inc-${m.id}`}
+                                      type="button"
+                                      onClick={() => {
+                                        setSelectedModel(m.id);
+                                        setSelectedSource("included");
+                                        setSelectedKeyId(null);
+                                        setModelDropdownOpen(false);
+                                        setModelSearch("");
+                                      }}
+                                      className={`w-full text-left px-3 py-1.5 text-xs transition-colors cursor-pointer ${
+                                        selectedModel === m.id && selectedSource === "included"
+                                          ? "bg-violet-600/30 text-white"
+                                          : "text-white/60 hover:bg-white/5 hover:text-white/90"
+                                      }`}
+                                    >
+                                      {m.name}
+                                    </button>
                                   ))}
-                                  {Object.keys(filteredGrouped).length === 0 && (
-                                    <p className="px-3 py-3 text-xs text-white/30 text-center">No model found</p>
-                                  )}
-                                </div>
-                            </GlassDropdown>
-                          </>
-                        );
-                      })()}
-                    </div>
-                  )}
+                                {includedModels.filter((m) => !query || m.name.toLowerCase().includes(query)).length === 0 && query && (
+                                  <p className="px-3 py-1.5 text-[10px] text-white/20 text-center">No match</p>
+                                )}
+
+                                {/* ── My Keys section — grouped by key (label), default first ── */}
+                                {byokKeys.length > 0 && (
+                                  <>
+                                    <div className="px-3 py-1.5 text-[10px] font-semibold text-emerald-400/60 uppercase tracking-wider border-b border-white/[0.04] border-t border-white/[0.04] mt-1 mb-0.5">
+                                      My keys
+                                    </div>
+                                    {[...byokKeys]
+                                      .sort((a, b) => (b.is_default ? 1 : 0) - (a.is_default ? 1 : 0))
+                                      .map((key) => {
+                                      // Use native catalog for direct keys, gateway catalog for gateway keys
+                                      const keyModels = key.provider === "gateway"
+                                        ? gatewayModels
+                                        : nativeModels[key.id] ?? [];
+                                      const filtered = keyModels.filter((m) =>
+                                        !query || m.name.toLowerCase().includes(query) || (key.label ?? key.provider).toLowerCase().includes(query)
+                                      );
+                                      if (filtered.length === 0 && query) return null;
+
+                                      const subGrouped = key.provider === "gateway"
+                                        ? filtered.reduce<Record<string, typeof filtered>>((acc, m) => {
+                                            (acc[m.owned_by] ??= []).push(m);
+                                            return acc;
+                                          }, {})
+                                        : { [key.provider]: filtered };
+
+                                      return (
+                                        <div key={key.id} className="mb-1">
+                                          {/* Key header */}
+                                          <div className="px-3 py-1.5 flex items-center gap-1.5 rounded-md mx-1 bg-white/[0.03]">
+                                            {key.is_default
+                                              ? <span className="text-emerald-400 text-[11px]">★</span>
+                                              : <span className="text-white/15 text-[11px]">☆</span>
+                                            }
+                                            <span className="text-[11px] font-semibold text-white/60">{key.label ?? `${key.provider}-1`}</span>
+                                            {key.key_hint && <span className="text-[9px] text-white/20 font-mono">{key.key_hint}</span>}
+                                          </div>
+                                          {/* Models tree — indented with left border */}
+                                          <div className="ml-[18px] pl-2.5 border-l border-white/[0.06]">
+                                            {Object.entries(subGrouped).map(([prov, models]) => (
+                                              <div key={`${key.id}-${prov}`}>
+                                                {key.provider === "gateway" && (
+                                                  <div className="px-1 py-0.5 text-[9px] text-white/25 uppercase tracking-wider mt-0.5">
+                                                    {prov.charAt(0).toUpperCase() + prov.slice(1)}
+                                                  </div>
+                                                )}
+                                                {models.map((m) => {
+                                                  const isReasoning = "tags" in m && (m as { tags?: string[] }).tags?.includes("reasoning");
+                                                  const isKeyDefault = key.default_model === m.id || key.default_model === `${key.provider}/${m.id}`;
+                                                  return (
+                                                    <button
+                                                      key={`byok-${key.id}-${m.id}`}
+                                                      type="button"
+                                                      onClick={() => {
+                                                        // Ensure model ID has provider prefix (native catalogs may not include it)
+                                                        const fullId = m.id.includes("/") ? m.id : `${key.provider}/${m.id}`;
+                                                        setSelectedModel(fullId);
+                                                        setSelectedSource("byok");
+                                                        setSelectedKeyId(key.id);
+                                                        setModelDropdownOpen(false);
+                                                        setModelSearch("");
+                                                      }}
+                                                      className={`w-full text-left px-2 py-1 text-xs rounded-sm transition-colors cursor-pointer ${
+                                                        (selectedModel === m.id || selectedModel === `${key.provider}/${m.id}`) && selectedSource === "byok" && selectedKeyId === key.id
+                                                          ? "bg-emerald-600/20 text-white"
+                                                          : "text-white/55 hover:bg-white/5 hover:text-white/90"
+                                                      }`}
+                                                    >
+                                                      {isKeyDefault && <span className="text-emerald-400 mr-1">★</span>}
+                                                      {m.name}{isReasoning ? <span title="Supports reasoning">{" "}✦</span> : ""}
+                                                    </button>
+                                                  );
+                                                })}
+                                              </div>
+                                            ))}
+                                          </div>
+                                        </div>
+                                      );
+                                    })}
+                                  </>
+                                )}
+
+                                {byokKeys.length === 0 && (
+                                  <div className="px-3 py-2 border-t border-white/[0.04] mt-1">
+                                    <Link
+                                      href="/account"
+                                      className="text-[10px] text-violet-400 hover:text-violet-300 transition-colors underline underline-offset-2"
+                                      onClick={() => setModelDropdownOpen(false)}
+                                    >
+                                      Add API key for more models
+                                    </Link>
+                                  </div>
+                                )}
+                              </div>
+                          </GlassDropdown>
+                        </>
+                      );
+                    })()}
+                  </div>
                   <button
                     type="submit"
                     disabled={isLoading || !input.trim()}
@@ -3799,6 +3961,7 @@ export default function Home() {
                   </div>
                 </div>
               </form>
+              </div>{/* end form + peek wrapper */}
             </div>
             </div>{/* end chat panel */}
 

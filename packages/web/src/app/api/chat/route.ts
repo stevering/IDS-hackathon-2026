@@ -8,7 +8,8 @@ import { createClient as createSupabaseUserClient } from "@/lib/supabase/server"
 import { createServiceClient } from "@/lib/supabase/service";
 import { FREE_TIER_MODEL } from "@/lib/providers";
 import { getModelPricing } from "@/lib/model-pricing";
-import { resolveModel, resolveFreeTier, buildDirectProviderModel, type ResolvedModel } from "@/lib/model-resolver";
+import { resolveModel, resolveFreeTier, buildDirectProviderModel, type ResolvedModel, type UsageSource } from "@/lib/model-resolver";
+import { getUserTier } from "@/lib/tiers";
 import { createMCPClient, type MCPClient } from "@ai-sdk/mcp";
 import { GUARDIAN_SYSTEM_PROMPT } from "@/lib/system-prompt";
 import { cookies } from "next/headers";
@@ -48,7 +49,7 @@ const OAUTH_SESSION_MAX_AGE_MS = 10 * 3600_000; // 10 hours
 const STALE_TOKEN_COOLDOWN_MS = 30 * 60_000; // 30 minutes
 const STREAM_KEEPALIVE_MS = 5_000; // Send a ping every 5s during MCP connection
 const MAX_STEPS = 20; // Maximum number of steps for the stream (limit to prevent infinite loops)
-const FREE_TIER_DAILY_TOKEN_LIMIT = 500_000; // Rolling 24h token limit for free tier
+// Token limit is now driven by the user's tier (see tiers.ts)
 
 const encoder = new TextEncoder();
 
@@ -240,6 +241,39 @@ function createKeepaliveStream(
                   if (match) lastTextDeltaId = match[1];
                 }
 
+                // Intercept error events and enrich them with context
+                if (text.includes('"type":"error"')) {
+                  try {
+                    // Parse the SSE data line
+                    const dataMatch = text.match(/^data:\s*(.+)$/m);
+                    if (dataMatch) {
+                      const parsed = JSON.parse(dataMatch[1]);
+                      if (parsed.type === "error" && parsed.errorText) {
+                        const origError = parsed.errorText;
+                        const modelId = resolvedModel.modelId;
+                        const provider = modelId.includes("/") ? modelId.split("/")[0] : "unknown";
+                        const errId = `err-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
+                        console.error(`[Chat] Provider stream error [${errId}]:`, origError);
+
+                        const isAuth = /401|Unauthorized|invalid.api.key|authentication/i.test(origError);
+                        const isRate = /429|quota|rate.limit/i.test(origError);
+                        const hint = isAuth
+                          ? `Invalid API key for ${provider} (model: ${modelId}).\nCheck your ${provider} API key in Account settings.`
+                          : isRate
+                            ? `Rate limit reached for ${provider} (model: ${modelId}).\nWait a moment or switch to another model.`
+                            : `${provider} error (model: ${modelId}).`;
+
+                        parsed.errorText = `${hint}\n\nProvider response: ${origError}\n\nError ID: ${errId}`;
+                        const enriched = `data: ${JSON.stringify(parsed)}\n\n`;
+                        controller.enqueue(encoder.encode(enriched));
+                        continue;
+                      }
+                    }
+                  } catch {
+                    // Parsing failed, forward as-is
+                  }
+                }
+
                 controller.enqueue(value);
               }
             } finally {
@@ -265,16 +299,54 @@ function createKeepaliveStream(
           }
 
        } catch (error) {
-        // MCP connection error
         if (keepaliveInterval) clearInterval(keepaliveInterval);
 
         const errorMsg = error instanceof Error ? error.message : String(error);
-        console.error("[Chat] MCP connection failed:", errorMsg);
 
-        controller.enqueue(encoder.encode(encodeSSEMessage("text", {
-          content: `❌ MCP connection error: ${errorMsg}`
-        })));
-        controller.enqueue(encoder.encode(encodeSSEMessage("finish", { finishReason: "error" })));
+        // Detect AI provider errors (auth, rate limit, etc.)
+        const isProviderError = errorMsg.includes("401") || errorMsg.includes("403")
+          || errorMsg.includes("429") || errorMsg.includes("Unauthorized")
+          || errorMsg.includes("invalid_api_key") || errorMsg.includes("authentication")
+          || errorMsg.includes("API key") || errorMsg.includes("quota");
+
+        // Build a user-friendly error message with context
+        const modelId = resolvedModel.modelId;
+        const provider = modelId.includes("/") ? modelId.split("/")[0] : "unknown";
+        let userMessage: string;
+
+        if (isProviderError) {
+          const isAuthError = errorMsg.includes("401") || errorMsg.includes("Unauthorized")
+            || errorMsg.includes("invalid_api_key") || errorMsg.includes("authentication")
+            || errorMsg.includes("API key");
+          const isRateLimit = errorMsg.includes("429") || errorMsg.includes("quota")
+            || errorMsg.includes("rate");
+
+          if (isAuthError) {
+            userMessage = `Invalid API key for ${provider} (model: ${modelId}).\n\nCheck your ${provider} API key in Account settings.`;
+          } else if (isRateLimit) {
+            userMessage = `Rate limit reached for ${provider} (model: ${modelId}).\n\nWait a moment or switch to another model.`;
+          } else {
+            userMessage = `${provider} API error (model: ${modelId}): ${errorMsg}`;
+          }
+        } else {
+          userMessage = errorMsg;
+        }
+
+        const label = isProviderError ? "API key error" : "Connection error";
+        const errorId = `err-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
+        console.error(`[Chat] ${label} [${errorId}]:`, errorMsg);
+
+        try {
+          controller.enqueue(encoder.encode(encodeSSEMessage("text-start", { id: "error-msg" })));
+          controller.enqueue(encoder.encode(encodeSSEMessage("text-delta", {
+            id: "error-msg",
+            delta: `❌ **${label}**: ${userMessage}\n\nProvider response: ${errorMsg}\n\nError ID: ${errorId}`
+          })));
+          controller.enqueue(encoder.encode(encodeSSEMessage("text-end", { id: "error-msg" })));
+          controller.enqueue(encoder.encode(encodeSSEMessage("finish", { finishReason: "error" })));
+        } catch {
+          // Controller may already be closed
+        }
 
       } finally {
         controller.close();
@@ -931,7 +1003,7 @@ async function connectMCPs(
 export async function POST(req: Request) {
   const {
     messages, figmaMcpUrl, figmaAccessToken, codeProjectPath, figmaOAuth,
-    model, selectedNode, tunnelSecret, enabledMcps, figmaPluginContext,
+    model, source: requestedSource, keyId: requestedKeyId, selectedNode, tunnelSecret, enabledMcps, figmaPluginContext,
     isLocalPlugin,  // true when webapp runs inside a Figma plugin, false when targeting remote
     targetClientId,
     orchestrationId,
@@ -941,23 +1013,38 @@ export async function POST(req: Request) {
     timerRemainingMs, // ms remaining in orchestration timer (null if not in orchestration)
     supportsReasoning, // true if model natively supports extended thinking (from Gateway catalog tags)
   } = await req.json();
+  const source: UsageSource | undefined = requestedSource === "included" || requestedSource === "byok" ? requestedSource : undefined;
 
   // Resolve the AI model (BYOK or free tier)
   const supabase = await createSupabaseUserClient();
   const { data: { user } } = await supabase.auth.getUser();
   // Get the user's access token to forward to authenticated MCP servers
   const { data: { session: supabaseSession } } = await supabase.auth.getSession();
-  const resolvedModel = await resolveModel(user?.id, model, supabase);
+  let resolvedModel;
+  try {
+    const keyId = typeof requestedKeyId === "string" ? requestedKeyId : undefined;
+    console.log(`[Chat] Resolving model: ${model}, source: ${source}, keyId: ${keyId ?? "none"}`);
+    resolvedModel = await resolveModel(user?.id, model, supabase, source, keyId);
+    console.log(`[Chat] Resolved: modelId=${resolvedModel.modelId}, isFreeTier=${resolvedModel.isFreeTier}`);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error("[Chat] Model resolution failed:", msg);
+    return new Response(
+      JSON.stringify({ error: msg }),
+      { status: 400, headers: { "Content-Type": "application/json" } }
+    );
+  }
 
-  // Enforce rolling 24h token limit for free-tier users
+  // Enforce rolling 24h token limit for included-usage users
   if (resolvedModel.isFreeTier && user?.id) {
+    const tier = getUserTier(user.id);
     const serviceClient = createServiceClient();
     const { data: currentUsage, error: usageError } = await serviceClient.rpc("get_usage_for_user", { p_user_id: user.id });
-    if (!usageError && typeof currentUsage === "number" && currentUsage >= FREE_TIER_DAILY_TOKEN_LIMIT) {
+    if (!usageError && typeof currentUsage === "number" && currentUsage >= tier.dailyTokenLimit) {
       return new Response(
         JSON.stringify({
           error: "daily_limit_exceeded",
-          limit: FREE_TIER_DAILY_TOKEN_LIMIT,
+          limit: tier.dailyTokenLimit,
           used: currentUsage,
         }),
         { status: 429, headers: { "Content-Type": "application/json" } }

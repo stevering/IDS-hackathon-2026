@@ -6,5 +6,7 @@
  * that the server needs at startup.
  */
 
-/** Default free-tier model (platform gateway key + this model). */
-export const FREE_TIER_MODEL = "google/gemini-2.5-flash";
+import { TIERS } from "@/lib/tiers";
+
+/** Default free-tier model (re-exported from tiers for backward compat). */
+export const FREE_TIER_MODEL = TIERS.free.defaultModel;

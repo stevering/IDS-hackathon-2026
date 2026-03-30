@@ -14,6 +14,73 @@ Backlog and TODOs are in `internal/docs/backlog/*`.
 
 ## Dev environment
 
+### Two Supabase environments — don't confuse them
+
+| | Local (Docker) | Cloud (prod/preview) |
+|---|---|---|
+| **What** | Supabase running in Docker via `supabase start` | Supabase project `ookghxkvzdnqicjdslej` (eu-west-3) |
+| **Used by** | `pnpm dev` (local development) | Vercel deployments (preview + production) |
+| **Container** | `supabase_db_IDS-hackathon-2026` | N/A |
+| **Apply SQL** | `docker exec -i supabase_db_IDS-hackathon-2026 psql -U postgres -d postgres < file.sql` | `mcp__supabase__apply_migration` (MCP tool) |
+
+**Important**:
+- The MCP Supabase tools (`mcp__supabase__*`) **always target cloud** — they cannot reach the local Docker DB.
+- To apply SQL on local Docker, use `docker exec ... psql` via Bash.
+- **NEVER use `mcp__supabase__apply_migration` when the user says "local" or "test locally"** — it will apply to cloud/prod.
+- When in doubt, ask: "Local Docker or cloud Supabase?"
+- **After `supabase db reset`**: re-apply the vault fix. On local Docker, `postgres` is not superuser — vault RPCs must be owned by `supabase_admin`:
+  ```bash
+  docker exec -i supabase_db_IDS-hackathon-2026 psql -h 127.0.0.1 -U supabase_admin -d postgres < supabase/local-only/fix-vault-ownership.sql
+  ```
+- **Applying migrations locally**: use `supabase_admin` for vault-related SQL, `postgres` for the rest:
+  ```bash
+  # Regular migrations (no vault)
+  docker exec -i supabase_db_IDS-hackathon-2026 psql -U postgres -d postgres < supabase/migrations/XXX.sql
+  # Vault-related migrations (needs superuser)
+  docker exec -i supabase_db_IDS-hackathon-2026 psql -h 127.0.0.1 -U supabase_admin -d postgres < supabase/migrations/XXX.sql
+  ```
+
+### Deploy to preview procedure
+
+When pushing code that includes DB migrations, follow this order:
+
+1. **Check for pending migrations**:
+   ```bash
+   ls supabase/migrations/*.sql  # compare with what's applied in prod
+   ```
+
+2. **Apply migrations to cloud FIRST** (before code deploy):
+   ```
+   mcp__supabase__apply_migration(project_id="ookghxkvzdnqicjdslej", name="...", query="...")
+   ```
+   - If migration drops/replaces RPCs (e.g., `upsert_api_key` → `insert_api_key`), the old preview will break briefly until the new code is deployed.
+   - For breaking migrations: apply migration + push code as close together as possible.
+
+3. **Push the code** (Vercel auto-deploys preview):
+   ```bash
+   git push origin feat/preview
+   ```
+
+4. **Verify preview** after deploy completes:
+   - Check the preview URL
+   - Test the affected features (account page, chat, etc.)
+
+**Important rules**:
+- **NEVER apply `supabase/local-only/*` to cloud** — those are local Docker workarounds only.
+- **Migration order matters**: if migration N+1 depends on N, apply them sequentially.
+- **Rétrocompatibilité**: prefer `ADD COLUMN IF NOT EXISTS`, `CREATE OR REPLACE`, `DROP IF EXISTS` to avoid errors if re-applied.
+- **Breaking RPCs**: if a migration changes a function signature (e.g., `delete_api_key(TEXT)` → `delete_api_key(UUID)`), always `DROP` the old signature first to avoid overload ambiguity.
+
+### Rollback procedure
+
+- **Code rollback**: revert the commit and push, or promote an older Vercel deployment.
+- **DB rollback**: migrations are NOT auto-reversible. Two strategies:
+  1. **Preferred (future)**: never `DROP` an old RPC in the same migration that creates its replacement. Use two migrations:
+     - Migration N: create new RPC (old still exists, both work)
+     - Migration N+1 (after old code is gone from all deployments): drop old RPC
+  2. **Emergency**: manually re-create the old RPCs via `mcp__supabase__apply_migration`.
+- **If both code + DB need rollback**: rollback DB first (re-create old RPCs), then rollback code.
+
 - `pnpm dev` logs are written live to `logs/dev.log` at project root. Always check this file to verify server restarts, hot reloads, or errors — don't ask the user to paste terminal output.
 - The Temporal worker (`@guardian/temporal`) uses `tsx --watch` with two watch paths: `src/` and `../orchestrations/src/`. Changes in either path auto-restart the worker (workflows, activities, and engine logic are all picked up).
   - **Important**: do NOT switch back to `node --watch --import tsx/esm` — it has a bug where `--watch` and `--watch-path` flags are not propagated to the respawned child, so the worker only restarts once then stops watching.

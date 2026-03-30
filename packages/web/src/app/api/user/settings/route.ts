@@ -15,6 +15,7 @@ export async function GET() {
   return NextResponse.json({
     autoAccept: row?.auto_accept ?? false,
     defaultModel: row?.default_model ?? null,
+    usageSource: row?.usage_source ?? "included",
     approvalMode: row?.approval_mode ?? "trust",
     guardEnabled: row?.guard_enabled ?? true,
     developerMode: row?.developer_mode ?? false,
@@ -35,12 +36,13 @@ export async function PATCH(req: Request) {
     return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
   }
 
-  const { autoAccept, defaultModel, approvalMode, guardEnabled, developerMode, devShowAllEvents, devLLMDelegation, devSlowDelegation } = body;
+  const { autoAccept, defaultModel, usageSource, approvalMode, guardEnabled, developerMode, devShowAllEvents, devLLMDelegation, devSlowDelegation } = body;
 
   // At least one field must be provided
   if (
     typeof autoAccept === "undefined" &&
     typeof defaultModel === "undefined" &&
+    typeof usageSource === "undefined" &&
     typeof approvalMode === "undefined" &&
     typeof guardEnabled === "undefined" &&
     typeof developerMode === "undefined" &&
@@ -79,6 +81,9 @@ export async function PATCH(req: Request) {
   if (typeof devSlowDelegation !== "undefined" && typeof devSlowDelegation !== "boolean") {
     return NextResponse.json({ error: "devSlowDelegation must be a boolean" }, { status: 400 });
   }
+  if (typeof usageSource !== "undefined" && usageSource !== "included" && usageSource !== "byok") {
+    return NextResponse.json({ error: "usageSource must be 'included' or 'byok'" }, { status: 400 });
+  }
 
   // Build RPC params — only pass what was provided
   const params: Record<string, unknown> = {};
@@ -90,6 +95,7 @@ export async function PATCH(req: Request) {
   if (typeof devShowAllEvents !== "undefined") params.p_dev_show_all_events = devShowAllEvents;
   if (typeof devLLMDelegation !== "undefined") params.p_dev_llm_delegation = devLLMDelegation;
   if (typeof devSlowDelegation !== "undefined") params.p_dev_slow_delegation = devSlowDelegation;
+  if (typeof usageSource !== "undefined") params.p_usage_source = usageSource;
 
   const { error } = await supabase.rpc("update_settings", params);
 

@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
-
-const FREE_TIER_DAILY_TOKEN_LIMIT = 500_000;
+import { getUserTier } from "@/lib/tiers";
 
 type UsageAggregate = {
   total_tokens: number;
@@ -46,7 +45,7 @@ export async function GET() {
   if (dailyRes.error) return NextResponse.json({ error: dailyRes.error.message }, { status: 500 });
 
   return NextResponse.json({
-    daily: { ...parseUsage(dailyRes.data), limit: FREE_TIER_DAILY_TOKEN_LIMIT },
+    daily: { ...parseUsage(dailyRes.data), limit: getUserTier(user.id).dailyTokenLimit },
     monthly: parseUsage(monthlyRes.data),
     lifetime: parseUsage(lifetimeRes.data),
   });

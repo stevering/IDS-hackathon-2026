@@ -3,6 +3,7 @@ import { Geist, Geist_Mono } from "next/font/google";
 import { SpeedInsights } from '@vercel/speed-insights/next';
 import { Analytics } from "@vercel/analytics/next";
 import { ThemeSync } from "@/components/ThemeSync";
+import { MatrixBackground } from "@/components/MatrixBackground";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -57,6 +58,7 @@ export default function RootLayout({
           <div className="aurora aurora-4" />
           <div className="aurora aurora-5" />
         </div>
+        <MatrixBackground />
         <div className="relative z-10">
           {children}
         </div>

@@ -57,6 +57,31 @@ export function GlassDropdown({
     return () => document.removeEventListener("mousedown", handleClick);
   }, [open, onClose, anchorRef]);
 
+  // Close on outside wheel/scroll — ignore when inside the dropdown
+  useEffect(() => {
+    if (!open) return;
+    function handleWheel(e: WheelEvent) {
+      if (panelRef.current?.contains(e.target as Node)) {
+        // Inside dropdown: find the scrollable list
+        const scrollable = panelRef.current.querySelector("[class*='overflow-y']") as HTMLElement | null;
+        if (scrollable && scrollable.contains(e.target as Node)) {
+          // Wheel is on the scrollable list itself
+          const { scrollTop, scrollHeight, clientHeight } = scrollable;
+          const canScrollUp = scrollTop > 0;
+          const canScrollDown = scrollTop + clientHeight < scrollHeight;
+          if ((e.deltaY < 0 && canScrollUp) || (e.deltaY > 0 && canScrollDown)) return;
+        }
+        // Anywhere else in the panel (search, padding) or at scroll edges: block
+        e.preventDefault();
+        return;
+      }
+      // Outside dropdown: close
+      onClose();
+    }
+    window.addEventListener("wheel", handleWheel, { capture: true, passive: false });
+    return () => window.removeEventListener("wheel", handleWheel, true);
+  }, [open, onClose]);
+
   if (!open || !pos) return null;
 
   return createPortal(
