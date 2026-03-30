@@ -331,6 +331,46 @@ BEGIN
 END;
 $$;
 
+-- ── get_api_key_by_id (fetch secret for a specific key ID) ───────────────
+
+DROP FUNCTION IF EXISTS public.get_api_key_by_id(UUID);
+CREATE FUNCTION public.get_api_key_by_id(p_key_id UUID)
+RETURNS TEXT
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_user_id  UUID := auth.uid();
+  v_secret   TEXT;
+  v_vault_id UUID;
+  v_plain    TEXT;
+BEGIN
+  IF v_user_id IS NULL THEN
+    RAISE EXCEPTION 'Not authenticated';
+  END IF;
+
+  SELECT k.vault_id, k.secret_plain INTO v_vault_id, v_plain
+  FROM user_api_keys k
+  WHERE k.id = p_key_id AND k.user_id = v_user_id;
+
+  IF NOT FOUND THEN
+    RETURN NULL;
+  END IF;
+
+  IF v_vault_id IS NOT NULL THEN
+    BEGIN
+      SELECT ds.decrypted_secret INTO v_secret
+      FROM vault.decrypted_secrets ds
+      WHERE ds.id = v_vault_id;
+      IF v_secret IS NOT NULL THEN RETURN v_secret; END IF;
+    EXCEPTION WHEN OTHERS THEN NULL; END;
+  END IF;
+
+  RETURN v_plain;
+END;
+$$;
+
 -- ── Grants ──────────────────────────────────────────────────────────────────
 
 GRANT EXECUTE ON FUNCTION public.insert_api_key(TEXT, TEXT, TEXT, TEXT) TO authenticated;
@@ -339,4 +379,5 @@ GRANT EXECUTE ON FUNCTION public.delete_api_key(UUID) TO authenticated;
 GRANT EXECUTE ON FUNCTION public.set_default_api_key(UUID) TO authenticated;
 GRANT EXECUTE ON FUNCTION public.update_key_default_model(UUID, TEXT) TO authenticated;
 GRANT EXECUTE ON FUNCTION public.get_api_key(TEXT) TO authenticated;
+GRANT EXECUTE ON FUNCTION public.get_api_key_by_id(UUID) TO authenticated;
 GRANT EXECUTE ON FUNCTION public.get_api_key_for_user(UUID, TEXT) TO service_role;

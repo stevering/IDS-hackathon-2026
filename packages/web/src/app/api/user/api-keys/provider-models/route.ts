@@ -187,8 +187,8 @@ export async function GET(req: Request) {
     return NextResponse.json({ error: "Key not found" }, { status: 404 });
   }
 
-  // Get the secret via RPC (works with both vault and secret_plain)
-  const { data: secret } = await supabase.rpc("get_api_key", { p_provider: keyRow.provider });
+  // Get the secret via RPC — by key ID, not provider (supports multiple keys per provider)
+  const { data: secret } = await supabase.rpc("get_api_key_by_id", { p_key_id: keyId });
   if (!secret) {
     return NextResponse.json({ error: "Could not retrieve API key secret" }, { status: 500 });
   }

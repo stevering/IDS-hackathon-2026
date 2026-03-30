@@ -108,11 +108,12 @@ Client sends: { model: "xai/grok-4-1-fast-reasoning", source: "byok", keyId: "2e
 
 2. source === "byok" + keyId → resolveBYOK()
    a. Fetch key by keyId from user_api_keys
-   b. If key.provider === "gateway" → createGateway({ apiKey })
-   c. If key.provider has native SDK → buildDirectProviderModel()
-   d. If key.provider has OpenAI-compat baseURL → createOpenAI({ apiKey, baseURL, compatibility: "compatible" }).chat()
-   e. No keyId → legacy fallback: try provider key, then gateway key
-   f. No matching key → throw Error (no silent fallback to free tier)
+   b. Fetch secret via `get_api_key_by_id(keyId)` (NOT `get_api_key(provider)`)
+   c. If key.provider === "gateway" → createGateway({ apiKey })
+   d. If key.provider has native SDK → buildDirectProviderModel()
+   e. If key.provider has OpenAI-compat baseURL → createOpenAI({ apiKey, baseURL }).chat()
+   f. No keyId → legacy fallback: try provider key, then gateway key
+   g. No matching key → throw Error (no silent fallback to free tier)
 
 3. No source → resolveLegacy() (backward compat)
 ```

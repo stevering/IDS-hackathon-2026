@@ -113,8 +113,8 @@ async function resolveBYOK(
       .single();
 
     if (keyRow?.provider) {
-      // Get secret via RPC (works with both vault in cloud and secret_plain in local)
-      const { data: secret } = await supabase.rpc("get_api_key", { p_provider: keyRow.provider });
+      // Get secret via RPC — by key ID, not provider (supports multiple keys per provider)
+      const { data: secret } = await supabase.rpc("get_api_key_by_id", { p_key_id: keyId });
       if (secret) {
         if (keyRow.provider === "gateway") {
           const gw = createGateway({ apiKey: secret });
