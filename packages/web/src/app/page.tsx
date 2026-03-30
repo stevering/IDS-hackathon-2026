@@ -1563,7 +1563,7 @@ export default function Home() {
       // Fetch native model catalogs for all direct-provider keys in parallel
       const directKeys = keys.filter((k) => k.provider !== "gateway");
       const nativePromises = directKeys.map((key) =>
-        fetch(`/api/user/api-keys/models?keyId=${key.id}`)
+        fetch(`/api/user/api-keys/provider-models?keyId=${key.id}`)
           .then((r) => r.ok ? r.json() : null)
           .then((data) => ({ keyId: key.id, models: data?.models ?? [] }))
           .catch(() => ({ keyId: key.id, models: [] as { id: string; name: string; owned_by: string }[] }))

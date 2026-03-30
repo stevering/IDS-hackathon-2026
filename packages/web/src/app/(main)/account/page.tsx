@@ -274,7 +274,7 @@ export default function AccountPage() {
       if (directKeys.length > 0) {
         const nativeResults = await Promise.all(
           directKeys.map((key) =>
-            fetch(`/api/user/api-keys/models?keyId=${key.id}`)
+            fetch(`/api/user/api-keys/provider-models?keyId=${key.id}`)
               .then((r) => r.ok ? r.json() : null)
               .then((data) => ({ keyId: key.id, models: data?.models ?? [] }))
               .catch(() => ({ keyId: key.id, models: [] as { id: string; name: string; owned_by: string }[] }))

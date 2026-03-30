@@ -57,7 +57,7 @@ Gateway and native model IDs often differ:
 
 ### Enrichment: native + gateway matching
 
-The endpoint `GET /api/user/api-keys/models?keyId=xxx` does:
+The endpoint `GET /api/user/api-keys/provider-models?keyId=xxx` does:
 
 1. Fetch native catalog from provider (`/v1/models` with user's key)
 2. Fetch gateway catalog (`https://ai-gateway.vercel.sh/v1/models`) — cached 1h
@@ -156,7 +156,7 @@ The chat body includes `supportsReasoning` which determines whether `extractReas
 
 All catalogs fetched at page mount (in parallel with settings + keys):
 1. Gateway catalog → `/api/gateway-models`
-2. Native catalogs → `/api/user/api-keys/models?keyId=xxx` for each direct key
+2. Native catalogs → `/api/user/api-keys/provider-models?keyId=xxx` for each direct key
 3. Skeleton shown until all loaded
 4. No "Loading..." per key — everything ready before display
 
@@ -193,7 +193,7 @@ SSE error events from the AI stream are intercepted and enriched:
 |---|---|
 | `packages/web/src/lib/model-resolver.ts` | Core resolution: source → SDK model instance |
 | `packages/web/src/lib/tiers.ts` | Tier definitions, allowed models, token limits |
-| `packages/web/src/app/api/user/api-keys/models/route.ts` | Native catalog fetch + gateway enrichment |
+| `packages/web/src/app/api/user/api-keys/provider-models/route.ts` | Native catalog fetch + gateway enrichment |
 | `packages/web/src/app/api/gateway-models/route.ts` | Gateway catalog proxy |
 | `packages/web/src/app/api/user/api-keys/route.ts` | CRUD keys (multi-key, labels, hints) |
 | `packages/web/src/app/api/chat/route.ts` | Chat handler: resolve model, stream, error enrichment |
