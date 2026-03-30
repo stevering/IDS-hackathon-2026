@@ -1558,7 +1558,8 @@ export default function Home() {
       const userUsageSource = settingsData.usageSource === "byok" ? "byok" : "included";
       setByokKeys(keys);
       setGatewayModels(models);
-      setSelectedSource(userUsageSource);
+      // Don't set selectedSource yet — wait for native catalogs to load first
+      // (selectedSource triggers modelReady which shows the selector)
 
       // Fetch native model catalogs for all direct-provider keys in parallel
       const directKeys = keys.filter((k) => k.provider !== "gateway");
