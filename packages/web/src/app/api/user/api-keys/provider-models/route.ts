@@ -175,16 +175,22 @@ export async function GET(req: Request) {
     return NextResponse.json({ error: "keyId is required" }, { status: 400 });
   }
 
-  // Fetch the key's provider, secret, and hint
+  // Fetch the key's provider and hint
   const { data: keyRow } = await supabase
     .from("user_api_keys")
-    .select("provider, secret_plain, key_hint")
+    .select("provider, key_hint")
     .eq("id", keyId)
     .eq("user_id", user.id)
     .single();
 
   if (!keyRow) {
     return NextResponse.json({ error: "Key not found" }, { status: 404 });
+  }
+
+  // Get the secret via RPC (works with both vault and secret_plain)
+  const { data: secret } = await supabase.rpc("get_api_key", { p_provider: keyRow.provider });
+  if (!secret) {
+    return NextResponse.json({ error: "Could not retrieve API key secret" }, { status: 500 });
   }
 
   // Gateway keys don't need native catalog — use /api/gateway-models
@@ -225,7 +231,7 @@ export async function GET(req: Request) {
     // Fetch native catalog + gateway catalog in parallel
     const [nativeRes, gwModels] = await Promise.all([
       fetch(`${baseURL}/models`, {
-        headers: { Authorization: `Bearer ${keyRow.secret_plain}` },
+        headers: { Authorization: `Bearer ${secret}` },
         signal: AbortSignal.timeout(10000),
       }),
       getGatewayCatalog(),

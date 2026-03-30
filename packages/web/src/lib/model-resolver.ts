@@ -107,24 +107,13 @@ async function resolveBYOK(
   if (keyId) {
     const { data: keyRow } = await supabase
       .from("user_api_keys")
-      .select("provider, secret_plain")
+      .select("provider")
       .eq("id", keyId)
       .eq("user_id", userId)
       .single();
 
-    if (keyRow?.secret_plain) {
-      if (keyRow.provider === "gateway") {
-        // Gateway key → route through Vercel AI Gateway
-        const gw = createGateway({ apiKey: keyRow.secret_plain });
-        return { model: gw(modelStr), isFreeTier: false, supportsWebSearch: false, modelId: modelStr };
-      }
-      // Direct provider key → use SDK (native or OpenAI-compat)
-      const model = buildDirectProviderModel(keyRow.provider, requestedModelId, keyRow.secret_plain);
-      if (model) return { model, isFreeTier: false, supportsWebSearch: false, modelId: modelStr };
-    }
-
-    // keyId provided but secret not found — try RPC fallback (vault-based)
     if (keyRow?.provider) {
+      // Get secret via RPC (works with both vault in cloud and secret_plain in local)
       const { data: secret } = await supabase.rpc("get_api_key", { p_provider: keyRow.provider });
       if (secret) {
         if (keyRow.provider === "gateway") {
