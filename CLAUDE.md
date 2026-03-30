@@ -44,24 +44,30 @@ Backlog and TODOs are in `internal/docs/backlog/*`.
 
 When pushing code that includes DB migrations, follow this order:
 
-1. **Check for pending migrations**:
+1. **Backward compatibility check** (MANDATORY before any push):
+   - Does the OLD deployed code still work after applying the new migration?
+   - Does the NEW code handle old data gracefully (missing JSONB fields, old column values)?
+   - If rollback needed, does the new schema still work with the old code?
+   - If any answer is "no" → split into expand + contract migrations (see "Backward compatibility" section above).
+
+2. **Check for pending migrations**:
    ```bash
    ls supabase/migrations/*.sql  # compare with what's applied in prod
    ```
 
-2. **Apply migrations to cloud FIRST** (before code deploy):
+3. **Apply migrations to cloud FIRST** (before code deploy):
    ```
    mcp__supabase__apply_migration(project_id="ookghxkvzdnqicjdslej", name="...", query="...")
    ```
    - If migration drops/replaces RPCs (e.g., `upsert_api_key` → `insert_api_key`), the old preview will break briefly until the new code is deployed.
    - For breaking migrations: apply migration + push code as close together as possible.
 
-3. **Push the code** (Vercel auto-deploys preview):
+4. **Push the code** (Vercel auto-deploys preview):
    ```bash
    git push origin feat/preview
    ```
 
-4. **Verify preview** after deploy completes:
+5. **Verify preview** after deploy completes:
    - Check the preview URL
    - Test the affected features (account page, chat, etc.)
 
@@ -71,6 +77,34 @@ When pushing code that includes DB migrations, follow this order:
 - **Rétrocompatibilité**: prefer `ADD COLUMN IF NOT EXISTS`, `CREATE OR REPLACE`, `DROP IF EXISTS` to avoid errors if re-applied.
 - **Breaking RPCs**: if a migration changes a function signature (e.g., `delete_api_key(TEXT)` → `delete_api_key(UUID)`), always `DROP` the old signature first to avoid overload ambiguity.
 - **Vault access**: NEVER use `INSERT INTO vault.secrets` — use `SELECT vault.create_secret(secret)` instead. NEVER use `DELETE FROM vault.secrets` + re-insert — use `PERFORM vault.update_secret(id, new_secret)`. Direct vault table access fails with "permission denied for function _crypto_aead_det_noncegen" because `postgres` is not superuser on Supabase cloud. The `vault.create_secret()` and `vault.update_secret()` functions are owned by `supabase_admin` (SECURITY DEFINER) and bypass this restriction.
+
+### Backward compatibility — "expand then contract"
+
+Every change to DB schema, RPCs, or stored data formats (JSONB fields, etc.) MUST be backward-compatible with the currently deployed code. The old code and the new code will coexist briefly during deploys.
+
+**Golden rule: expand first, contract later.**
+
+| Operation | Safe pattern | Dangerous pattern |
+|---|---|---|
+| **Add column** | `ADD COLUMN ... DEFAULT NULL` or `DEFAULT '{}'` | `ADD COLUMN ... NOT NULL` (breaks old rows) |
+| **Add JSONB field** | Just write it — old rows have `{}`, read with `?.field ?? null` | Requiring the field without fallback |
+| **Rename column** | Add new → write both → backfill → drop old (2 migrations) | `ALTER TABLE RENAME COLUMN` (breaks old code) |
+| **Change column type** | Add new col → dual-write → backfill → drop old | `ALTER COLUMN TYPE` (breaks old code) |
+| **Drop column** | Stop reading/writing in code → deploy → then `DROP COLUMN` | `DROP COLUMN` while code still SELECTs it |
+| **Change RPC signature** | `DROP old_sig` + `CREATE new_sig` in same migration | `CREATE OR REPLACE` with different params (creates overload) |
+| **Replace RPC** | Migration N: create new (old still works) → Migration N+1: drop old | Drop + create in one migration (brief downtime) |
+
+**Reading stored data defensively:**
+- JSONB: always `metadata?.field ?? fallback` — never assume a field exists
+- If you rename a JSONB key (e.g., `keyHint` → `key_hint`), read both: `metadata?.key_hint ?? metadata?.keyHint ?? null`
+- Columns: `SELECT col` on a dropped column = crash. Always drop code references first.
+
+**Before every push to preview or prod, verify:**
+1. Can the OLD deployed code work with the NEW database schema? (migration applied before code deploys)
+2. Can the NEW code work with data written by the OLD code? (old rows, old JSONB shapes)
+3. If we need to rollback the code, does the NEW schema still work with the OLD code?
+
+If any answer is "no", split into two migrations (expand, then contract after old code is gone).
 
 ### Rollback procedure
 
