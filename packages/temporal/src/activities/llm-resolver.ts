@@ -195,7 +195,7 @@ async function buildDirectProviderModel(
   const baseURL = OPENAI_COMPAT_PROVIDERS[provider];
   if (baseURL) {
     const { createOpenAI } = await import("@ai-sdk/openai");
-    return createOpenAI({ apiKey, baseURL, compatibility: "compatible" }).chat(modelId);
+    return createOpenAI({ apiKey, baseURL }).chat(modelId);
   }
 
   return null;

@@ -231,7 +231,7 @@ export function buildDirectProviderModel(provider: string, modelId: string, apiK
   // Use Chat Completions API (not Responses API) for compatibility
   const baseURL = OPENAI_COMPAT_PROVIDERS[provider];
   if (baseURL) {
-    return createOpenAI({ apiKey, baseURL, compatibility: "compatible" }).chat(modelId);
+    return createOpenAI({ apiKey, baseURL }).chat(modelId);
   }
 
   return null;
