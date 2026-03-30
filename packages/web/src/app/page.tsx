@@ -1638,6 +1638,8 @@ export default function Home() {
   selectedSourceRef.current = selectedSource;
   const selectedKeyIdRef = useRef(selectedKeyId);
   selectedKeyIdRef.current = selectedKeyId;
+  const byokKeysRef = useRef(byokKeys);
+  byokKeysRef.current = byokKeys;
   const gatewayModelsRef = useRef(gatewayModels);
   gatewayModelsRef.current = gatewayModels;
   const selectedNodeRef = useRef(selectedNode);
@@ -2137,6 +2139,18 @@ export default function Home() {
   }, [rawAddToolResult]);
 
   // ── Message persistence ─────────────────────────────────────────────
+  const getAssistantMetadata = useCallback(() => {
+    const keyId = selectedKeyIdRef.current;
+    const key = keyId ? byokKeysRef.current.find(k => k.id === keyId) : null;
+    return {
+      model: selectedModelRef.current || undefined,
+      source: selectedSourceRef.current || undefined,
+      keyId: keyId,
+      keyLabel: key?.label ?? null,
+      keyHint: key?.key_hint ?? null,
+    };
+  }, []);
+
   const { loaded: messagesLoaded } = useMessagePersistence(
     activeConversationId,
     messages,
@@ -2144,6 +2158,7 @@ export default function Home() {
     status,
     myClientId,
     myDisplayShortId,
+    getAssistantMetadata,
   );
 
   // ── Conversation switching handler ──────────────────────────────────

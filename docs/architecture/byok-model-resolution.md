@@ -188,6 +188,45 @@ SSE error events from the AI stream are intercepted and enriched:
 - Rate limits → "Rate limit reached for {provider}"
 - Unique error ID for log correlation
 
+## Model Tracing
+
+Each assistant message is tagged with metadata about which model/key produced it:
+
+### System prompt injection
+
+The chat route appends a `## Current Model` section to the system prompt:
+```
+You are running as: **xai/grok-4-1-fast-reasoning** (user's own API key).
+```
+This lets the LLM correctly answer "what model are you?" even when the user switches mid-conversation.
+
+### Per-message metadata
+
+When an assistant message is saved to the database, the client includes metadata:
+```json
+{
+  "model": "xai/grok-4-1-fast-reasoning",
+  "source": "byok",
+  "keyId": "2ec58d0f-...",
+  "keyLabel": "xai-2",
+  "keyHint": "xai...6CJ"
+}
+```
+
+This uses the existing `p_metadata JSONB` field in the `save_message` RPC. The metadata is captured from the client's current state (selectedModel, selectedSource, selectedKeyId, byokKeys) at the moment the stream completes.
+
+For included usage:
+```json
+{ "model": "google/gemini-2.5-flash", "source": "included" }
+```
+
+### RPCs
+
+| RPC | Purpose |
+|---|---|
+| `get_api_key(provider)` | Get secret by provider (default key) — used for legacy/fallback |
+| `get_api_key_by_id(key_id)` | Get secret for a specific key — used when keyId is known |
+
 ## Key Files
 
 | File | Role |
@@ -205,4 +244,5 @@ SSE error events from the AI stream are intercepted and enriched:
 | `packages/temporal/src/activities/llm-resolver.ts` | Temporal resolver (mirrors web resolver) |
 | `supabase/migrations/028_byok_model_and_usage_source.sql` | usage_source + per-key default_model |
 | `supabase/migrations/029_multi_key_labels.sql` | Multi-key, labels, key_hint, ID-based RPCs |
+| `supabase/migrations/030_get_api_key_by_id.sql` | RPC to fetch secret by key ID (not provider) |
 | `supabase/local-only/fix-vault-ownership.sql` | Local Docker vault fix (supabase_admin ownership) |

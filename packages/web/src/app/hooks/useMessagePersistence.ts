@@ -39,6 +39,14 @@ function extractTextContent(message: UIMessage): string {
  * - On mount: loads persisted messages and hydrates useChat via setMessages()
  * - On message completion: saves new messages to the DB
  */
+export type MessageMetadata = {
+  model?: string;
+  source?: string;
+  keyId?: string | null;
+  keyLabel?: string | null;
+  keyHint?: string | null;
+};
+
 export function useMessagePersistence(
   conversationId: string | null,
   messages: UIMessage[],
@@ -46,6 +54,7 @@ export function useMessagePersistence(
   status: string,
   clientId: string,
   shortId: string | null,
+  getAssistantMetadata?: () => MessageMetadata,
 ) {
   const [loaded, setLoaded] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -150,6 +159,10 @@ export function useMessagePersistence(
         const content = extractTextContent(message);
         if (!content.trim()) return;
 
+        const metadata = message.role === "assistant" && getAssistantMetadata
+          ? getAssistantMetadata()
+          : undefined;
+
         await fetch(`/api/conversations/${conversationId}/messages`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -159,6 +172,7 @@ export function useMessagePersistence(
             parts: message.parts,
             senderClientId: message.role === "user" ? clientId : null,
             senderShortId: message.role === "user" ? shortId : null,
+            ...(metadata ? { metadata } : {}),
           }),
         });
       } catch {
@@ -168,7 +182,7 @@ export function useMessagePersistence(
         setSaving(false);
       }
     },
-    [conversationId, clientId, shortId],
+    [conversationId, clientId, shortId, getAssistantMetadata],
   );
 
   // ── Save user messages immediately ──────────────────────────────────────

@@ -1190,6 +1190,11 @@ While you work (searching, reading files, analyzing), emit your reasoning inside
 Keep thinking blocks short (1-2 sentences).`;
   }
 
+  // Inject current model identity so the LLM can answer "what model are you?"
+  system += `\n\n## Current Model
+You are running as: **${resolvedModel.modelId}**${source === "byok" ? " (user's own API key)" : source === "included" ? " (platform included usage)" : ""}.
+If the user asks what model you are, answer with this model identifier.`;
+
   // Build the final system prompt
   system = GUARDIAN_SYSTEM_PROMPT + system;
 
