@@ -501,8 +501,40 @@ export async function pairFCCloudRelay(params: {
       }
     }
 
-    // Wait for plugin to connect to the relay
-    await sleep(3000);
+    // Poll figma_get_status to verify the relay is connected (up to 15s)
+    // The broadcast → webapp → postMessage → plugin → Southleft relay chain takes 3-8s
+    let relayConnected = false;
+    try {
+      const statusClient = await connectHTTP(serverDef as Extract<MCPServerDef, { transport: "http" | "sse" }>, tokens.access_token);
+      const statusTools = await statusClient.tools();
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const statusTool = statusTools["figma_get_status"] as any;
+      if (statusTool) {
+        for (let i = 0; i < 15; i++) {
+          await sleep(1000);
+          try {
+            const status = await statusTool.execute({}, { toolCallId: `relay-wait-${i}` });
+            const statusStr = JSON.stringify(status);
+            if (statusStr.includes('"available":true') || statusStr.includes("connectedFile")) {
+              log.info(`Cloud relay connected after ${i + 1}s`);
+              relayConnected = true;
+              break;
+            }
+          } catch { /* relay not ready yet */ }
+        }
+        if (!relayConnected) {
+          log.warn("Cloud relay not connected after 15s polling");
+        }
+      } else {
+        // No status tool — fallback to fixed wait
+        log.info("No figma_get_status tool, falling back to 8s wait");
+        await sleep(8000);
+      }
+      await statusClient.close();
+    } catch (err) {
+      log.warn(`Status polling failed, falling back to 8s wait: ${err}`);
+      await sleep(8000);
+    }
 
     return { success: true, code };
   } catch (err) {
