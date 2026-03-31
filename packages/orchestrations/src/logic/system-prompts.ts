@@ -6,7 +6,7 @@
  */
 
 import type { AgentId } from "../types/signals.js";
-import { FIGMA_API_QUICK_REFERENCE } from "./figma-api-reference.js";
+import { FIGMA_API_QUICK_REFERENCE, FIGMA_HIGHLEVEL_TOOLS_SUPPLEMENT } from "./figma-api-reference.js";
 
 // ---------------------------------------------------------------------------
 // Orchestrator system prompt
@@ -168,7 +168,9 @@ ${fcToolsSection}
 - After each call you receive: created node IDs, canvas diff, before/after screenshots, expert review verdict
 
 When calling signal_task_complete, include the main created node IDs in your summary.
-Example: "Created color palette frame (ID: 123:456) with 5 swatches inside container 100:200."`
+Example: "Created color palette frame (ID: 123:456) with 5 swatches inside container 100:200."
+
+${FIGMA_HIGHLEVEL_TOOLS_SUPPLEMENT}`
       : `
 ## Figma execution strategy
 ${fcToolsSection ? fcToolsSection : "You have access to a Figma plugin via figma_plugin_execute."}

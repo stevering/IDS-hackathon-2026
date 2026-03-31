@@ -296,3 +296,104 @@ for (const c of colors) {
 
 For detailed API docs on specific node types, call \`lookup_figma_docs({ topic: "FrameNode", mode: "full" })\`.
 `;
+
+// ---------------------------------------------------------------------------
+// High-level tool supplement — injected into system prompt when figmaconsole_
+// tools are available (hasExternalFigmaTools=true). Covers gotchas that
+// high-level tools don't handle (e.g., TEXT nodes need font loading).
+// Source: https://github.com/figma/mcp-server-guide/tree/main/skills/figma-use
+// ---------------------------------------------------------------------------
+
+export const FIGMA_HIGHLEVEL_TOOLS_SUPPLEMENT = `## Figma — Gotchas for figmaconsole_ tools
+
+Even when using high-level tools (figmaconsole_figma_create_child, figmaconsole_figma_set_fills, etc.),
+some Figma operations require raw code execution. Know when to switch to \`figmaconsole_figma_execute\`.
+
+### TEXT nodes: ALWAYS use figma_execute (not create_child)
+
+\`figmaconsole_figma_create_child(type: "TEXT")\` creates the node but does NOT load fonts.
+Result: \`width: 0, height: 15\` — invisible text. **Always use figma_execute for text:**
+
+\`\`\`js
+const parent = await figma.getNodeByIdAsync("PARENT_ID");
+await figma.loadFontAsync({ family: "Inter", style: "Regular" });
+const text = figma.createText();
+text.characters = "Hello World";
+text.fontSize = 16;
+text.fills = [{ type: 'SOLID', color: { r: 0, g: 0, b: 0 } }];
+parent.appendChild(text);
+return text.id;
+\`\`\`
+
+Font style names vary per provider ("SemiBold" vs "Semi Bold"). Use fallback:
+\`\`\`js
+async function loadFont(family, preferred, fallback = "Regular") {
+  try { await figma.loadFontAsync({ family, style: preferred }); return { family, style: preferred }; }
+  catch { await figma.loadFontAsync({ family, style: fallback }); return { family, style: fallback }; }
+}
+\`\`\`
+
+### Overlap prevention for top-level nodes
+
+Every \`figma.create*()\` places the node at (0,0). Top-level nodes overlap each other.
+**Children of auto-layout frames don't need this** — they are positioned by the parent.
+
+\`\`\`js
+// For top-level nodes only — find rightmost content and place to the right
+const page = figma.currentPage;
+let maxX = 0;
+for (const child of page.children) {
+  const right = child.x + child.width;
+  if (right > maxX) maxX = right;
+}
+const frame = figma.createFrame();
+frame.resize(400, 300);
+page.appendChild(frame);
+frame.x = maxX + 100;
+\`\`\`
+
+### Colors are 0-1 range, fills are immutable
+
+\`\`\`js
+// WRONG: node.fills[0].color = { r: 1, g: 0, b: 0 }  (mutating in place does nothing)
+// CORRECT: clone, modify, reassign
+const fills = JSON.parse(JSON.stringify(node.fills));
+fills[0].color = { r: 1, g: 0, b: 0 };
+node.fills = fills;
+
+// Hex to Figma: #2563EB → { r: 0x25/255, g: 0x63/255, b: 0xEB/255 }
+\`\`\`
+
+### Page switching: use async only
+
+\`\`\`js
+// WRONG: figma.currentPage = page  (throws "not supported")
+// CORRECT:
+await figma.setCurrentPageAsync(page);
+\`\`\`
+
+### Return ALL created node IDs
+
+Every script must return all created/mutated node IDs for subsequent steps:
+\`\`\`js
+return { createdNodeIds: [frame.id, rect.id, text.id], rootNodeId: frame.id };
+\`\`\`
+
+### Auto-layout setup must be on Frame, not Group/Rectangle
+
+Only FrameNode, ComponentNode support \`.layoutMode\`. GroupNode and RectangleNode do NOT.
+Set \`.layoutMode\` BEFORE adding children for predictable sizing.
+
+### When to use figma_execute vs high-level tools
+
+| Operation | Use | Why |
+|---|---|---|
+| Create text with font | \`figma_execute\` | Needs \`loadFontAsync\` |
+| Auto-layout with padding | \`figma_execute\` | 4 padding props + sizing |
+| Simple rectangle/ellipse | \`create_child\` | Just type + parent |
+| Set solid fill color | \`set_fills\` | Simple hex input |
+| Complex gradients/effects | \`figma_execute\` | Structured paint objects |
+| Resize node | \`resize_node\` | Simple width/height |
+| Component + variants | \`figma_execute\` | Complex API (combineAsVariants) |
+`;
+
