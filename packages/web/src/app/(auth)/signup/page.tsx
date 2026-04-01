@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { LegalFooter } from "@/components/LegalFooter";
 
 export default function SignupPage() {
   return (
@@ -29,6 +30,7 @@ export default function SignupPage() {
           </Link>
         </p>
       </div>
+      <LegalFooter />
     </div>
   );
 }

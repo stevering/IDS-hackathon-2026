@@ -3,6 +3,7 @@
 import { useState, useEffect } from "react";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
+import { LegalFooter } from "@/components/LegalFooter";
 
 type PageMode = "loading" | "login" | "invite-expired" | "invite-already-accepted";
 
@@ -313,6 +314,7 @@ export default function LoginPage() {
           </>
         )}
       </div>
+      <LegalFooter />
     </div>
   );
 }

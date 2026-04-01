@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useGuardianPresence } from "@/app/hooks/useGuardianPresence";
 import { ConnectedClients } from "@/components/ConnectedClients";
 import { GlassDropdown } from "@/components/GlassDropdown";
+import { LegalFooter } from "@/components/LegalFooter";
 
 type StoredKey = {
   id: string;
@@ -1350,6 +1351,8 @@ export default function AccountPage() {
 
       {/* ── Connected Clients ── */}
       <ConnectedClients clients={presenceClients} loading={presenceLoading} connectionStatus={presenceConnectionStatus} />
+
+      <LegalFooter />
     </div>
   );
 }

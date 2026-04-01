@@ -95,6 +95,7 @@ Invitee clicks expired/used link
 | `/signup/complete` | Auth required, profile not completed | Profile form + CGU + password |
 | `/admin/invite` | Auth required, is_admin | Send invites + list invites |
 | `/auth/callback` | Public | PKCE code exchange (prod) |
+| `/privacy` | Public | Privacy Policy (GDPR) |
 
 ### API Routes
 

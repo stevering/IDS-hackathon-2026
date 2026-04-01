@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { LegalFooter } from "@/components/LegalFooter";
 
 const CGU_VERSION = "1.0";
 
@@ -195,7 +196,15 @@ export default function SignupCompletePage() {
               >
                 Terms and Conditions of Use
               </button>
-              {" "}(v{CGU_VERSION})
+              {" "}(v{CGU_VERSION}) and the{" "}
+              <a
+                href="/privacy"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-white/70 underline hover:text-white transition-colors"
+              >
+                Privacy Policy
+              </a>
             </span>
           </label>
 
@@ -212,6 +221,7 @@ export default function SignupCompletePage() {
           </button>
         </form>
       </div>
+      <LegalFooter />
     </div>
   );
 }

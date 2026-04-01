@@ -49,7 +49,7 @@ function getMcpCodeUrl(request: NextRequest): string | undefined {
 }
 
 // Pages accessible without being logged in
-const PUBLIC_PAGES = ["/login", "/signup", "/oauth/consent", "/auth/callback"];
+const PUBLIC_PAGES = ["/login", "/signup", "/oauth/consent", "/auth/callback", "/privacy"];
 
 // Pages that require auth but NOT a completed profile
 const ONBOARDING_PAGES = ["/signup/complete"];
