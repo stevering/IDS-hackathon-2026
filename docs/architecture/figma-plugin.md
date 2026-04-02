@@ -77,6 +77,22 @@ Figma plugins run in two isolated contexts. This is a Figma platform constraint,
                                                   (Supabase Realtime)
 ```
 
+### Presence channel scoping
+
+The Realtime channel is **scoped per authenticated user**: `guardian:execute:{userId}`. Each webapp or plugin instance subscribes to the channel matching its own Supabase auth session. This means:
+
+- Two clients logged in with **different accounts** will join **different channels** and will NOT see each other in the Clients panel.
+- The plugin (Figma Desktop iframe) and the webapp (Chrome tab) have **separate auth sessions** (different Chromium contexts). They must be logged in with the same account.
+
+**Quick diagnostic** when clients don't see each other:
+
+```sql
+SELECT client_id, client_type, short_id, user_id, last_seen_at
+FROM user_clients ORDER BY last_seen_at DESC;
+```
+
+If `user_id` differs between clients, that's the problem — log in with the same account everywhere.
+
 ### Presence resilience (preview/production)
 
 Supabase Realtime Presence can be slow to sync in preview/production (several seconds vs near-instant locally). The presence system addresses this with several layers:
