@@ -22,6 +22,7 @@ const PUBLIC_AUTH_ROUTES = [
   "/api/guardian/status",  // Health check for the overlay (no auth token)
   "/api/user",             // User API (BYOK keys + usage) — protected by Supabase auth
   "/api/gateway-models",   // Public Vercel AI Gateway model catalog (no auth needed)
+  "/api/plugin",           // Plugin download (public, no auth needed)
   "/api/figma-execute",    // MCP Guardian HTTP bridge for code execution
   "/api/clients",          // Client registry — protected by Supabase auth
   "/api/conversations",    // Conversation persistence — protected by Supabase auth
