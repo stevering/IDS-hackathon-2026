@@ -62,5 +62,9 @@ electron.vite.config.*.mjs
 logs/
 tmp/
 
+# beta plugin build artifacts
+packages/web/public/plugin/*.zip
+packages/figma-desktop-plugin-beta/dist/
+
 # private internal repo (figdesys/guardian-internal)
 internal/
