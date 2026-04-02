@@ -49,29 +49,18 @@ export async function DELETE(req: Request) {
     return NextResponse.json({ error: "id query param required" }, { status: 400 });
   }
 
-  // Check if this is the default key before deleting
-  const { data: keyData } = await supabase
-    .from("user_api_keys")
-    .select("is_default")
-    .eq("id", keyId)
-    .eq("user_id", user.id)
-    .single();
-  const wasDefault = keyData?.is_default ?? false;
-
   const { error } = await supabase.rpc("delete_api_key", { p_key_id: keyId });
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
-  // If we deleted the default key, check if any keys remain
-  if (wasDefault) {
-    const { data: remaining } = await supabase
-      .from("user_api_keys")
-      .select("id")
-      .eq("user_id", user.id)
-      .limit(1);
+  // If no keys remain, reset to included free tier
+  const { data: remaining } = await supabase
+    .from("user_api_keys")
+    .select("id")
+    .eq("user_id", user.id)
+    .limit(1);
 
-    if (!remaining || remaining.length === 0) {
-      await supabase.rpc("update_settings", { p_usage_source: "included" });
-    }
+  if (!remaining || remaining.length === 0) {
+    await supabase.rpc("update_settings", { p_usage_source: "included" });
   }
 
   return NextResponse.json({ ok: true });

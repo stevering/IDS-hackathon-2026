@@ -58,6 +58,32 @@ const markdownComponents: Components = {
   ),
 };
 
+/**
+ * Fix markdown rendering issues in AI-generated content:
+ * 1. Close orphaned backticks and bold markers (streaming chunks split mid-token)
+ * 2. Normalize model IDs with slashes inside inline code to prevent parser confusion
+ */
+function fixUnpairedMarkdown(text: string): string {
+  let result = text;
+
+  // Fix unclosed inline code (backticks) — count outside code blocks
+  const withoutCodeBlocks = result.replace(/```[\s\S]*?```/g, "");
+  const backtickCount = (withoutCodeBlocks.match(/`/g) || []).length;
+  if (backtickCount % 2 !== 0) {
+    result += "`";
+  }
+
+  // Fix unclosed bold (**)
+  const withoutCode = result.replace(/```[\s\S]*?```/g, "").replace(/`[^`]*`/g, "");
+  const boldCount = (withoutCode.match(/\*\*/g) || []).length;
+  if (boldCount % 2 !== 0) {
+    result += "**";
+  }
+
+  return result;
+}
+
+
 function ThinkingBlock({ text, isLast, isStreaming }: { text: string; isLast: boolean; isStreaming: boolean }) {
   const [open, setOpen] = useState(false);
   const isActive = isLast && isStreaming;
@@ -127,7 +153,7 @@ function DetailsBlock({ text, isStreaming }: { text: string; isStreaming: boolea
       </button>
       {open && (
         <div className="mt-2 px-3 py-3 rounded-md bg-white/[0.03] border border-white/5 text-sm overflow-x-auto markdown-body">
-          <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>{text}</ReactMarkdown>
+          <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>{fixUnpairedMarkdown(text)}</ReactMarkdown>
           <div ref={detailsEndRef} />
         </div>
       )}
@@ -240,11 +266,13 @@ function parseStructuredContent(text: string, isStreamingMsg: boolean = false): 
     }
   }
 
+  // MCP status blocks are NOT included here — their markers are already stripped
+  // from cleanedText, so their original indices are invalid. They are emitted
+  // separately below (only the last status matters for the header indicator).
   const allBlocks = [
     ...detailsBlocks.map(b => ({ ...b, kind: "details" as const })),
     ...qcmBlocks.map(b => ({ ...b, kind: "qcm" as const, streaming: false })),
     ...mcpErrorBlocks.map(b => ({ ...b, kind: "mcp-error" as const, streaming: false })),
-    ...mcpStatusBlocks.map(b => ({ ...b, kind: "mcp-status" as const, streaming: false })),
     ...analyzeBtnBlocks.map(b => ({ ...b, kind: "analyze-btn" as const, streaming: false })),
     ...orchestrateBtnBlocks.map(b => ({ ...b, kind: "orchestrate-btn" as const, streaming: false })),
   ].sort((a, b) => a.index - b.index);
@@ -266,8 +294,6 @@ function parseStructuredContent(text: string, isStreamingMsg: boolean = false): 
       segments.push({ kind: "qcm", choices: (block as typeof qcmBlocks[number] & { kind: "qcm" }).choices });
     } else if (block.kind === "mcp-error") {
       segments.push({ kind: "mcp-error", errorText: (block as typeof mcpErrorBlocks[number] & { kind: "mcp-error" }).errorText });
-    } else if (block.kind === "mcp-status") {
-      segments.push({ kind: "mcp-status", status: (block as typeof mcpStatusBlocks[number] & { kind: "mcp-status" }).status });
     } else if (block.kind === "analyze-btn") {
       segments.push({ kind: "analyze-btn" });
     } else if (block.kind === "orchestrate-btn") {
@@ -278,6 +304,11 @@ function parseStructuredContent(text: string, isStreamingMsg: boolean = false): 
   if (cursor < cleanedText.length) {
     const remaining = cleanedText.slice(cursor).trim();
     if (remaining) segments.push({ kind: "content", text: remaining });
+  }
+
+  // Emit the last MCP status as a standalone segment (markers already stripped from text)
+  if (lastMcpStatus) {
+    segments.unshift({ kind: "mcp-status", status: lastMcpStatus.status });
   }
 
   return segments;
@@ -1599,17 +1630,20 @@ export default function Home() {
             setSelectedSource(userUsageSource);
             return;
           }
+          // BYOK key exists but no model catalog available (invalid key or provider error)
+          // Fall through to included mode — user needs to fix their key
+          setSelectedKeyId(null);
         }
       }
 
-      // Included mode: use user's saved default model
-      if (userDefaultModel) {
+      // Included mode (or BYOK with no keys): use user's saved default model
+      if (userDefaultModel && userUsageSource === "included") {
         setSelectedModel(userDefaultModel);
       } else {
         setSelectedModel("google/gemini-2.5-flash");
       }
       setSelectedKeyId(null);
-      setSelectedSource(userUsageSource);
+      setSelectedSource("included");
     }).catch(() => {});
   }, []);
 
@@ -3442,7 +3476,7 @@ export default function Home() {
                                   )
                                 ) : (
                                   <ReactMarkdown key={j} remarkPlugins={[remarkGfm]} components={markdownComponents}>
-                                    {seg.content}
+                                    {fixUnpairedMarkdown(seg.content)}
                                   </ReactMarkdown>
                                 )
                               )}
