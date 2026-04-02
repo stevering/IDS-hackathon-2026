@@ -37,7 +37,7 @@ export default function InstallPage() {
             )}
           </div>
           <a
-            href={`/plugin/${version?.filename ?? "guardian-desktop-plugin-beta.zip"}`}
+            href="/api/plugin/download"
             download
             className="rounded-lg bg-blue-600 hover:bg-blue-500 px-5 py-2.5 text-sm font-medium text-white transition-colors"
           >

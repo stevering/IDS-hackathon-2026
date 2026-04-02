@@ -1,5 +1,7 @@
 {
-  "version": "0.1.0-beta.1",
+  "version": "0.1.0-beta.1+65dbe06",
+  "package": "0.1.0-beta.1",
   "date": "2026-04-02",
+  "sha": "65dbe06",
   "filename": "guardian-desktop-plugin-beta.zip"
 }
