@@ -1692,7 +1692,6 @@ export default function Home() {
 
   useEffect(() => {
     const handleMessage = (event: MessageEvent) => {
-      console.log('Webapp received message:', event.data);
       if (event.data && typeof event.data === "object" &&
           (event.data.type === "selection-changed" || event.data.type === "response") &&
           "data" in event.data && event.data.data) {
@@ -3016,7 +3015,7 @@ export default function Home() {
               {/* Chat panel content starts here */}
           {messages.length === 0 && messagesLoaded && (
             <div className="flex flex-col items-center justify-center h-full text-center px-4">
-              <div className="text-4xl mb-4">🛡️</div>
+              <img src="/guardian-logo.svg" alt="Guardian" className="h-12 mx-auto mb-4" />
               <h2 className="text-lg font-semibold mb-2">
                 Welcome to Guardian
               </h2>
@@ -4004,7 +4003,7 @@ export default function Home() {
               {/* Welcome placeholder when no events yet */}
               {((!isFigmaPlugin && temporal.events.length === 0) || (isFigmaPlugin && pluginOrch.stream.events.length === 0)) && (
                 <div className="flex flex-col items-center justify-center h-full text-center px-4">
-                  <div className="text-4xl mb-4">🛡️</div>
+                  <img src="/guardian-logo.svg" alt="Guardian" className="h-12 mx-auto mb-4" />
                   <h2 className="text-lg font-semibold mb-2">Orchestration</h2>
                   <p className="text-sm text-white/70 max-w-md">
                     Waiting for orchestration events...

@@ -145,6 +145,35 @@ export default function AccountPage() {
   const [savingDevSettings, setSavingDevSettings] = useState(false);
   const [devMatrix, setDevMatrix] = useState(false);
 
+  // Account deletion
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [deleteTyped, setDeleteTyped] = useState("");
+  const [deletingAccount, setDeletingAccount] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+
+  async function handleDeleteAccount() {
+    setDeletingAccount(true);
+    setDeleteError(null);
+    try {
+      const res = await fetch("/api/user/account", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ confirm: true }),
+      });
+      if (!res.ok) {
+        const data = await res.json();
+        setDeleteError(data.error ?? "Deletion failed");
+        setDeletingAccount(false);
+        return;
+      }
+      // Account deleted — redirect to login
+      window.location.href = "/login";
+    } catch {
+      setDeleteError("Network error. Please try again.");
+      setDeletingAccount(false);
+    }
+  }
+
   // Load matrix mode from localStorage on mount
   useEffect(() => {
     setDevMatrix(localStorage.getItem("guardian_matrix") === "1");
@@ -1351,6 +1380,55 @@ export default function AccountPage() {
 
       {/* ── Connected Clients ── */}
       <ConnectedClients clients={presenceClients} loading={presenceLoading} connectionStatus={presenceConnectionStatus} />
+
+      {/* ── Danger Zone ── */}
+      <section className="mt-10 pt-8 border-t border-red-400/20">
+        <h2 className="text-sm font-medium text-red-400 mb-3">Danger Zone</h2>
+
+        {!showDeleteConfirm ? (
+          <button
+            onClick={() => setShowDeleteConfirm(true)}
+            className="px-4 py-2 rounded-lg border border-red-400/30 text-sm text-red-400 hover:bg-red-400/10 transition-colors"
+          >
+            Delete my account
+          </button>
+        ) : (
+          <div className="rounded-lg border border-red-400/30 bg-red-400/5 p-4 max-w-md">
+            <p className="text-sm text-white/70 mb-2">
+              This will permanently delete your account and all associated data
+              (conversations, API keys, settings). This action cannot be undone.
+            </p>
+            <p className="text-xs text-white/50 mb-3">
+              Type <strong className="text-white/70">DELETE</strong> to confirm:
+            </p>
+            <input
+              type="text"
+              value={deleteTyped}
+              onChange={(e) => setDeleteTyped(e.target.value)}
+              placeholder="DELETE"
+              className="w-full px-3 py-2 rounded-lg bg-white/5 border border-white/10 text-sm outline-none focus:border-red-400/50 transition-colors mb-3"
+            />
+            {deleteError && (
+              <p className="text-red-400 text-xs mb-2">{deleteError}</p>
+            )}
+            <div className="flex gap-2">
+              <button
+                onClick={handleDeleteAccount}
+                disabled={deleteTyped !== "DELETE" || deletingAccount}
+                className="px-4 py-2 rounded-lg bg-red-600 text-white text-sm font-medium disabled:opacity-40 transition-opacity"
+              >
+                {deletingAccount ? "Deleting…" : "Permanently delete account"}
+              </button>
+              <button
+                onClick={() => { setShowDeleteConfirm(false); setDeleteTyped(""); setDeleteError(null); }}
+                className="px-4 py-2 rounded-lg border border-white/10 text-sm text-white/60 hover:text-white transition-colors"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        )}
+      </section>
 
       <LegalFooter />
     </div>

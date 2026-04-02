@@ -73,7 +73,7 @@ export default function AdminInvitePage() {
       <div className="w-full max-w-lg">
         {/* Header */}
         <div className="mb-10 text-center">
-          <div className="text-3xl mb-2">🛡</div>
+          <img src="/guardian-logo.svg" alt="Guardian" className="h-10 mx-auto mb-2" />
           <h1 className="text-xl font-semibold">Guardian — Admin</h1>
           <p className="text-sm text-white/50 mt-1">Private beta invite management</p>
         </div>

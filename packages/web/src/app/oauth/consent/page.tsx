@@ -164,7 +164,7 @@ function OAuthConsentContent() {
     <div className="min-h-screen flex items-center justify-center px-4">
       <div className="w-full max-w-md">
         <div className="mb-8 text-center">
-          <div className="text-3xl mb-2">🛡</div>
+          <img src="/guardian-logo.svg" alt="Guardian" className="h-10 mx-auto mb-2" />
           <h1 className="text-xl font-semibold">Guardian</h1>
         </div>
 

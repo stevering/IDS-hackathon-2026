@@ -3,14 +3,14 @@
 import { useState } from "react";
 import { LegalFooter } from "@/components/LegalFooter";
 
-const CGU_VERSION = "1.0";
+const CGU_VERSION = "1.1";
 
 const CGU_TEXT = `Terms and Conditions of Use — Guardian Platform (Private Beta)
 
-Effective date: March 2026
+Effective date: April 2026 (v1.1)
 
 1. ACCEPTANCE OF TERMS
-By creating an account and using the Guardian platform ("Platform"), you agree to be bound by these Terms and Conditions of Use ("Terms"). If you do not agree, do not use the Platform.
+By creating an account and using the Guardian platform ("Platform"), you agree to be bound by these Terms and Conditions of Use ("Terms") and acknowledge our Privacy Policy (available at /privacy). If you do not agree, do not use the Platform.
 
 2. PRIVATE BETA ACCESS
 Access to the Platform is provided on an invite-only basis during the private beta phase. Your access may be revoked at any time without notice.
@@ -21,25 +21,35 @@ The Platform processes design system data, including Figma files, code repositor
 - The Platform may store and process this data to provide its services.
 - You are responsible for ensuring compliance with your organization's data policies.
 
-4. CONFIDENTIALITY
+4. AI-POWERED SERVICES AND DATA TRANSIT
+The Platform uses artificial intelligence to provide its core services. You acknowledge and agree that:
+- Your conversations and design data are sent to third-party AI model providers (such as OpenAI, Anthropic, Google, or others available through Vercel AI Gateway) to generate responses.
+- When using the included free tier, your data is routed through Vercel AI Gateway, which operates in the United States. These transfers are covered by Standard Contractual Clauses (SCCs).
+- Multi-agent orchestrations are coordinated through Temporal Cloud (Frankfurt, Germany). Only workflow metadata transits through Temporal, not conversation content.
+- If you provide your own API key (Bring Your Own Key / BYOK), your conversations are sent directly to the AI provider you selected. You are solely responsible for the terms, costs, data residency, and privacy policies of your chosen provider.
+
+5. CONFIDENTIALITY
 During the private beta, all features, functionality, and communications related to the Platform are confidential. You agree not to share screenshots, documentation, or details about unreleased features without prior written consent.
 
-5. SENSITIVE DATA
+6. SENSITIVE DATA
 You must not upload, transmit, or process any personal data of third parties, financial data, health data, or any data classified as sensitive under GDPR or equivalent regulations, unless explicitly authorized in writing.
 
-6. INTELLECTUAL PROPERTY
-All intellectual property rights in the Platform, including its code, design, and documentation, remain the exclusive property of the Platform operator. Your use of the Platform does not transfer any ownership rights.
+7. INTELLECTUAL PROPERTY
+All intellectual property rights in the Platform, including its code, design, and documentation, remain the exclusive property of the Platform operator. Your use of the Platform does not transfer any ownership rights. Your own designs and content remain your property.
 
-7. LIMITATION OF LIABILITY
-The Platform is provided "as is" during the beta phase. The operator makes no warranties regarding availability, accuracy, or fitness for a particular purpose. In no event shall the operator be liable for any indirect, incidental, or consequential damages.
+8. ACCOUNT DELETION
+You may delete your account at any time from the Account page. Upon deletion, all your data (conversations, API keys, settings, usage logs) is permanently and irrevocably removed from our systems.
 
-8. TERMINATION
-Either party may terminate access at any time. Upon termination, your right to use the Platform ceases immediately. Data retention policies will be communicated separately.
+9. LIMITATION OF LIABILITY
+The Platform is provided "as is" during the beta phase. The operator makes no warranties regarding availability, accuracy, or fitness for a particular purpose. AI-generated outputs may contain errors and should be reviewed before use. In no event shall the operator be liable for any indirect, incidental, or consequential damages.
 
-9. GOVERNING LAW
+10. TERMINATION
+Either party may terminate access at any time. Upon termination, your right to use the Platform ceases immediately and your data will be deleted in accordance with our Privacy Policy.
+
+11. GOVERNING LAW
 These Terms are governed by the laws of France. Any disputes shall be submitted to the exclusive jurisdiction of the courts of Paris.
 
-By clicking "I accept", you confirm that you have read, understood, and agree to these Terms.`;
+By clicking "I accept", you confirm that you have read, understood, and agree to these Terms and our Privacy Policy.`;
 
 export default function SignupCompletePage() {
   const [firstName, setFirstName] = useState("");
@@ -101,10 +111,10 @@ export default function SignupCompletePage() {
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center px-4">
+    <div className="min-h-screen flex flex-col items-center justify-center px-4">
       <div className="w-full max-w-sm">
         <div className="mb-8 text-center">
-          <div className="text-3xl mb-2">🛡</div>
+          <img src="/guardian-logo.svg" alt="Guardian" className="h-10 mx-auto mb-2" />
           <h1 className="text-xl font-semibold">Welcome to Guardian</h1>
           <p className="text-sm text-white/50 mt-1">Complete your profile to get started</p>
         </div>

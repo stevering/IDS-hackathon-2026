@@ -5,10 +5,10 @@ import { LegalFooter } from "@/components/LegalFooter";
 
 export default function SignupPage() {
   return (
-    <div className="min-h-screen flex items-center justify-center px-4">
+    <div className="min-h-screen flex flex-col items-center justify-center px-4">
       <div className="w-full max-w-sm text-center">
         <div className="mb-8">
-          <div className="text-3xl mb-2">🛡</div>
+          <img src="/guardian-logo.svg" alt="Guardian" className="h-10 mx-auto mb-2" />
           <h1 className="text-xl font-semibold">Guardian</h1>
           <p className="text-sm text-white/50 mt-1">Private Beta</p>
         </div>

@@ -9,7 +9,7 @@ export default function PrivacyPage() {
     <div className="min-h-screen flex items-center justify-center px-4 py-16">
       <div className="w-full max-w-2xl">
         <div className="mb-10 text-center">
-          <div className="text-3xl mb-2">🛡</div>
+          <img src="/guardian-logo.svg" alt="Guardian" className="h-10 mx-auto mb-2" />
           <h1 className="text-xl font-semibold">Privacy Policy</h1>
           <p className="text-sm text-white/50 mt-1">
             Guardian Platform — Private Beta
@@ -312,12 +312,13 @@ export default function PrivacyPage() {
           </section>
         </div>
 
-        <div className="mt-12 text-center">
-          <Link
-            href="/login"
-            className="text-sm text-white/40 hover:text-white/70 transition-colors"
-          >
-            Back to sign in
+        <div className="mt-12 flex justify-center gap-4 text-sm text-white/40">
+          <Link href="/login" className="hover:text-white/70 transition-colors">
+            Sign in
+          </Link>
+          <span>·</span>
+          <Link href="/account" className="hover:text-white/70 transition-colors">
+            Account
           </Link>
         </div>
       </div>

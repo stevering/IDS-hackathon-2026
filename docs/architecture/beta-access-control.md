@@ -106,6 +106,7 @@ Invitee clicks expired/used link
 | `POST /api/signup/complete` | User | Complete profile + CGU acceptance |
 | `POST /api/signup/request-reinvite` | Public | Re-send expired invite (deletes + recreates user) |
 | `POST /api/signup/check-invite` | Public | Check invite status by email |
+| `DELETE /api/user/account` | User | Permanently delete account + all data |
 
 ## Database Tables
 
