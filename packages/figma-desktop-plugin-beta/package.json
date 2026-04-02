@@ -7,6 +7,6 @@
     "build": "node build.mjs",
     "build:preview": "GUARDIAN_URL=https://preview.guardian.figdesys.com node build.mjs",
     "build:prod": "GUARDIAN_URL=https://guardian.figdesys.com node build.mjs",
-    "zip": "GUARDIAN_URL=https://preview.guardian.figdesys.com node build.mjs && node zip.mjs"
+    "zip": "cd ../figma-plugin && GUARDIAN_URL=https://preview.guardian.figdesys.com node build.mjs && cd ../figma-desktop-plugin-beta && node build.mjs && node zip.mjs"
   }
 }

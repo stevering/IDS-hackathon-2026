@@ -24,15 +24,21 @@ function build() {
   copyFileSync(codeSrc, resolve(distDir, 'code.js'));
   console.log(`[beta-plugin] Copied code.js from figma-plugin`);
 
-  // Build ui.html with GUARDIAN_URL substitution
+  // Copy ui.html — prefer pre-built dist/ui.html (already minified + GUARDIAN_URL replaced)
+  // Fall back to source ui.html if dist doesn't exist (needs GUARDIAN_URL substitution)
+  const uiDist = resolve(pluginDir, 'dist/ui.html');
   const uiSrc = resolve(pluginDir, 'ui.html');
-  if (!existsSync(uiSrc)) {
+  if (existsSync(uiDist)) {
+    copyFileSync(uiDist, resolve(distDir, 'ui.html'));
+    console.log(`[beta-plugin] Copied dist/ui.html from figma-plugin (pre-built)`);
+  } else if (existsSync(uiSrc)) {
+    const html = readFileSync(uiSrc, 'utf8');
+    writeFileSync(resolve(distDir, 'ui.html'), html.replace('__GUARDIAN_URL__', GUARDIAN_URL));
+    console.log(`[beta-plugin] Built dist/ui.html from source (GUARDIAN_URL=${GUARDIAN_URL})`);
+  } else {
     console.error(`[beta-plugin] ui.html not found in figma-plugin`);
     process.exit(1);
   }
-  const html = readFileSync(uiSrc, 'utf8');
-  writeFileSync(resolve(distDir, 'ui.html'), html.replace('__GUARDIAN_URL__', GUARDIAN_URL));
-  console.log(`[beta-plugin] Built dist/ui.html (GUARDIAN_URL=${GUARDIAN_URL})`);
 }
 
 build();
