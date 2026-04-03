@@ -241,17 +241,13 @@ export function useChatWorkflow({
         }
 
         streamingMsgRef.current.text += content;
-        const currentText = streamingMsgRef.current.text;
-        const msgId = streamingMsgRef.current.id;
+        const snapshot = { ...streamingMsgRef.current };
+        const msgId = snapshot.id;
 
         setMessages((prev) =>
           prev.map((m) =>
             m.id === msgId
-              ? {
-                  ...m,
-                  content: currentText,
-                  parts: buildParts(streamingMsgRef.current!),
-                }
+              ? { ...m, content: snapshot.text, parts: buildParts(snapshot) }
               : m
           )
         );
@@ -261,12 +257,12 @@ export function useChatWorkflow({
         if (!streamingMsgRef.current) return;
 
         streamingMsgRef.current.reasoning += content;
-        const msgId = streamingMsgRef.current.id;
+        const snapshot = { ...streamingMsgRef.current };
 
         setMessages((prev) =>
           prev.map((m) =>
-            m.id === msgId
-              ? { ...m, parts: buildParts(streamingMsgRef.current!) }
+            m.id === snapshot.id
+              ? { ...m, parts: buildParts(snapshot) }
               : m
           )
         );
@@ -327,16 +323,46 @@ export function useChatWorkflow({
         );
       })
       .on("broadcast", { event: "text_complete" }, (payload) => {
-        const { content, modelId, reasoning } = payload.payload as {
+        const { content, reasoning, hasToolCalls } = payload.payload as {
           content: string;
           modelId?: string;
           reasoning?: string;
+          hasToolCalls?: boolean;
         };
+        console.log("[ChatWorkflow] text_complete received", { hasToolCalls, contentLen: content?.length, msgId: streamingMsgRef.current?.id });
         if (!streamingMsgRef.current) return;
 
         const msgId = streamingMsgRef.current.id;
 
-        // Finalize the message
+        if (hasToolCalls) {
+          // LLM emitted tool calls — don't finalize. The workflow will execute
+          // the tools and call callLLMStreaming again. Keep streaming, prepare
+          // a new placeholder for the next LLM response.
+          setMessages((prev) =>
+            prev.map((m) =>
+              m.id === msgId
+                ? { ...m, content, parts: buildFinalParts(content, reasoning) }
+                : m
+            )
+          );
+          setStatus("tool_executing");
+
+          // Create a new placeholder for the next LLM response
+          const nextMsgId = `assistant-${Date.now()}`;
+          streamingMsgRef.current = { id: nextMsgId, text: "", reasoning: "" };
+          setMessages((prev) => [
+            ...prev,
+            {
+              id: nextMsgId,
+              role: "assistant" as const,
+              content: "",
+              parts: [{ type: "text" as const, text: "", state: "streaming" as const }],
+            },
+          ]);
+          return;
+        }
+
+        // No tool calls — final response, finalize
         setMessages((prev) =>
           prev.map((m) =>
             m.id === msgId

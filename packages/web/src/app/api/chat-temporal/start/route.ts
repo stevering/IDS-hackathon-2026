@@ -97,7 +97,7 @@ export async function POST(request: Request) {
       .update({ metadata: { chatWorkflowId: workflowId } })
       .eq("id", conversationId);
 
-    log.info("chatWorkflow started", { conv: conversationId, model: resolvedModel });
+    log.info("chatWorkflow started", { conv: conversationId, model: resolvedModel, mcpServerIds: mcpServerIds ?? [], figmaPluginClientId: figmaPluginClientId ?? null });
 
     return NextResponse.json({ workflowId, conversationId });
   } catch (err) {

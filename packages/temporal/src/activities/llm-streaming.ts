@@ -295,6 +295,7 @@ export async function callLLMStreaming(params: LLMStreamingParams): Promise<LLMC
           modelId: resolved.modelId,
           reasoning: fullReasoning || undefined,
           usage: usage ?? undefined,
+          hasToolCalls: !!(toolCalls?.length),
         },
       }).catch(() => {});
     }

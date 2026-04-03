@@ -208,6 +208,16 @@ export async function verifyRequest(req: IncomingMessage): Promise<Authenticated
   const token = authHeader.slice(7)
   if (!token) return null
 
+  // Allow service-role key for internal calls (e.g. Temporal worker)
+  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY
+    ?? process.env.STORAGE_SUPABASE_SERVICE_ROLE_KEY
+  if (serviceRoleKey && token === serviceRoleKey) {
+    return {
+      id: "service-role",
+      role: "service_role",
+    }
+  }
+
   try {
     const { payload } = await jwtVerify(token, getJWKS(), {
       issuer: `${getSupabaseUrl()}/auth/v1`,

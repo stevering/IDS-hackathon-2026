@@ -41,6 +41,7 @@ import {
 import type {
   StreamingLLMActivities,
   ChatPersistenceActivities,
+  ChatBroadcastActivities,
   FigmaActivities,
   MCPActivities,
 } from "../activities/types.js";
@@ -58,6 +59,11 @@ const { callLLMStreaming } = proxyActivities<StreamingLLMActivities>({
 const { persistChatMessage, loadChatHistory } = proxyActivities<ChatPersistenceActivities>({
   startToCloseTimeout: "10 seconds",
   retry: { maximumAttempts: 2 },
+});
+
+const { broadcastChatEvent } = proxyActivities<ChatBroadcastActivities>({
+  startToCloseTimeout: "5 seconds",
+  retry: { maximumAttempts: 1 },
 });
 
 const { executeFigmaCode } = proxyActivities<FigmaActivities>({
@@ -149,17 +155,17 @@ export async function chatWorkflow(params: ChatWorkflowParams): Promise<void> {
   }
 
   // ── Discover MCP tools ──────────────────────────────────────────────────
+  // Always include the Guardian MCP (built-in), plus user-enabled external MCPs
+  const allMcpServerIds = ["guardian", ...(params.mcpServerIds ?? [])];
   let mcpTools: LLMToolDefinition[] = [];
-  if (params.mcpServerIds?.length) {
-    try {
-      mcpTools = await discoverMCPTools({
-        userId: params.userId,
-        mcpServerIds: params.mcpServerIds,
-        pluginClientId: params.figmaPluginClientId,
-      });
-    } catch {
-      // Non-fatal: continue without MCP tools
-    }
+  try {
+    mcpTools = await discoverMCPTools({
+      userId: params.userId,
+      mcpServerIds: allMcpServerIds,
+      pluginClientId: params.figmaPluginClientId,
+    });
+  } catch {
+    // Non-fatal: continue without MCP tools
   }
 
   // ── Process first message ───────────────────────────────────────────────
@@ -252,9 +258,16 @@ export async function chatWorkflow(params: ChatWorkflowParams): Promise<void> {
         let toolResult: string;
         let isError = false;
 
+        // Notify browser: tool execution starting
+        await broadcastChatEvent({
+          conversationId: params.conversationId,
+          event: "tool_call_start",
+          payload: { toolName: tc.name, toolCallId: tc.id, args: tc.arguments },
+        });
+
         try {
-          if (tc.name === "figma_execute" && params.figmaPluginClientId) {
-            // Figma code execution via plugin bridge
+          if ((tc.name === "guardian_figma_execute" || tc.name === "figma_plugin_execute") && params.figmaPluginClientId) {
+            // Figma code execution via plugin bridge (direct Supabase Realtime)
             const code = (tc.arguments.code as string) ?? "";
             const result = await executeFigmaCode({
               pluginClientId: params.figmaPluginClientId,
@@ -267,12 +280,12 @@ export async function chatWorkflow(params: ChatWorkflowParams): Promise<void> {
               : `Error: ${result.error ?? "unknown"}`;
             isError = !result.success;
           } else {
-            // MCP tool execution
-            const serverId = findMCPServerForTool(tc.name, mcpTools);
+            // MCP tool execution (Guardian or external MCP servers)
+            const resolved = resolveServerForTool(tc.name);
             const result = await executeMCPTool({
               userId: params.userId,
-              serverId,
-              toolName: tc.name,
+              serverId: resolved.serverId,
+              toolName: resolved.rawName,
               arguments: tc.arguments,
             });
             toolResult = result.success
@@ -284,6 +297,13 @@ export async function chatWorkflow(params: ChatWorkflowParams): Promise<void> {
           toolResult = `Tool execution failed: ${err instanceof Error ? err.message : String(err)}`;
           isError = true;
         }
+
+        // Notify browser: tool execution complete
+        await broadcastChatEvent({
+          conversationId: params.conversationId,
+          event: "tool_call_result",
+          payload: { toolCallId: tc.id, result: toolResult.slice(0, 500), isError },
+        });
 
         messages.push({
           role: "tool",
@@ -315,9 +335,20 @@ export async function chatWorkflow(params: ChatWorkflowParams): Promise<void> {
 // Helpers
 // ---------------------------------------------------------------------------
 
-function findMCPServerForTool(toolName: string, tools: LLMToolDefinition[]): string {
-  // MCP tool names are prefixed with serverId (e.g. "guardian_figma_execute")
-  // For now, use "guardian" as default server
-  // TODO: pass serverId mapping from tool discovery
-  return "guardian";
+/** Known tool prefixes → server IDs (must match MCP_SERVERS in mcp.ts) */
+const TOOL_PREFIX_MAP: Array<[string, string]> = [
+  ["guardian_", "guardian"],
+  ["figmaconsole_", "figma_console"],
+  ["figma_", "figma_mcp"],
+  ["github_", "github"],
+];
+
+function resolveServerForTool(prefixedName: string): { serverId: string; rawName: string } {
+  for (const [prefix, serverId] of TOOL_PREFIX_MAP) {
+    if (prefixedName.startsWith(prefix)) {
+      return { serverId, rawName: prefixedName.slice(prefix.length) };
+    }
+  }
+  // Fallback: assume guardian
+  return { serverId: "guardian", rawName: prefixedName };
 }

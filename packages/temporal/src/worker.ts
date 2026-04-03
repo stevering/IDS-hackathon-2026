@@ -17,6 +17,7 @@ import { executeFigmaCode } from "./activities/figma-execute.js";
 import { checkPresence } from "./activities/presence.js";
 import { saveOrchestrationState, persistDurableEvents } from "./activities/persistence.js";
 import { persistChatMessage, loadChatHistory } from "./activities/chat-persistence.js";
+import { broadcastChatEvent } from "./activities/chat-broadcast.js";
 import { fetchFigmaDocs } from "./activities/fetch-docs.js";
 import { discoverMCPTools, executeMCPTool, pairFCCloudRelay, closeStdioPool } from "./activities/mcp.js";
 
@@ -74,6 +75,7 @@ async function run() {
       persistDurableEvents,
       persistChatMessage,
       loadChatHistory,
+      broadcastChatEvent,
       fetchFigmaDocs,
       discoverMCPTools,
       executeMCPTool,

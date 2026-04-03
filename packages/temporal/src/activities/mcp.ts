@@ -28,6 +28,8 @@ type MCPServerDef =
   | { id: string; toolPrefix: string; transport: "stdio"; command: string; args: string[] };
 
 const MCP_SERVERS: MCPServerDef[] = [
+  // Guardian MCP (built-in — always available, no OAuth needed)
+  { id: "guardian", serverUrl: process.env.GUARDIAN_MCP_URL ?? "http://localhost:3847/mcp", toolPrefix: "guardian_", transport: "http" },
   // Remote servers (OAuth token from Vault)
   { id: "figma_console", serverUrl: "https://figma-console-mcp.southleft.com/mcp", toolPrefix: "figmaconsole_", transport: "http" },
   { id: "github", serverUrl: "https://api.githubcopilot.com/mcp", toolPrefix: "github_", transport: "http" },
@@ -327,22 +329,31 @@ export async function discoverMCPTools(params: {
       } else {
         // HTTP/SSE: stateless, one-shot
         let accessToken: string | undefined;
-        const { data: tokensJson, error } = await supabase.rpc("get_mcp_connection_service", {
-          p_user_id: params.userId,
-          p_server_id: serverId,
-        });
 
-        if (error || !tokensJson) {
-          log.warn(`No token for ${serverId}`, { error: error?.message });
-          continue;
-        }
+        // Guardian MCP uses Supabase JWT auth — use the service-role key
+        // (it's a valid Supabase JWT that the Guardian MCP server accepts)
+        if (serverId === "guardian") {
+          const srKey = process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.STORAGE_SUPABASE_SERVICE_ROLE_KEY;
+          if (srKey) accessToken = srKey;
+          log.info(`Connecting to guardian MCP (service-role auth)...`);
+        } else {
+          const { data: tokensJson, error } = await supabase.rpc("get_mcp_connection_service", {
+            p_user_id: params.userId,
+            p_server_id: serverId,
+          });
 
-        const tokens = JSON.parse(tokensJson);
-        if (!tokens.access_token) {
-          log.warn(`Token for ${serverId} has no access_token`);
-          continue;
+          if (error || !tokensJson) {
+            log.warn(`No token for ${serverId}`, { error: error?.message });
+            continue;
+          }
+
+          const tokens = JSON.parse(tokensJson);
+          if (!tokens.access_token) {
+            log.warn(`Token for ${serverId} has no access_token`);
+            continue;
+          }
+          accessToken = tokens.access_token;
         }
-        accessToken = tokens.access_token;
 
         log.info(`Connecting to ${serverId} (${serverDef.transport})...`);
         const client = await connectHTTP(serverDef, accessToken);
@@ -599,21 +610,27 @@ export async function executeMCPTool(params: {
 
     // HTTP/SSE: stateless, create → execute → close
     let accessToken: string | undefined;
-    const supabase = createServiceClient();
-    const { data: tokensJson, error } = await supabase.rpc("get_mcp_connection_service", {
-      p_user_id: params.userId,
-      p_server_id: params.serverId,
-    });
 
-    if (error || !tokensJson) {
-      return { success: false, error: `No token for ${params.serverId}: ${error?.message ?? "not found"}` };
-    }
+    if (params.serverId === "guardian") {
+      // Guardian MCP uses service-role key as Bearer token
+      accessToken = process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.STORAGE_SUPABASE_SERVICE_ROLE_KEY;
+    } else {
+      const supabase = createServiceClient();
+      const { data: tokensJson, error } = await supabase.rpc("get_mcp_connection_service", {
+        p_user_id: params.userId,
+        p_server_id: params.serverId,
+      });
 
-    const tokens = JSON.parse(tokensJson);
-    if (!tokens.access_token) {
-      return { success: false, error: `Token for ${params.serverId} has no access_token` };
+      if (error || !tokensJson) {
+        return { success: false, error: `No token for ${params.serverId}: ${error?.message ?? "not found"}` };
+      }
+
+      const tokens = JSON.parse(tokensJson);
+      if (!tokens.access_token) {
+        return { success: false, error: `Token for ${params.serverId} has no access_token` };
+      }
+      accessToken = tokens.access_token;
     }
-    accessToken = tokens.access_token;
 
     log.info(`Connecting to execute ${params.toolName} (${serverDef.transport})...`);
     const client = await connectHTTP(serverDef, accessToken);

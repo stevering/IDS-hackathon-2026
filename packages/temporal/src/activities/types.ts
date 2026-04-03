@@ -33,6 +33,14 @@ export interface StreamingLLMActivities {
 // Chat Persistence Activities
 // ---------------------------------------------------------------------------
 
+export interface ChatBroadcastActivities {
+  broadcastChatEvent(params: {
+    conversationId: string;
+    event: string;
+    payload: Record<string, unknown>;
+  }): Promise<void>;
+}
+
 export interface ChatPersistenceActivities {
   persistChatMessage(params: {
     conversationId: string;
