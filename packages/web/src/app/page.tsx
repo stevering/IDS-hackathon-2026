@@ -3527,7 +3527,7 @@ export default function Home() {
                           </div>
                           <div>
                             <div className="text-sm font-medium text-blue-300/90">Reconnecting to stream</div>
-                            <div className="text-xs text-blue-300/50 mt-0.5">Page was refreshed — recovering response...</div>
+                            <div className="text-xs text-blue-300/50 mt-0.5">Recovering response in progress...</div>
                           </div>
                         </div>
                         <div className="mt-2 space-y-1.5">
