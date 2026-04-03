@@ -231,7 +231,23 @@ export function useChatWorkflow({
     channel
       .on("broadcast", { event: "text_delta" }, (payload) => {
         const { content } = payload.payload as { content: string };
-        if (!streamingMsgRef.current) return;
+
+        // If no active streaming message (e.g., after tool execution),
+        // create a new placeholder for the next LLM response
+        if (!streamingMsgRef.current) {
+          const nextMsgId = `assistant-${Date.now()}`;
+          streamingMsgRef.current = { id: nextMsgId, text: "", reasoning: "" };
+          setMessages((prev) => [
+            ...prev,
+            {
+              id: nextMsgId,
+              role: "assistant" as const,
+              content: "",
+              parts: [{ type: "text" as const, text: "", state: "streaming" as const }],
+            },
+          ]);
+          setStatus("streaming");
+        }
 
         // Benchmark: first delta
         if (benchmarkRef.current && !benchmarkRef.current.firstDeltaAt) {
@@ -273,30 +289,27 @@ export function useChatWorkflow({
           toolCallId: string;
           args: Record<string, unknown>;
         };
-        if (!streamingMsgRef.current) return;
-
         setStatus("tool_executing");
-        const msgId = streamingMsgRef.current.id;
 
-        setMessages((prev) =>
-          prev.map((m) =>
-            m.id === msgId
-              ? {
-                  ...m,
-                  parts: [
-                    ...m.parts,
-                    {
-                      type: "dynamic-tool" as const,
-                      toolName,
-                      toolCallId,
-                      input: args,
-                      state: "running",
-                    },
-                  ],
-                }
-              : m
-          )
-        );
+        // Add tool call as a new assistant message with dynamic-tool part
+        const toolMsgId = `tool-${toolCallId}`;
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: toolMsgId,
+            role: "assistant" as const,
+            content: `Calling ${toolName}...`,
+            parts: [
+              {
+                type: "dynamic-tool" as const,
+                toolName,
+                toolCallId,
+                input: args,
+                state: "running",
+              },
+            ],
+          },
+        ]);
       })
       .on("broadcast", { event: "tool_call_result" }, (payload) => {
         const { toolCallId, result, isError } = payload.payload as {
@@ -304,14 +317,15 @@ export function useChatWorkflow({
           result: string;
           isError: boolean;
         };
-        if (!streamingMsgRef.current) return;
 
-        const msgId = streamingMsgRef.current.id;
+        // Find the tool message by toolCallId and update its state
+        const toolMsgId = `tool-${toolCallId}`;
         setMessages((prev) =>
           prev.map((m) =>
-            m.id === msgId
+            m.id === toolMsgId
               ? {
                   ...m,
+                  content: isError ? `Error: ${result}` : result,
                   parts: m.parts.map((p) =>
                     p.type === "dynamic-tool" && p.toolCallId === toolCallId
                       ? { ...p, state: isError ? "error" : "output-available", output: { content: [{ type: "text", text: result }], isError } }
@@ -335,9 +349,8 @@ export function useChatWorkflow({
         const msgId = streamingMsgRef.current.id;
 
         if (hasToolCalls) {
-          // LLM emitted tool calls — don't finalize. The workflow will execute
-          // the tools and call callLLMStreaming again. Keep streaming, prepare
-          // a new placeholder for the next LLM response.
+          // LLM emitted tool calls — finalize this message's text,
+          // keep the channel open for tool events + next LLM response.
           setMessages((prev) =>
             prev.map((m) =>
               m.id === msgId
@@ -347,18 +360,10 @@ export function useChatWorkflow({
           );
           setStatus("tool_executing");
 
-          // Create a new placeholder for the next LLM response
-          const nextMsgId = `assistant-${Date.now()}`;
-          streamingMsgRef.current = { id: nextMsgId, text: "", reasoning: "" };
-          setMessages((prev) => [
-            ...prev,
-            {
-              id: nextMsgId,
-              role: "assistant" as const,
-              content: "",
-              parts: [{ type: "text" as const, text: "", state: "streaming" as const }],
-            },
-          ]);
+          // Switch streamingMsgRef to a "tool tracking" mode — tool_call_start
+          // and tool_call_result events will be appended as new messages.
+          // The next text_delta will create a fresh assistant placeholder.
+          streamingMsgRef.current = null;
           return;
         }
 

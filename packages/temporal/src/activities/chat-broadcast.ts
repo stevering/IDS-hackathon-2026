@@ -7,15 +7,25 @@
  */
 
 import { createClient } from "@supabase/supabase-js";
+import { createLogger } from "../lib/log.js";
 
 export async function broadcastChatEvent(params: {
   conversationId: string;
   event: string;
   payload: Record<string, unknown>;
 }): Promise<void> {
+  const log = createLogger("chat-broadcast", {
+    conv: params.conversationId.slice(0, 8),
+    event: params.event,
+  });
+  log.info("broadcasting", { payload: JSON.stringify(params.payload).slice(0, 200) });
+
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL ?? process.env.STORAGE_SUPABASE_URL;
   const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.STORAGE_SUPABASE_SERVICE_ROLE_KEY;
-  if (!supabaseUrl || !serviceKey) return;
+  if (!supabaseUrl || !serviceKey) {
+    log.warn("no Supabase credentials");
+    return;
+  }
 
   const supabase = createClient(supabaseUrl, serviceKey);
   const channel = supabase.channel(`guardian:chat:${params.conversationId}`);

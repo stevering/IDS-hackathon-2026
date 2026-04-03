@@ -258,12 +258,16 @@ export async function chatWorkflow(params: ChatWorkflowParams): Promise<void> {
         let toolResult: string;
         let isError = false;
 
-        // Notify browser: tool execution starting
-        await broadcastChatEvent({
-          conversationId: params.conversationId,
-          event: "tool_call_start",
-          payload: { toolName: tc.name, toolCallId: tc.id, args: tc.arguments },
-        });
+        // Notify browser: tool execution starting (non-fatal if broadcast fails)
+        try {
+          await broadcastChatEvent({
+            conversationId: params.conversationId,
+            event: "tool_call_start",
+            payload: { toolName: tc.name, toolCallId: tc.id, args: tc.arguments },
+          });
+        } catch {
+          // Broadcast failure is non-fatal — tool execution continues
+        }
 
         try {
           if ((tc.name === "guardian_figma_execute" || tc.name === "figma_plugin_execute") && params.figmaPluginClientId) {
@@ -298,12 +302,16 @@ export async function chatWorkflow(params: ChatWorkflowParams): Promise<void> {
           isError = true;
         }
 
-        // Notify browser: tool execution complete
-        await broadcastChatEvent({
-          conversationId: params.conversationId,
-          event: "tool_call_result",
-          payload: { toolCallId: tc.id, result: toolResult.slice(0, 500), isError },
-        });
+        // Notify browser: tool execution complete (non-fatal if broadcast fails)
+        try {
+          await broadcastChatEvent({
+            conversationId: params.conversationId,
+            event: "tool_call_result",
+            payload: { toolCallId: tc.id, result: toolResult.slice(0, 500), isError },
+          });
+        } catch {
+          // Broadcast failure is non-fatal
+        }
 
         messages.push({
           role: "tool",
