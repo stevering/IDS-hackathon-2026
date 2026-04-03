@@ -61,7 +61,7 @@ import {
   agentBroadcastSignal,
 } from "../signals/definitions.js";
 
-import type { LLMActivities, PersistenceActivities } from "../activities/types.js";
+import type { LLMActivities, PersistenceActivities, StreamingLLMActivities } from "../activities/types.js";
 
 import { agentWorkflow } from "./agent.js";
 
@@ -74,6 +74,13 @@ const normalLLM = proxyActivities<LLMActivities>({
 const slowLLM = proxyActivities<LLMActivities>({
   startToCloseTimeout: "30 minutes",
   retry: { maximumAttempts: 1 },
+});
+// Streaming LLM proxy — for token-by-token streaming via Realtime
+// (available for future use when orchestration UI supports streaming)
+const _streamingLLM = proxyActivities<StreamingLLMActivities>({
+  startToCloseTimeout: "5 minutes",
+  heartbeatTimeout: "30 seconds",
+  retry: { maximumAttempts: 2 },
 });
 
 const { saveOrchestrationState, persistDurableEvents } = proxyActivities<PersistenceActivities>({

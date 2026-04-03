@@ -59,7 +59,7 @@ async function refreshCapabilitiesCache(): Promise<void> {
   }
 }
 
-async function modelSupportsReasoning(modelId: string): Promise<boolean> {
+export async function modelSupportsReasoning(modelId: string): Promise<boolean> {
   if (reasoningModels.size === 0 || Date.now() - capabilitiesFetchedAt > CAPABILITIES_TTL_MS) {
     await refreshCapabilitiesCache();
   }
@@ -100,7 +100,7 @@ async function refreshModelConfigCache(): Promise<void> {
   }
 }
 
-async function getMetadataFormat(modelId: string): Promise<MetadataFormat> {
+export async function getMetadataFormat(modelId: string): Promise<MetadataFormat> {
   if (Date.now() - modelConfigFetchedAt > MODEL_CONFIG_TTL_MS) {
     await refreshModelConfigCache();
   }
@@ -111,7 +111,7 @@ async function getMetadataFormat(modelId: string): Promise<MetadataFormat> {
 // Interceptor types
 // ---------------------------------------------------------------------------
 
-type InterceptDecision =
+export type InterceptDecision =
   | { action: "passthrough" }
   | { action: "synthetic"; result: LLMCallResult }
   | { action: "delegate" };
@@ -127,7 +127,7 @@ const DELEGATABLE_PURPOSES: LLMCallPurpose[] = ["code_review", "file_review", "a
 // LLM Call Interceptor
 // ---------------------------------------------------------------------------
 
-function interceptLLMCall(params: LLMCallParams): InterceptDecision {
+export function interceptLLMCall(params: LLMCallParams): InterceptDecision {
   const model = params.model ?? "";
   const purpose = params.purpose;
 

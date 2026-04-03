@@ -58,7 +58,16 @@ export type OrchestrationSSEEvent =
   | { type: "guardian_feedback"; content: string; targetRole: "orchestrator" | "agent"; targetAgentShortId?: string }
   | { type: "system_prompt"; content: string; targetRole: "orchestrator" | "agent"; targetAgentShortId?: string }
   | { type: "orchestration_completed"; status: "completed" | "completed_with_errors" | "failed" | "cancelled" | "timed_out" }
-  | { type: "error"; message: string };
+  | { type: "error"; message: string }
+  // ---------------------------------------------------------------------------
+  // Streaming events (used by both chat and collab workflows)
+  // ---------------------------------------------------------------------------
+  | { type: "text_delta"; content: string; requestId: string }
+  | { type: "reasoning_delta"; content: string; requestId: string; simulated?: boolean }
+  | { type: "text_complete"; content: string; requestId: string; modelId?: string; usage?: TokenUsage; reasoning?: string }
+  | { type: "tool_call_start"; toolName: string; toolCallId: string; args: Record<string, unknown> }
+  | { type: "tool_call_result"; toolName: string; toolCallId: string; result: string; isError: boolean }
+  | { type: "figma_execute_ack"; requestId: string; status: "received" | "awaiting_approval"; pluginClientId: string };
 
 // ---------------------------------------------------------------------------
 // Query response (Temporal query handler)

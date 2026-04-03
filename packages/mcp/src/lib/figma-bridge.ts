@@ -112,8 +112,12 @@ export async function executeViaSupabase(
     config: { presence: { key: "mcp-server" } },
   })
 
+  const ACK_TIMEOUT_MS = 10_000      // 10s to receive an ack from the plugin
+  const APPROVAL_TIMEOUT_MS = 120_000 // 2min if user needs to approve
+
   return new Promise<ExecResult>((resolve) => {
     let settled = false
+    let ackReceived = false
     const collectedResults: ClientExecResult[] = []
     let expectedCount = 1 // fallback if presence sync doesn't arrive
     let presenceReady = false
@@ -125,13 +129,17 @@ export async function executeViaSupabase(
       if (settled) return
       settled = true
       clearTimeout(timer)
+      clearTimeout(ackTimer)
       clearTimeout(presenceTimer)
       channel.unsubscribe()
 
       if (collectedResults.length === 0) {
+        const reason = !ackReceived
+          ? `No acknowledgement from plugin within ${ACK_TIMEOUT_MS / 1000}s. Make sure the Figma plugin is open with the Guardian webapp loaded.`
+          : `Timed out after waiting for execution result. The plugin acknowledged the request but did not return a result in time.`
         resolve({
           success: false,
-          error: `Timed out after ${timeoutMs}ms waiting for Supabase Realtime result. Make sure the Figma plugin is open with the Guardian webapp loaded.`,
+          error: reason,
           result: [],
           expectedClients: expectedCount,
         })
@@ -146,8 +154,15 @@ export async function executeViaSupabase(
       })
     }
 
-    // Main timeout — settle with whatever we have
-    const timer = setTimeout(settle, timeoutMs)
+    // Main timeout — settle with whatever we have (extended dynamically on ack)
+    let timer = setTimeout(settle, timeoutMs)
+
+    // ACK timeout — if no ack within 10s, plugin is considered offline
+    const ackTimer = setTimeout(() => {
+      if (!ackReceived && !settled) {
+        settle()
+      }
+    }, ACK_TIMEOUT_MS)
 
     // Presence sync timeout — if sync doesn't arrive within 2s, proceed with fallback
     let presenceTimer: ReturnType<typeof setTimeout>
@@ -229,6 +244,24 @@ export async function executeViaSupabase(
         if (!presenceReady && !settled) {
           clearTimeout(presenceTimer)
           readPresenceAndBroadcast()
+        }
+      })
+      .on("broadcast", { event: "execute_ack" }, (payload) => {
+        const data = payload.payload as {
+          requestId: string
+          senderClientId?: string
+          status: "received" | "awaiting_approval"
+        }
+        if (data.requestId !== requestId) return
+        if (settled) return
+
+        ackReceived = true
+        clearTimeout(ackTimer)
+
+        // If plugin is awaiting user approval, extend the main timeout
+        if (data.status === "awaiting_approval") {
+          clearTimeout(timer)
+          timer = setTimeout(settle, APPROVAL_TIMEOUT_MS)
         }
       })
       .on("broadcast", { event: "execute_result" }, (payload) => {

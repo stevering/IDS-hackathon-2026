@@ -2,6 +2,7 @@
 
 import { useChat } from "@ai-sdk/react";
 import { DefaultChatTransport, lastAssistantMessageIsCompleteWithToolCalls } from "ai";
+import { useChatWorkflow } from "./hooks/useChatWorkflow";
 import { useState, useRef, useEffect, useMemo, useCallback } from "react";
 import Link from "next/link";
 import type { GatewayModel } from "./api/gateway-models/route";
@@ -2083,7 +2084,7 @@ export default function Home() {
   // between addToolResult and the SDK starting the next maxSteps stream.
   const figmaExecInFlightRef = useRef(false);
 
-  const { messages, sendMessage, status, error, setMessages, addToolResult: rawAddToolResult } = useChat({
+  const { messages: legacyMessages, sendMessage: legacySendMessage, status: legacyStatus, error: legacyError, setMessages: legacySetMessages, addToolResult: rawAddToolResult } = useChat({
     transport,
     // When the webapp runs inside a Figma plugin, handle figma_plugin_execute
     // directly via postMessage (bypasses MCP + Supabase RT — instant execution).
@@ -2154,6 +2155,34 @@ export default function Home() {
     },
   });
 
+  // ── Temporal chat workflow (feature-flagged alternative to useChat) ───
+  const temporalChatEnabled = process.env.NEXT_PUBLIC_TEMPORAL_CHAT_ENABLED === "true";
+
+  // Map enabledMcps UI keys to Temporal MCP server IDs
+  const temporalMcpServerIds = useMemo(() => {
+    const ids: string[] = [];
+    if (enabledMcps.figma) ids.push("figma_mcp");
+    if (enabledMcps.figmaConsole) ids.push("figma_console");
+    if (enabledMcps.github) ids.push("github");
+    return ids;
+  }, [enabledMcps.figma, enabledMcps.figmaConsole, enabledMcps.github]);
+
+  const chatWorkflow = useChatWorkflow({
+    conversationId: activeConversationId,
+    model: selectedModel || undefined,
+    mcpServerIds: temporalMcpServerIds,
+    figmaPluginClientId: isFigmaPlugin ? myClientId : undefined,
+    enabled: temporalChatEnabled,
+  });
+
+  // Unified variables: point to Temporal workflow or legacy useChat.
+  // When Temporal is enabled, tools execute server-side (no client-side onToolCall).
+  const messages = temporalChatEnabled ? (chatWorkflow.messages as typeof legacyMessages) : legacyMessages;
+  const sendMessage = temporalChatEnabled ? chatWorkflow.sendMessage : legacySendMessage;
+  const status = temporalChatEnabled ? (chatWorkflow.status === "idle" ? "ready" as const : "streaming" as const) : legacyStatus;
+  const error = temporalChatEnabled ? (chatWorkflow.error ? new Error(chatWorkflow.error) : undefined) : legacyError;
+  const setMessages = temporalChatEnabled ? (chatWorkflow.setMessages as typeof legacySetMessages) : legacySetMessages;
+
   // Safe wrapper around addToolResult — catches SDK internal errors
   // (e.g. "Cannot read properties of undefined (reading 'state')" when
   // activeResponse is undefined due to concurrent makeRequest calls).
@@ -2184,11 +2213,13 @@ export default function Home() {
     };
   }, []);
 
+  // When Temporal chat is active, persistence is server-side — pass legacy (idle)
+  // values so useMessagePersistence doesn't double-save assistant messages.
   const { loaded: messagesLoaded } = useMessagePersistence(
     activeConversationId,
-    messages,
-    setMessages,
-    status,
+    temporalChatEnabled ? legacyMessages : messages,
+    temporalChatEnabled ? legacySetMessages : setMessages,
+    temporalChatEnabled ? legacyStatus : status,
     myClientId,
     myDisplayShortId,
     getAssistantMetadata,
@@ -3483,6 +3514,27 @@ export default function Home() {
                             </div>
                           );
                         })}
+                      </div>
+                    );
+                  }
+                  // Recovering skeleton — shown during F5 recovery gap (Temporal chat)
+                  if ((part as { type: string }).type === "recovering-skeleton") {
+                    return (
+                      <div key={i} className="mt-3 rounded-lg border border-blue-500/20 bg-blue-500/5 px-4 py-3">
+                        <div className="flex items-center gap-3">
+                          <div className="relative flex h-5 w-5 items-center justify-center">
+                            <span className="absolute h-5 w-5 rounded-full border-2 border-blue-400/30 border-t-blue-400 animate-spin" />
+                          </div>
+                          <div>
+                            <div className="text-sm font-medium text-blue-300/90">Reconnecting to stream</div>
+                            <div className="text-xs text-blue-300/50 mt-0.5">Page was refreshed — recovering response...</div>
+                          </div>
+                        </div>
+                        <div className="mt-2 space-y-1.5">
+                          <div className="h-3 w-full rounded bg-white/5 animate-pulse" />
+                          <div className="h-3 w-4/5 rounded bg-white/5 animate-pulse" style={{ animationDelay: "150ms" }} />
+                          <div className="h-3 w-3/5 rounded bg-white/5 animate-pulse" style={{ animationDelay: "300ms" }} />
+                        </div>
                       </div>
                     );
                   }

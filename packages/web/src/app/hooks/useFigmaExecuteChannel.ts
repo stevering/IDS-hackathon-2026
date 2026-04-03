@@ -141,6 +141,21 @@ export function useFigmaExecuteChannel(
         if (busy.current) return;
         busy.current = true;
 
+        // Phase 2: Send ACK immediately so the server knows we received the request
+        try {
+          await channel.send({
+            type: "broadcast",
+            event: "execute_ack",
+            payload: {
+              requestId,
+              senderClientId: clientId.current,
+              status: "awaiting_approval" as const,
+            },
+          });
+        } catch {
+          // Non-fatal: server will still wait for result even without ack
+        }
+
         try {
           const result = await executeCodeRef.current(code, timeout);
 

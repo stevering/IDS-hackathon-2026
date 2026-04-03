@@ -28,6 +28,7 @@ const PUBLIC_AUTH_ROUTES = [
   "/api/conversations",    // Conversation persistence — protected by Supabase auth
   "/api/orchestrations",   // Collaborative Agents orchestrations — protected by Supabase auth
   "/api/orchestration",    // Temporal orchestration API — protected by Supabase auth
+  "/api/chat-temporal",    // Temporal chat workflow API — protected by Supabase auth
   "/api/user/settings",    // User collaboration settings — protected by Supabase auth
   "/api/intercept",        // LLM intercept stream (dev-only) — protected by MCP service key
   "/api/admin",            // Admin routes — protected by Supabase auth + is_admin metadata

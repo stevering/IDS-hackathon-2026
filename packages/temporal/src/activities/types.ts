@@ -15,12 +15,39 @@ import type {
   FetchFigmaDocsResult,
 } from "@guardian/orchestrations";
 
+import type { LLMStreamingParams } from "./llm-streaming.js";
+
 // ---------------------------------------------------------------------------
 // LLM Activities
 // ---------------------------------------------------------------------------
 
 export interface LLMActivities {
   callLLM(params: LLMCallParams): Promise<LLMCallResult>;
+}
+
+export interface StreamingLLMActivities {
+  callLLMStreaming(params: LLMStreamingParams): Promise<LLMCallResult>;
+}
+
+// ---------------------------------------------------------------------------
+// Chat Persistence Activities
+// ---------------------------------------------------------------------------
+
+export interface ChatPersistenceActivities {
+  persistChatMessage(params: {
+    conversationId: string;
+    role: "user" | "assistant" | "system";
+    content: string;
+    parts?: unknown[];
+    metadata?: Record<string, unknown>;
+    userId: string;
+  }): Promise<{ messageId: string }>;
+
+  loadChatHistory(params: {
+    conversationId: string;
+    userId: string;
+    limit?: number;
+  }): Promise<Array<{ role: string; content: string; parts?: unknown[]; metadata?: Record<string, unknown> }>>;
 }
 
 // ---------------------------------------------------------------------------

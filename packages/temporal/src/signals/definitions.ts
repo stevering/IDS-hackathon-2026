@@ -92,8 +92,42 @@ export const pluginDisconnectedSignal = defineSignal<[PluginDisconnectedPayload]
 export const terminateAgentSignal = defineSignal("terminateAgent");
 
 // ---------------------------------------------------------------------------
+// Chat workflow signals
+// ---------------------------------------------------------------------------
+
+/** User sends a new message in chat (follow-up or first message while workflow is idle) */
+export const chatNewMessageSignal = defineSignal<[ChatNewMessagePayload]>("chatNewMessage");
+
+/** User cancels the current chat generation */
+export const chatCancelSignal = defineSignal("chatCancel");
+
+/** Chat new message payload */
+export type ChatNewMessagePayload = {
+  content: string;
+  /** Client-generated message ID (for dedup) */
+  messageId?: string;
+  /** Optional images attached to the message */
+  images?: string[];
+};
+
+/** Chat workflow status returned by chatStatusQuery */
+export type ChatWorkflowStatus = {
+  conversationId: string;
+  status: "idle" | "streaming" | "tool_executing" | "completed" | "cancelled" | "error";
+  /** Current streaming request ID (for Realtime subscription) */
+  streamingRequestId?: string;
+  /** Current step in the LLM ↔ tool loop */
+  currentStep: number;
+  /** Error message if status is "error" */
+  errorMessage?: string;
+};
+
+// ---------------------------------------------------------------------------
 // Query definitions
 // ---------------------------------------------------------------------------
 
 /** Query the orchestration status (for SSE polling). Optional sinceIndex cursor for incremental reads. */
 export const statusQuery = defineQuery<OrchestrationStatusResponse, [number?]>("status");
+
+/** Query the chat workflow status */
+export const chatStatusQuery = defineQuery<ChatWorkflowStatus>("chatStatus");
