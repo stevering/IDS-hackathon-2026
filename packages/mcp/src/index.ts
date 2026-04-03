@@ -104,9 +104,13 @@ async function startHttpServer(port: number): Promise<void> {
         ;(req as IncomingMessage & { guardianUser?: typeof user }).guardianUser = user
       }
 
-      // Extract userId for Supabase Realtime channel scoping
-      const guardianUser = (req as IncomingMessage & { guardianUser?: { id: string } }).guardianUser
-      const userId = guardianUser?.id
+      // Extract userId for Supabase Realtime channel scoping.
+      // When the Temporal worker authenticates with the service-role key,
+      // it passes the real userId via X-Guardian-User-Id header.
+      const guardianUser = (req as IncomingMessage & { guardianUser?: { id: string; role?: string } }).guardianUser
+      const userId = (guardianUser?.role === "service_role" && req.headers["x-guardian-user-id"])
+        ? req.headers["x-guardian-user-id"] as string
+        : guardianUser?.id
 
       const sessionId = req.headers["mcp-session-id"] as string | undefined
 

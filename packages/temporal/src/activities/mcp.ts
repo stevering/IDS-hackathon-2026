@@ -262,12 +262,16 @@ async function getOrCreateStdioClient(
 async function connectHTTP(
   serverDef: Extract<MCPServerDef, { transport: "http" | "sse" }>,
   accessToken?: string,
+  extraHeaders?: Record<string, string>,
 ) {
+  const headers: Record<string, string> = {};
+  if (accessToken) headers["Authorization"] = `Bearer ${accessToken}`;
+  if (extraHeaders) Object.assign(headers, extraHeaders);
   return createMCPClient({
     transport: {
       type: serverDef.transport,
       url: serverDef.serverUrl,
-      headers: accessToken ? { Authorization: `Bearer ${accessToken}` } : undefined,
+      headers: Object.keys(headers).length > 0 ? headers : undefined,
     },
   });
 }
@@ -331,11 +335,11 @@ export async function discoverMCPTools(params: {
         let accessToken: string | undefined;
 
         // Guardian MCP uses Supabase JWT auth — use the service-role key
-        // (it's a valid Supabase JWT that the Guardian MCP server accepts)
+        // and pass the real userId via header for channel scoping
         if (serverId === "guardian") {
           const srKey = process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.STORAGE_SUPABASE_SERVICE_ROLE_KEY;
           if (srKey) accessToken = srKey;
-          log.info(`Connecting to guardian MCP (service-role auth)...`);
+          log.info(`Connecting to guardian MCP (service-role auth, userId=${params.userId.slice(0, 8)})...`);
         } else {
           const { data: tokensJson, error } = await supabase.rpc("get_mcp_connection_service", {
             p_user_id: params.userId,
@@ -356,7 +360,8 @@ export async function discoverMCPTools(params: {
         }
 
         log.info(`Connecting to ${serverId} (${serverDef.transport})...`);
-        const client = await connectHTTP(serverDef, accessToken);
+        const guardianHeaders = serverId === "guardian" ? { "X-Guardian-User-Id": params.userId } : undefined;
+        const client = await connectHTTP(serverDef, accessToken, guardianHeaders);
         mcpTools = await client.tools();
         await client.close();
       }
@@ -633,7 +638,8 @@ export async function executeMCPTool(params: {
     }
 
     log.info(`Connecting to execute ${params.toolName} (${serverDef.transport})...`);
-    const client = await connectHTTP(serverDef, accessToken);
+    const guardianHeaders = params.serverId === "guardian" ? { "X-Guardian-User-Id": params.userId } : undefined;
+    const client = await connectHTTP(serverDef, accessToken, guardianHeaders);
     const mcpTools = await client.tools();
     const tool = mcpTools[params.toolName];
     if (!tool) {

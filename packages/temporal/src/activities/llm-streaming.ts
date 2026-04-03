@@ -265,23 +265,33 @@ export async function callLLMStreaming(params: LLMStreamingParams): Promise<LLMC
 
     // Final DB snapshot — mark message as complete
     if (snapshotSupabase && snapshotMessageId) {
-      await snapshotSupabase
-        .from("messages")
-        .update({
-          content: fullText,
-          parts: [
-            ...(fullReasoning ? [{ type: "reasoning", text: fullReasoning, state: "done" }] : []),
-            { type: "text", text: fullText, state: "done" },
-          ],
-          metadata: {
-            model: resolved.modelId,
-            reasoning: fullReasoning || undefined,
-            usage: usage ?? undefined,
-            streaming: false,
-          },
-        })
-        .eq("id", snapshotMessageId);
-      log.info("finalized streaming message", { msgId: snapshotMessageId });
+      if (toolCalls?.length) {
+        // When LLM returns tool calls, the text is just a preamble (e.g. "✅ Plugin connected! Tool: xxx").
+        // Delete the pre-created message — the tool call will be persisted separately by the workflow.
+        await snapshotSupabase
+          .from("messages")
+          .delete()
+          .eq("id", snapshotMessageId);
+        log.info("deleted intermediate message (has tool calls)", { msgId: snapshotMessageId });
+      } else {
+        await snapshotSupabase
+          .from("messages")
+          .update({
+            content: fullText,
+            parts: [
+              ...(fullReasoning ? [{ type: "reasoning", text: fullReasoning, state: "done" }] : []),
+              { type: "text", text: fullText, state: "done" },
+            ],
+            metadata: {
+              model: resolved.modelId,
+              reasoning: fullReasoning || undefined,
+              usage: usage ?? undefined,
+              streaming: false,
+            },
+          })
+          .eq("id", snapshotMessageId);
+        log.info("finalized streaming message", { msgId: snapshotMessageId });
+      }
     }
 
     // Broadcast completion

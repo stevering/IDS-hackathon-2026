@@ -3270,6 +3270,10 @@ export default function Home() {
                 }`}
               >
                 {m.parts?.map((part, i) => {
+                  // DEBUG: log dynamic-tool parts
+                  if ((part as {type: string}).type === "dynamic-tool") {
+                    console.log("[PartRender] dynamic-tool FOUND", { msgId: m.id, msgContent: m.content?.slice(0, 50), partIndex: i, state: (part as {state: string}).state, toolName: (part as {toolName: string}).toolName });
+                  }
                   // ── Render tool invocations (figma_plugin_execute + MCP tools) ──
                   if (part.type?.startsWith("tool-")) {
                     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -3598,7 +3602,7 @@ export default function Home() {
                         return <ToolCallProgress key={i} toolName={toolName} />;
                     }
                   }
-                  if (part.type === "dynamic-tool") {
+                  if ((part as { type: string }).type === "dynamic-tool") {
                     const p = part as { type: string; toolName: string; state: string; input?: Record<string, unknown>; output?: { content?: { type: string; text: string }[]; structuredContent?: unknown; isError?: boolean }; errorText?: string; providerExecuted?: boolean };
 
                     // If the provider executed the tool but we haven't received output-available,

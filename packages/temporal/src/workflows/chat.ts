@@ -307,7 +307,7 @@ export async function chatWorkflow(params: ChatWorkflowParams): Promise<void> {
           await broadcastChatEvent({
             conversationId: params.conversationId,
             event: "tool_call_result",
-            payload: { toolCallId: tc.id, result: toolResult.slice(0, 500), isError },
+            payload: { toolCallId: tc.id, result: toolResult, isError },
           });
         } catch {
           // Broadcast failure is non-fatal
@@ -331,7 +331,7 @@ export async function chatWorkflow(params: ChatWorkflowParams): Promise<void> {
             toolCallId: tc.id,
             input: tc.arguments,
             state: isError ? "error" : "output-available",
-            output: { content: [{ type: "text", text: toolResult.slice(0, 2000) }], isError },
+            output: { content: [{ type: "text", text: toolResult }], isError },
           }],
         });
       }

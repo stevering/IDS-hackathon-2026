@@ -349,20 +349,15 @@ export function useChatWorkflow({
         const msgId = streamingMsgRef.current.id;
 
         if (hasToolCalls) {
-          // LLM emitted tool calls — finalize this message's text,
-          // keep the channel open for tool events + next LLM response.
-          setMessages((prev) =>
-            prev.map((m) =>
-              m.id === msgId
-                ? { ...m, content, parts: buildFinalParts(content, reasoning) }
-                : m
-            )
-          );
+          // LLM emitted tool calls — remove the intermediate text message.
+          // The LLM often writes tool names in its text output (e.g. "Tool: xxx")
+          // alongside the structured tool call. The tool call will be shown
+          // as a ToolCallBlock, and the final LLM response will have the real content.
+          setMessages((prev) => prev.filter((m) => m.id !== msgId));
           setStatus("tool_executing");
 
-          // Switch streamingMsgRef to a "tool tracking" mode — tool_call_start
-          // and tool_call_result events will be appended as new messages.
-          // The next text_delta will create a fresh assistant placeholder.
+          // Switch streamingMsgRef — tool_call_start/result events will create
+          // new messages. The next text_delta will create a fresh placeholder.
           streamingMsgRef.current = null;
           return;
         }
