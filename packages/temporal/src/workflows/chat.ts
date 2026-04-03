@@ -318,6 +318,22 @@ export async function chatWorkflow(params: ChatWorkflowParams): Promise<void> {
           content: toolResult,
           toolCallId: tc.id,
         });
+
+        // Persist tool call to DB for F5 recovery
+        await persistChatMessage({
+          conversationId: params.conversationId,
+          role: "assistant",
+          content: `Tool: ${tc.name}`,
+          userId: params.userId,
+          parts: [{
+            type: "dynamic-tool",
+            toolName: tc.name,
+            toolCallId: tc.id,
+            input: tc.arguments,
+            state: isError ? "error" : "output-available",
+            output: { content: [{ type: "text", text: toolResult.slice(0, 2000) }], isError },
+          }],
+        });
       }
 
       // Continue loop → LLM gets tool results and responds again

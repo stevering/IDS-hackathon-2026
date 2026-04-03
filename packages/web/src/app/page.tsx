@@ -384,10 +384,15 @@ function ToolCallBlock({ toolName, input, output, isError }: { toolName: string;
 
   const outputText = (() => {
     if (!output) return null;
-    if (typeof output === "string") return output;
+    if (typeof output === "string") {
+      // Try to prettify if it looks like JSON
+      try { return JSON.stringify(JSON.parse(output), null, 2); } catch { return output; }
+    }
     const o = output as { content?: { type: string; text: string }[] };
     if (o.content && Array.isArray(o.content)) {
-      return o.content.filter((c) => c.type === "text").map((c) => c.text).join("\n");
+      const text = o.content.filter((c) => c.type === "text").map((c) => c.text).join("\n");
+      // Try to prettify if the text is JSON
+      try { return JSON.stringify(JSON.parse(text), null, 2); } catch { return text; }
     }
     return JSON.stringify(output, null, 2);
   })();
@@ -399,7 +404,7 @@ function ToolCallBlock({ toolName, input, output, isError }: { toolName: string;
 
   // For web_search, indicate that the search is done automatically by the model
   const isWebSearch = toolName === "web_search";
-  const hasInput = input && Object.keys(input).length > 0;
+  const hasInput = !!input; // Show input block even for empty args (consistency)
 
   return (
     <div className="my-2">
@@ -3157,6 +3162,9 @@ export default function Home() {
             if (arr.findLastIndex(x => x.id === m.id) !== idx) return false;
             // Skip empty assistant messages (only MCP_STATUS markers, no real content)
             if (m.role === "assistant") {
+              // Keep messages that have tool calls (dynamic-tool parts)
+              const hasToolParts = m.parts?.some((p) => (p as { type: string }).type === "dynamic-tool");
+              if (hasToolParts) return true;
               const stripped = m.parts
                 ?.filter((p): p is { type: "text"; text: string } => p.type === "text")
                 .map(p => p.text)
@@ -3648,7 +3656,7 @@ export default function Home() {
               <div className={`flex mt-1 ${m.role === "user" ? "justify-end" : ""}`}>
                 <button
                   onClick={() => {
-                    const text = m.parts
+                    const textParts = m.parts
                       ?.filter((p: { type: string; text?: string }) => p.type === "text" && p.text)
                       .map((p: { type: string; text?: string }) => p.text)
                       .join("\n")
@@ -3659,7 +3667,17 @@ export default function Home() {
                       .replace(/\[CONTINUATION_AVAILABLE\]/g, "")
                       .replace(/\[ANALYZE_BTN\]/g, "")
                       .trim() || "";
-                    copyToClipboard(text);
+                    // For tool call messages, include tool name + input/output
+                    const toolParts = m.parts
+                      ?.filter((p: { type: string }) => (p as { type: string }).type === "dynamic-tool")
+                      .map((p: unknown) => {
+                        const t = p as { toolName: string; input?: Record<string, unknown>; output?: { content?: { text: string }[] }; state: string };
+                        const input = t.input ? JSON.stringify(t.input, null, 2) : "{}";
+                        const output = t.output?.content?.map(c => c.text).join("\n") ?? t.state;
+                        return `Tool: ${t.toolName}\nInput: ${input}\nOutput: ${output}`;
+                      })
+                      .join("\n\n") || "";
+                    copyToClipboard([textParts, toolParts].filter(Boolean).join("\n\n"));
                   }}
                   className="flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] text-white/15 hover:text-white/50 hover:bg-white/5 transition-colors cursor-pointer"
                   title="Copy message"
