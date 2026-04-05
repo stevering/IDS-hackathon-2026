@@ -25,6 +25,37 @@ if ! npx supabase status > /dev/null 2>&1; then
   fi
 fi
 
+# Check that port 7233 (Temporal gRPC) is free before concurrently tries to bind it.
+# A zombie `temporal server start-dev` from a previous session will silently prevent
+# the new server from starting, and the worker will then fail to connect.
+if lsof -iTCP:7233 -sTCP:LISTEN -t > /dev/null 2>&1; then
+  stale_pid=$(lsof -iTCP:7233 -sTCP:LISTEN -t | head -n 1)
+  stale_name=$(ps -p "$stale_pid" -o comm= 2>/dev/null | tr -d ' ')
+  echo ""
+  echo "⚠  Port 7233 is already in use by PID $stale_pid ($stale_name)."
+  if [[ "$stale_name" == *temporal* ]]; then
+    echo "   Looks like a Temporal server zombie from a previous session."
+    read -rp "   Kill it and continue? (Y/n) " answer
+    if [[ "$answer" =~ ^[Nn] ]]; then
+      echo "   Aborting. Run 'kill $stale_pid' manually, then retry."
+      exit 1
+    fi
+    kill "$stale_pid" 2>/dev/null || true
+    sleep 1
+    if lsof -iTCP:7233 -sTCP:LISTEN -t > /dev/null 2>&1; then
+      echo "   Still running — force killing..."
+      kill -9 "$stale_pid" 2>/dev/null || true
+      sleep 0.5
+    fi
+    echo "   Port 7233 freed."
+    echo ""
+  else
+    echo "   This is NOT a Temporal process. Free the port manually before running 'pnpm dev'."
+    echo "   Investigate: lsof -iTCP:7233 -sTCP:LISTEN"
+    exit 1
+  fi
+fi
+
 export FORCE_COLOR=1
 
 TURBO_FILTERS="\

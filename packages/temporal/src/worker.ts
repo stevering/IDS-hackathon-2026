@@ -21,6 +21,60 @@ import { broadcastChatEvent } from "./activities/chat-broadcast.js";
 import { fetchFigmaDocs } from "./activities/fetch-docs.js";
 import { discoverMCPTools, executeMCPTool, pairFCCloudRelay, closeStdioPool } from "./activities/mcp.js";
 
+/**
+ * Detects transient transport errors that warrant a retry during startup.
+ *
+ * Typical cases:
+ *   - Local dev: worker launched before the Temporal dev server has finished
+ *     binding :7233 (race condition inside `concurrently`).
+ *   - Production: rolling restart of the Temporal cluster, transient network.
+ */
+function isRetryableConnectError(err: unknown): boolean {
+  const message = err instanceof Error ? err.message : String(err);
+  return /ECONNREFUSED|Connection refused|tcp connect error|TransportError|UNAVAILABLE|failed to connect/i.test(
+    message,
+  );
+}
+
+/**
+ * Connects to the Temporal server with a bounded retry window.
+ *
+ * - Development (NODE_ENV !== "production"): 10 seconds — enough to cover the
+ *   `temporal server start-dev` bind time in the concurrently race condition.
+ * - Production: 30 seconds — covers rolling restarts and transient network blips.
+ *
+ * Non-transport errors (auth, TLS, malformed address) are thrown immediately
+ * without retrying, since they are not going to self-heal by waiting.
+ */
+async function connectWithRetry(
+  connOpts: NativeConnectionOptions,
+  windowMs: number,
+): Promise<NativeConnection> {
+  const deadline = Date.now() + windowMs;
+  let attempt = 0;
+  let lastErr: unknown;
+
+  while (Date.now() < deadline) {
+    attempt++;
+    try {
+      return await NativeConnection.connect(connOpts);
+    } catch (err) {
+      lastErr = err;
+      if (!isRetryableConnectError(err)) throw err;
+      const remainingMs = deadline - Date.now();
+      if (remainingMs <= 0) break;
+      const delay = Math.min(1000, remainingMs);
+      const firstLine = (err instanceof Error ? err.message : String(err)).split("\n")[0];
+      console.log(
+        `[temporal-worker] ⏳ Connect attempt ${attempt} failed (${firstLine}) — retrying in ${delay}ms (${Math.ceil(remainingMs / 1000)}s left)`,
+      );
+      await new Promise((resolve) => setTimeout(resolve, delay));
+    }
+  }
+
+  throw lastErr ?? new Error("Failed to connect to Temporal server within retry window");
+}
+
 async function run() {
   const address = process.env.TEMPORAL_ADDRESS ?? "localhost:7233";
   const namespace = process.env.TEMPORAL_NAMESPACE ?? "default";
@@ -45,7 +99,8 @@ async function run() {
     };
   }
 
-  const connection = await NativeConnection.connect(connOpts);
+  const retryWindowMs = process.env.NODE_ENV === "production" ? 30_000 : 10_000;
+  const connection = await connectWithRetry(connOpts, retryWindowMs);
   const mode = apiKey ? "Cloud (API key)" : certB64 ? "Cloud (mTLS)" : "local";
   console.log(`[temporal-worker] ⏳ Connected to Temporal (${address}, ${mode}), building workflow bundle...`);
 

@@ -2,6 +2,8 @@
 
 How the Temporal connection is configured for local development and Temporal Cloud (preprod/prod).
 
+> **Runtime evaluation**: A comprehensive comparison of Temporal vs alternatives (Inngest, Restate, LangGraph) is documented in [`internal/docs/refinement/workflow-runtime-evaluation.md`](../../internal/docs/refinement/workflow-runtime-evaluation.md). Conclusion: Temporal remains the best fit for Guardian (April 2026).
+
 ## Connection Modes
 
 The connection mode is auto-detected from environment variables. No code changes needed between environments.
@@ -63,6 +65,17 @@ Vercel (packages/web)                    Temporal Cloud
 - **API routes** (Vercel serverless) use `@temporalio/client` to start/signal/query workflows.
 - **Worker** must run on a persistent host (not Vercel serverless) — it long-polls the task queue.
 - Both use the same env vars and auto-detect the connection mode.
+
+## Worker startup resilience
+
+The worker wraps `NativeConnection.connect()` in a bounded retry loop (`connectWithRetry` in `packages/temporal/src/worker.ts`). Transient transport errors (`ECONNREFUSED`, `TransportError`, `UNAVAILABLE`) are retried with a 1 s interval until the window expires:
+
+- **Development** (`NODE_ENV !== "production"`): 10 s window. Covers the race condition in `scripts/dev.sh` where `concurrently` launches `temporal server start-dev` and the worker in parallel — the worker now patiently waits for port 7233 to bind instead of crashing fatally.
+- **Production**: 30 s window. Covers rolling restarts of the Temporal cluster and transient network blips.
+
+Non-transport errors (auth, TLS, malformed address) are thrown immediately without retrying.
+
+As a complementary safeguard, `scripts/dev.sh` checks whether port 7233 is already held by a **stale** Temporal process from a previous session before launching `concurrently`. If a zombie is detected, the script offers to kill it; if a non-Temporal process holds the port, the script aborts with guidance.
 
 ## Preview Worker — Railway
 
