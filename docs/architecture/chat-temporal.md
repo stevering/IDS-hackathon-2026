@@ -102,3 +102,18 @@ INIT -> LOAD_HISTORY -> [LLM_CALL -> TOOL_EXECUTION]* -> PERSIST -> IDLE
 - Workflow stays alive in IDLE state for 5 minutes between messages
 - Follow-up messages arrive via signal; if workflow expired, a new one starts
 - Messages persist to DB after each completed turn
+
+## Dynamic System Prompt Context
+
+The start route builds the system prompt as `GUARDIAN_SYSTEM_PROMPT + dynamicContext`, matching the legacy `/api/chat` route. The client (`useChatWorkflow`) sends the following context with each request:
+
+| Context | Source | Injected when |
+|---|---|---|
+| Selected Figma node (URL + properties) | `selectedNode` from plugin | A node is selected in Figma |
+| Figma plugin context (file, pages, user) | `figmaPluginContext` from plugin | Plugin is connected |
+| Connected agents list + orchestration rules | `connectedAgents` from presence | Other clients are online |
+| Model identity (modelId, BYOK/free tier) | `model`, `source`, `keyId` from settings | Always |
+
+The `buildDynamicContext()` function in the start route constructs these sections identically to the legacy chat route (lines 1088-1214 of `/api/chat/route.ts`).
+
+Note: Dynamic context is captured at workflow start time. If the Figma selection changes mid-conversation, the system prompt is NOT updated (same behavior as legacy).

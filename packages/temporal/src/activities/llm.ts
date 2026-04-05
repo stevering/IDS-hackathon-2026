@@ -403,33 +403,40 @@ async function callLLMDirect(params: LLMCallParams): Promise<LLMCallResult> {
     }
   }
 
-  // Convert our LLMMessage[] to AI SDK format.
-  // Tool-call/tool-result messages are flattened to text so that
-  // ALL providers (Kimi, xAI, OpenAI, etc.) handle them correctly.
-  const messages = params.messages.map((m) => {
+  // Convert our LLMMessage[] to AI SDK ModelMessage format.
+  // Tool-call/tool-result messages use native AI SDK structured format.
+  type AiMsg =
+    | { role: "system"; content: string }
+    | { role: "user"; content: string | Array<{ type: "text"; text: string } | { type: "image"; image: string }> }
+    | { role: "assistant"; content: Array<{ type: "text"; text: string } | { type: "tool-call"; toolCallId: string; toolName: string; input: Record<string, unknown> }> }
+    | { role: "tool"; content: Array<{ type: "tool-result"; toolCallId: string; toolName: string; output: string; isError?: boolean }> };
+
+  // Build a map of toolCallId -> toolName for tool result messages
+  const toolCallNames = new Map<string, string>();
+  for (const m of params.messages) {
+    if (m.toolCalls) {
+      for (const tc of m.toolCalls) toolCallNames.set(tc.id, tc.name);
+    }
+  }
+
+  const messages: AiMsg[] = [];
+  for (const m of params.messages) {
     if (m.role === "assistant" && m.toolCalls?.length) {
-      const toolSummary = m.toolCalls
-        .map((tc) => `[Called tool: ${tc.name}(${JSON.stringify(tc.arguments).slice(0, 200)})]`)
-        .join("\n");
-      return {
-        role: "assistant" as const,
-        content: (m.content || "") + "\n" + toolSummary,
-      };
+      const parts: Array<{ type: "text"; text: string } | { type: "tool-call"; toolCallId: string; toolName: string; input: Record<string, unknown> }> = [];
+      if (m.content) parts.push({ type: "text", text: m.content });
+      for (const tc of m.toolCalls) {
+        parts.push({ type: "tool-call", toolCallId: tc.id, toolName: tc.name, input: tc.arguments });
+      }
+      messages.push({ role: "assistant", content: parts });
+      continue;
     }
     if (m.role === "tool") {
-      if (m.images?.length) {
-        const parts: Array<{ type: "text"; text: string } | { type: "image"; image: string }> = [
-          { type: "text", text: `[Tool result] ${m.content}` },
-        ];
-        for (const img of m.images) {
-          parts.push({ type: "image", image: img });
-        }
-        return { role: "user" as const, content: parts };
-      }
-      return {
-        role: "user" as const,
-        content: `[Tool result] ${m.content}`,
-      };
+      const tcId = m.toolCallId ?? "unknown";
+      messages.push({
+        role: "tool",
+        content: [{ type: "tool-result", toolCallId: tcId, toolName: toolCallNames.get(tcId) ?? "unknown", output: m.content }],
+      });
+      continue;
     }
     // Multimodal: if the message has images, use content parts array
     if (m.images?.length && m.role === "user") {
@@ -439,20 +446,22 @@ async function callLLMDirect(params: LLMCallParams): Promise<LLMCallResult> {
       for (const img of m.images) {
         parts.push({ type: "image", image: img });
       }
-      return {
-        role: "user" as const,
-        content: parts,
-      };
+      messages.push({ role: "user", content: parts });
+      continue;
     }
-    return {
-      role: m.role as "system" | "user" | "assistant",
-      content: m.content,
-    };
-  });
+    if (m.role === "system") {
+      messages.push({ role: "system", content: m.content });
+    } else if (m.role === "user") {
+      messages.push({ role: "user", content: m.content });
+    } else {
+      messages.push({ role: "assistant", content: [{ type: "text", text: m.content }] });
+    }
+  }
 
   const result = await generateText({
     model,
-    messages,
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    messages: messages as any,
     maxOutputTokens: params.maxTokens ?? 4096,
     tools: toolSet,
   });

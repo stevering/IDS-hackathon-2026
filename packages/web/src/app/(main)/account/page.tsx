@@ -249,6 +249,9 @@ export default function AccountPage() {
     setLoading(true);
     setError(null);
     try {
+      // Sync OAuth cookies → DB before loading services (popup may have set cookies without DB write)
+      await fetch("/api/user/connected-services/persist", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" }).catch(() => {});
+
       const [keysRes, usageRes, modelsRes, settingsRes, servicesRes] = await Promise.all([
         fetch("/api/user/api-keys"),
         fetch("/api/user/usage"),
@@ -1179,19 +1182,51 @@ export default function AccountPage() {
                   ) : (
                     <button
                       onClick={() => {
-                        const w = window.open(svc.authPath, "_blank", "width=500,height=700,popup=1");
-                        const handler = () => {
-                          loadData();
-                          window.removeEventListener("message", handler);
+                        const sessionId = Math.random().toString(36).slice(2);
+                        const authUrl = svc.authPath + (svc.authPath.includes("?") ? "&" : "?") + `session=${sessionId}`;
+                        const w = window.open(authUrl, "_blank", "width=500,height=700,popup=1");
+                        let handled = false;
+
+                        const persistTokens = async (tokensJson: string) => {
+                          await fetch("/api/user/connected-services/persist", {
+                            method: "POST",
+                            headers: { "Content-Type": "application/json" },
+                            body: JSON.stringify({ serverId: svc.id, tokensJson }),
+                          });
                         };
-                        window.addEventListener("message", handler);
-                        const poll = setInterval(() => {
-                          if (w?.closed) {
-                            clearInterval(poll);
+
+                        // Primary: postMessage from popup (works if window.opener survives cross-origin)
+                        const handler = async (e: MessageEvent) => {
+                          if (handled) return;
+                          if (e.data?.tokensJson && e.data?.success) {
+                            handled = true;
+                            try { await persistTokens(e.data.tokensJson); } catch {}
                             loadData();
                             window.removeEventListener("message", handler);
                           }
-                        }, 1000);
+                        };
+                        window.addEventListener("message", handler);
+
+                        // Fallback: poll oauth-store after popup closes (works even if postMessage fails)
+                        const poll = setInterval(() => {
+                          if (w?.closed) {
+                            clearInterval(poll);
+                            setTimeout(async () => {
+                              window.removeEventListener("message", handler);
+                              if (!handled) {
+                                try {
+                                  const res = await fetch("/api/set-oauth-result", { headers: { "X-Auth-Token": sessionId } });
+                                  const data = await res.json();
+                                  if (data?.success && data?.tokens) {
+                                    const tokensJson = Object.values(data.tokens)[0] as string;
+                                    if (tokensJson) await persistTokens(tokensJson);
+                                  }
+                                } catch {}
+                                loadData();
+                              }
+                            }, 300);
+                          }
+                        }, 500);
                       }}
                       className="text-xs px-3 py-1.5 rounded-lg bg-white/10 border border-white/15 hover:bg-white/15 transition-colors cursor-pointer"
                     >

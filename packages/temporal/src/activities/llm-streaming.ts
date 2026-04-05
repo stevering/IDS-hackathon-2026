@@ -104,33 +104,61 @@ export async function callLLMStreaming(params: LLMStreamingParams): Promise<LLMC
     }
   }
 
-  // Convert messages to AI SDK format (same as callLLMDirect)
-  const aiMessages = messages.map((m) => {
+  // Convert messages to AI SDK ModelMessage format (structured tool calls, not flattened text)
+  const aiMessages: Array<
+    | { role: "system"; content: string }
+    | { role: "user"; content: string | Array<{ type: "text"; text: string } | { type: "image"; image: string }> }
+    | { role: "assistant"; content: Array<{ type: "text"; text: string } | { type: "tool-call"; toolCallId: string; toolName: string; input: Record<string, unknown> }> }
+    | { role: "tool"; content: Array<{ type: "tool-result"; toolCallId: string; toolName: string; output: string; isError?: boolean }> }
+  > = [];
+
+  // Build a map of toolCallId -> toolName for tool result messages
+  const toolCallNames = new Map<string, string>();
+  for (const m of messages) {
+    if (m.toolCalls) {
+      for (const tc of m.toolCalls) toolCallNames.set(tc.id, tc.name);
+    }
+  }
+
+  for (const m of messages) {
     if (m.role === "assistant" && m.toolCalls?.length) {
-      const toolSummary = m.toolCalls
-        .map((tc) => `[Called tool: ${tc.name}(${JSON.stringify(tc.arguments).slice(0, 200)})]`)
-        .join("\n");
-      return { role: "assistant" as const, content: (m.content || "") + "\n" + toolSummary };
-    }
-    if (m.role === "tool") {
-      if (m.images?.length) {
-        const parts: Array<{ type: "text"; text: string } | { type: "image"; image: string }> = [
-          { type: "text", text: `[Tool result] ${m.content}` },
-        ];
-        for (const img of m.images) parts.push({ type: "image", image: img });
-        return { role: "user" as const, content: parts };
+      // Structured assistant message with tool calls (AI SDK native format)
+      const parts: Array<{ type: "text"; text: string } | { type: "tool-call"; toolCallId: string; toolName: string; input: Record<string, unknown> }> = [];
+      if (m.content) parts.push({ type: "text", text: m.content });
+      for (const tc of m.toolCalls) {
+        parts.push({ type: "tool-call", toolCallId: tc.id, toolName: tc.name, input: tc.arguments });
       }
-      return { role: "user" as const, content: `[Tool result] ${m.content}` };
+      aiMessages.push({ role: "assistant", content: parts });
+      continue;
     }
+
+    if (m.role === "tool") {
+      // Structured tool result (AI SDK v6 ModelMessage format)
+      const tcId = m.toolCallId ?? "unknown";
+      aiMessages.push({
+        role: "tool",
+        content: [{ type: "tool-result", toolCallId: tcId, toolName: toolCallNames.get(tcId) ?? "unknown", output: m.content }],
+      });
+      continue;
+    }
+
     if (m.images?.length && m.role === "user") {
       const parts: Array<{ type: "text"; text: string } | { type: "image"; image: string }> = [
         { type: "text", text: m.content },
       ];
       for (const img of m.images) parts.push({ type: "image", image: img });
-      return { role: "user" as const, content: parts };
+      aiMessages.push({ role: "user", content: parts });
+      continue;
     }
-    return { role: m.role as "system" | "user" | "assistant", content: m.content };
-  });
+
+    if (m.role === "system") {
+      aiMessages.push({ role: "system", content: m.content });
+    } else if (m.role === "user") {
+      aiMessages.push({ role: "user", content: m.content });
+    } else {
+      aiMessages.push({ role: "assistant", content: [{ type: "text", text: m.content }] });
+    }
+  }
 
   const benchmarkStart = Date.now();
   log.info("starting streaming LLM call [v2-snapshots]", { model: resolved.modelId, msgCount: aiMessages.length, hasTools: !!toolSet });
@@ -138,7 +166,8 @@ export async function callLLMStreaming(params: LLMStreamingParams): Promise<LLMC
   // Stream the LLM call
   const result = streamText({
     model,
-    messages: aiMessages,
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    messages: aiMessages as any,
     maxOutputTokens: params.maxTokens ?? 4096,
     tools: toolSet,
   });

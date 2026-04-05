@@ -65,7 +65,7 @@ export async function GET(request: NextRequest) {
     // Write result (including tokens) to oauth-store for polling fallback
     writeOAuthResult(session, { type: "github-mcp-auth", success: true, tokens: tokensJson ? { github_mcp_tokens: tokensJson } : undefined });
 
-    // Dual-write: persist to Supabase Vault for Temporal workers
+    // Dual-write: persist to Supabase Vault for Temporal workers.
     if (tokensJson) {
       try {
         const supabase = await createClient();
@@ -81,8 +81,8 @@ export async function GET(request: NextRequest) {
             p_scopes: "repo",
             p_expires_at: expiresAt,
           });
-          console.log("[GitHub Callback] Tokens persisted to Supabase Vault");
         }
+        // If no session in popup, the main page will persist via /api/user/connected-services/persist
       } catch (vaultErr) {
         console.error("[GitHub Callback] Vault dual-write failed (non-fatal):", vaultErr);
       }

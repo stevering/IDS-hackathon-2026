@@ -48,12 +48,41 @@ export type UseChatWorkflowReturn = {
 // Hook params
 // ---------------------------------------------------------------------------
 
+type FigmaPluginContext = {
+  fileKey: string;
+  fileName: string;
+  fileUrl: string;
+  currentPage?: { id: string; name: string } | null;
+  pages?: { id: string; name: string }[];
+  currentUser?: { id: string; name: string } | null;
+};
+
+type SelectedNode = {
+  nodes: unknown[];
+  image: string | null;
+  nodeUrl: string | null;
+};
+
+type ConnectedAgent = {
+  shortId: string;
+  label: string;
+  type: string;
+  fileName?: string;
+};
+
 type UseChatWorkflowParams = {
   conversationId: string | null;
   model?: string;
   mcpServerIds?: string[];
   figmaPluginClientId?: string;
   enabled?: boolean;
+  // Dynamic context (parity with legacy /api/chat)
+  selectedNode?: SelectedNode | null;
+  figmaPluginContext?: FigmaPluginContext | null;
+  connectedAgents?: ConnectedAgent[];
+  isLocalPlugin?: boolean;
+  source?: string;
+  keyId?: string;
 };
 
 // ---------------------------------------------------------------------------
@@ -66,6 +95,12 @@ export function useChatWorkflow({
   mcpServerIds,
   figmaPluginClientId,
   enabled = true,
+  selectedNode,
+  figmaPluginContext,
+  connectedAgents,
+  isLocalPlugin,
+  source,
+  keyId,
 }: UseChatWorkflowParams): UseChatWorkflowReturn {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [status, setStatus] = useState<ChatWorkflowStatus>("idle");
@@ -74,6 +109,20 @@ export function useChatWorkflow({
   const channelRef = useRef<ReturnType<ReturnType<typeof createClient>["channel"]> | null>(null);
   const streamingMsgRef = useRef<{ id: string; text: string; reasoning: string } | null>(null);
   const benchmarkRef = useRef<{ sendAt: number; firstDeltaAt: number; completeAt: number } | null>(null);
+
+  // Refs for dynamic context (captured at send time, not stale from closure)
+  const selectedNodeRef = useRef(selectedNode);
+  selectedNodeRef.current = selectedNode;
+  const figmaPluginContextRef = useRef(figmaPluginContext);
+  figmaPluginContextRef.current = figmaPluginContext;
+  const connectedAgentsRef = useRef(connectedAgents);
+  connectedAgentsRef.current = connectedAgents;
+  const isLocalPluginRef = useRef(isLocalPlugin);
+  isLocalPluginRef.current = isLocalPlugin;
+  const sourceRef = useRef(source);
+  sourceRef.current = source;
+  const keyIdRef = useRef(keyId);
+  keyIdRef.current = keyId;
 
   // ── Load persisted messages + detect active workflow on mount/F5 ─────────
   useEffect(() => {
@@ -417,6 +466,16 @@ export function useChatWorkflow({
     try {
       let result: { workflowId: string; conversationId: string };
 
+      // Dynamic context captured at send time
+      const dynamicContext = {
+        selectedNode: selectedNodeRef.current ?? undefined,
+        figmaPluginContext: figmaPluginContextRef.current ?? undefined,
+        connectedAgents: connectedAgentsRef.current,
+        isLocalPlugin: isLocalPluginRef.current,
+        source: sourceRef.current,
+        keyId: keyIdRef.current,
+      };
+
       if (workflowIdRef.current) {
         // Try signalling existing workflow
         const res = await fetch(`/api/chat-temporal/${workflowIdRef.current}/message`, {
@@ -428,6 +487,7 @@ export function useChatWorkflow({
             model,
             mcpServerIds,
             figmaPluginClientId,
+            ...dynamicContext,
           }),
         });
         if (!res.ok) throw new Error(`Message failed: ${res.status}`);
@@ -444,6 +504,7 @@ export function useChatWorkflow({
             model,
             mcpServerIds,
             figmaPluginClientId,
+            ...dynamicContext,
           }),
         });
         if (!res.ok) throw new Error(`Start failed: ${res.status}`);

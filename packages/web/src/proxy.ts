@@ -143,7 +143,6 @@ export async function proxy(request: NextRequest) {
   );
   
   if (isPublicAuthRoute) {
-    console.log("[Middleware] Skipping X-Auth-Token check for public auth route:", pathname);
     return NextResponse.next();
   }
 

@@ -39,20 +39,37 @@ export async function GET(request: NextRequest) {
     state,
   );
 
-  // DEBUG: Check client info
-  const clientInfo = await provider.clientInformation();
-  console.log('[GitHub MCP DEBUG] Client ID present:', !!clientInfo?.client_id);
-  console.log('[GitHub MCP DEBUG] Env GITHUB_CLIENT_ID:', !!process.env.GITHUB_CLIENT_ID);
-
   try {
     await auth(provider, {
       serverUrl: new URL(GITHUB_MCP_URL),
       scope: "repo", // GitHub OAuth scope for MCP (repo full access)
     });
 
-    // Tokens already valid — notify the polling client directly
-    writeOAuthResult(session, { type: "github-mcp-auth", success: true });
-    return new NextResponse(alreadyConnectedHtml(), { headers: { "Content-Type": "text/html" } });
+    // Tokens already valid — persist to Vault if not already there
+    const tokensFromCookie = pendingCookies.find(c => c.name === "github_mcp_tokens")?.value
+      ?? cookieStore.get("github_mcp_tokens")?.value;
+    if (tokensFromCookie) {
+      try {
+        const supabase = await (await import("@/lib/supabase/server")).createClient();
+        const { data: { user } } = await supabase.auth.getUser();
+        if (user) {
+          const parsed = JSON.parse(tokensFromCookie);
+          const expiresAt = parsed.expires_in
+            ? new Date(Date.now() + parsed.expires_in * 1000).toISOString()
+            : null;
+          await supabase.rpc("upsert_mcp_connection", {
+            p_server_id: "github",
+            p_tokens_json: tokensFromCookie,
+            p_scopes: "repo",
+            p_expires_at: expiresAt,
+          });
+        }
+      } catch (err) {
+        console.error("[GitHub Route] Vault dual-write failed:", err);
+      }
+    }
+    writeOAuthResult(session, { type: "github-mcp-auth", success: true, tokens: tokensFromCookie ? { github_mcp_tokens: tokensFromCookie } : undefined });
+    return new NextResponse(alreadyConnectedHtml(tokensFromCookie ?? null), { headers: { "Content-Type": "text/html" } });
   } catch (error) {
     if (error instanceof RedirectError) {
       const url = new URL(error.url);
@@ -87,10 +104,11 @@ export async function GET(request: NextRequest) {
   }
 }
 
-function alreadyConnectedHtml(): string {
+function alreadyConnectedHtml(tokensJson: string | null): string {
   return `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>GitHub — Connected</title></head><body>
   <script>
-    if (window.opener) { try { window.opener.postMessage({ type: 'github-oauth-complete', success: true }, '*'); } catch(e) {} }
+    var tokensJson = ${JSON.stringify(tokensJson)};
+    if (window.opener) { try { window.opener.postMessage({ type: 'github-oauth-complete', success: true, tokensJson: tokensJson }, '*'); } catch(e) {} }
     window.close();
   </script>
   </body></html>`;

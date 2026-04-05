@@ -474,8 +474,9 @@ function ToolCallBlock({ toolName, input, output, isError }: { toolName: string;
   );
 }
 
-function ToolCallProgress({ toolName }: { toolName: string }) {
+function ToolCallProgress({ toolName, input }: { toolName: string; input?: Record<string, unknown> }) {
   const [elapsed, setElapsed] = useState(0);
+  const [open, setOpen] = useState(false);
 
   useEffect(() => {
     const start = Date.now();
@@ -492,19 +493,45 @@ function ToolCallProgress({ toolName }: { toolName: string }) {
     : `${seconds}s`;
 
   const isStalled = elapsed >= 15;
+  const hasInput = !!input && Object.keys(input).length > 0;
 
   return (
-    <div className={`my-2 px-3 py-2 rounded text-xs font-mono flex items-center gap-2 ${
-      isStalled ? "bg-amber-500/10 border border-amber-500/20 text-amber-300/70" : "bg-white/5 text-white/50"
-    }`}>
-      <svg className="animate-spin h-3.5 w-3.5 text-amber-400/70 shrink-0" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-      </svg>
-      <span className="text-amber-400/70">🔧 Tool:</span>{" "}
-      {toolName}
-      {isStalled && <span className="text-amber-400/60 text-[10px]">slow response…</span>}
-      <span className={`ml-auto tabular-nums ${isStalled ? "text-amber-400/50" : "text-white/30"}`}>{timeStr}</span>
+    <div className="my-2">
+      <button
+        onClick={() => hasInput && setOpen(!open)}
+        className={`flex items-center gap-2 text-xs font-mono px-3 py-2 rounded w-full text-left min-w-0 ${
+          hasInput ? "cursor-pointer" : ""
+        } ${
+          isStalled ? "bg-amber-500/10 border border-amber-500/20 text-amber-300/70" : "bg-white/5 text-white/50"
+        }`}
+      >
+        <svg className="animate-spin h-3.5 w-3.5 text-amber-400/70 shrink-0" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+        </svg>
+        <span className="text-amber-400/70">🔧 Tool:</span>{" "}
+        {toolName}
+        {isStalled && <span className="text-amber-400/60 text-[10px]">slow response…</span>}
+        {!open && hasInput && (
+          <span className="truncate opacity-50 text-[10px] ml-1 min-w-0 flex-1">
+            {Object.entries(input).map(([k, v]) => `${k}=${JSON.stringify(v)}`).join(" ").slice(0, 60)}
+          </span>
+        )}
+        {hasInput && (
+          <svg className={`h-3 w-3 shrink-0 transition-transform ml-auto ${open ? "rotate-90" : ""}`} viewBox="0 0 24 24" fill="currentColor">
+            <path d="M8.59 16.59L13.17 12 8.59 7.41 10 6l6 6-6 6z" />
+          </svg>
+        )}
+        <span className={`tabular-nums ${hasInput ? "" : "ml-auto"} ${isStalled ? "text-amber-400/50" : "text-white/30"}`}>{timeStr}</span>
+      </button>
+      {open && hasInput && (
+        <div className="mt-1 ml-5">
+          <div className="px-3 py-2 rounded text-xs leading-relaxed border-l-2 border-amber-500/20">
+            <span className="text-white/30 font-medium block mb-1">Input:</span>
+            <pre className="text-amber-200/50 font-mono whitespace-pre-wrap break-all">{JSON.stringify(input, null, 2)}</pre>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -2172,12 +2199,26 @@ export default function Home() {
     return ids;
   }, [enabledMcps.figma, enabledMcps.figmaConsole, enabledMcps.github]);
 
+  // Build connected agents list for Temporal context (same logic as legacy body())
+  const temporalConnectedAgents = useMemo(() =>
+    clients
+      .filter(c => c.clientId !== myClientId && c.type !== "overlay")
+      .map(c => ({ shortId: c.shortId, label: c.label, type: c.type, fileName: c.figmaContext?.fileName })),
+    [clients, myClientId]
+  );
+
   const chatWorkflow = useChatWorkflow({
     conversationId: activeConversationId,
     model: selectedModel || undefined,
     mcpServerIds: temporalMcpServerIds,
     figmaPluginClientId: isFigmaPlugin ? myClientId : undefined,
     enabled: temporalChatEnabled,
+    selectedNode,
+    figmaPluginContext,
+    connectedAgents: temporalConnectedAgents,
+    isLocalPlugin: !!figmaPluginContext,
+    source: selectedSource,
+    keyId: selectedKeyId,
   });
 
   // Unified variables: point to Temporal workflow or legacy useChat.
@@ -3270,10 +3311,6 @@ export default function Home() {
                 }`}
               >
                 {m.parts?.map((part, i) => {
-                  // DEBUG: log dynamic-tool parts
-                  if ((part as {type: string}).type === "dynamic-tool") {
-                    console.log("[PartRender] dynamic-tool FOUND", { msgId: m.id, msgContent: m.content?.slice(0, 50), partIndex: i, state: (part as {state: string}).state, toolName: (part as {toolName: string}).toolName });
-                  }
                   // ── Render tool invocations (figma_plugin_execute + MCP tools) ──
                   if (part.type?.startsWith("tool-")) {
                     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -3577,7 +3614,7 @@ export default function Home() {
                     switch (p.state) {
                       case "input-streaming":
                       case "input-available":
-                        return <ToolCallProgress key={i} toolName={toolName} />;
+                        return <ToolCallProgress key={i} toolName={toolName} input={p.input} />;
                       case "output-available":
                         return (
                           <ToolCallBlock
@@ -3599,7 +3636,7 @@ export default function Home() {
                           />
                         );
                       default:
-                        return <ToolCallProgress key={i} toolName={toolName} />;
+                        return <ToolCallProgress key={i} toolName={toolName} input={p.input} />;
                     }
                   }
                   if ((part as { type: string }).type === "dynamic-tool") {
@@ -3628,8 +3665,7 @@ export default function Home() {
                     switch (p.state) {
                       case "input-streaming":
                       case "input-available":
-                        // Tool call in progress
-                        return <ToolCallProgress key={i} toolName={p.toolName} />;
+                        return <ToolCallProgress key={i} toolName={p.toolName} input={p.input} />;
                       case "output-available":
                         return (
                           <ToolCallBlock
@@ -3641,17 +3677,18 @@ export default function Home() {
                           />
                         );
                       case "output-error":
+                      case "error":
                         return (
                           <ToolCallBlock
                             key={i}
                             toolName={p.toolName}
                             input={p.input}
-                            output={{ isError: true, content: [{ type: "text", text: p.errorText || "Unknown error" }] }}
+                            output={p.output?.isError ? p.output : { isError: true, content: [{ type: "text", text: p.errorText || p.output?.content?.[0]?.text || "Unknown error" }] }}
                             isError={true}
                           />
                         );
                       default:
-                        return <ToolCallProgress key={i} toolName={p.toolName} />;
+                        return <ToolCallProgress key={i} toolName={p.toolName} input={p.input} />;
                     }
                   }
                   return null;
