@@ -2200,13 +2200,12 @@ export default function Home() {
     codeInstanceId: focusCodeInstanceId,
   });
 
-  // Unified variables: point to Temporal workflow or legacy useChat.
-  // When Temporal is enabled, tools execute server-side (no client-side onToolCall).
-  const messages = temporalChatEnabled ? (chatWorkflow.messages as typeof legacyMessages) : legacyMessages;
-  const sendMessage = temporalChatEnabled ? chatWorkflow.sendMessage : legacySendMessage;
-  const status = temporalChatEnabled ? (chatWorkflow.status === "idle" ? "ready" as const : "streaming" as const) : legacyStatus;
-  const error = temporalChatEnabled ? (chatWorkflow.error ? new Error(chatWorkflow.error) : undefined) : legacyError;
-  const setMessages = temporalChatEnabled ? (chatWorkflow.setMessages as typeof legacySetMessages) : legacySetMessages;
+  // Unified chat variables — always Temporal (legacy useChat path is dead code).
+  const messages = chatWorkflow.messages as typeof legacyMessages;
+  const sendMessage = chatWorkflow.sendMessage;
+  const status = chatWorkflow.status === "idle" ? "ready" as const : "streaming" as const;
+  const error = chatWorkflow.error ? new Error(chatWorkflow.error) : undefined;
+  const setMessages = chatWorkflow.setMessages as typeof legacySetMessages;
 
   // Safe wrapper around addToolResult — catches SDK internal errors
   // (e.g. "Cannot read properties of undefined (reading 'state')" when
@@ -2238,13 +2237,13 @@ export default function Home() {
     };
   }, []);
 
-  // When Temporal chat is active, persistence is server-side — pass legacy (idle)
-  // values so useMessagePersistence doesn't double-save assistant messages.
+  // Temporal chat: persistence is server-side — pass legacy (idle) values
+  // so useMessagePersistence doesn't double-save assistant messages.
   const { loaded: messagesLoaded } = useMessagePersistence(
     activeConversationId,
-    temporalChatEnabled ? legacyMessages : messages,
-    temporalChatEnabled ? legacySetMessages : setMessages,
-    temporalChatEnabled ? legacyStatus : status,
+    legacyMessages,
+    legacySetMessages,
+    legacyStatus,
     myClientId,
     myDisplayShortId,
     getAssistantMetadata,
@@ -2566,7 +2565,7 @@ export default function Home() {
     }
   }, [pendingAgentMessage]);
 
-  const isLoading = status === "submitted" || status === "streaming";
+  const isLoading = status === "streaming";
 
   const handleScroll = () => {
     const el = scrollContainerRef.current;
