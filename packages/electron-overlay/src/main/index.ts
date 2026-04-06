@@ -15,6 +15,7 @@ import { execSync } from "child_process";
 import { readFileSync, writeFileSync } from "fs";
 import { BridgeServer } from "@guardian/bridge";
 import type { ClientInfo } from "@guardian/bridge";
+import { GuardianBridge, loadBridgeConfig } from "./mcp-bridge.js";
 
 const __dirname = fileURLToPath(new URL(".", import.meta.url));
 
@@ -78,6 +79,7 @@ const COLLAPSE_ANIM_TTL = 600; // ms — comfortably longer than any macOS windo
 let devToolsOpen = false; // loaded from settings after app ready
 let isCloudConnected = false; // updated via IPC from renderer's HTTP health check
 const bridgeServer = new BridgeServer(BRIDGE_PORT);
+let mcpBridge: GuardianBridge | null = null;
 
 // ── Position helpers ─────────────────────────────────────────────────────────
 
@@ -126,9 +128,20 @@ app.whenReady().then(() => {
   const settings = loadSettings();
   devToolsOpen = settings.devToolsOpen;
 
-  // Start the Figma bridge server
+  // Start the Figma bridge server (local WebSocket for plugin/widget)
   bridgeServer.start();
   setupBridgeHandlers();
+
+  // Start the Guardian MCP Bridge (Supabase Realtime for cloud workers)
+  const bridgeConfig = loadBridgeConfig(app.getPath("userData"));
+  if (bridgeConfig) {
+    mcpBridge = new GuardianBridge(bridgeConfig);
+    mcpBridge.start().catch((err) =>
+      console.error("[guardian] MCP Bridge start failed (non-fatal):", err),
+    );
+  } else {
+    console.log("[guardian] MCP Bridge not configured — set GUARDIAN_USER_ID + GUARDIAN_DEVICE_ID env vars or pair from Account page");
+  }
 
   createOverlay();
   try {
@@ -142,6 +155,10 @@ app.whenReady().then(() => {
 
 app.on("window-all-closed", () => {
   // Keep the app alive even if all windows are closed (tray app pattern)
+});
+
+app.on("before-quit", () => {
+  mcpBridge?.stop().catch(() => {});
 });
 
 // ── Figma detection ──────────────────────────────────────────────────────────
@@ -522,12 +539,20 @@ figma.viewport.scrollAndZoomIntoView([f]);`,
     ? `● Bridge  ws:${BRIDGE_PORT}  — ${clients.length} client${clients.length > 1 ? "s" : ""}`
     : `○ Bridge  ws:${BRIDGE_PORT}  — waiting`;
 
+  const mcpStatus = mcpBridge?.getStatus();
+  const mcpBridgeLabel = !mcpStatus
+    ? `○ MCP Bridge — not configured`
+    : mcpStatus.running
+      ? `● MCP Bridge — ${mcpStatus.instances.filter(i => i.online).length}/${mcpStatus.instances.length} online`
+      : `○ MCP Bridge — stopped`;
+
   return Menu.buildFromTemplate([
     { label: "DS AI Guardian", enabled: false },
     { type: "separator" },
     { label: "Servers:", enabled: false },
     { label: cloudLabel, enabled: false },
     { label: bridgeLabel, enabled: false },
+    { label: mcpBridgeLabel, enabled: false },
     { type: "separator" },
     { label: "Figma:", enabled: false },
     ...figmaItems,
@@ -600,6 +625,13 @@ function buildTrayMenu(): Menu {
     ? `● Bridge  ws:${BRIDGE_PORT}  — ${clients.length} client${clients.length > 1 ? "s" : ""}`
     : `○ Bridge  ws:${BRIDGE_PORT}  — waiting`;
 
+  const mcpStatusTray = mcpBridge?.getStatus();
+  const mcpBridgeLabelTray = !mcpStatusTray
+    ? `○ MCP Bridge — not configured`
+    : mcpStatusTray.running
+      ? `● MCP Bridge — ${mcpStatusTray.instances.filter(i => i.online).length}/${mcpStatusTray.instances.length} online`
+      : `○ MCP Bridge — stopped`;
+
   return Menu.buildFromTemplate([
     {
       label: isVisible ? "Hide Guardian" : "Show Guardian",
@@ -621,6 +653,7 @@ function buildTrayMenu(): Menu {
     { label: "Servers:", enabled: false },
     { label: cloudLabelTray, enabled: false },
     { label: bridgeLabelTray, enabled: false },
+    { label: mcpBridgeLabelTray, enabled: false },
     { type: "separator" },
     { label: "Figma:", enabled: false },
     ...figmaItems,

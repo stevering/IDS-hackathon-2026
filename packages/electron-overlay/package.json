@@ -11,7 +11,10 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@guardian/bridge": "workspace:*"
+    "@ai-sdk/mcp": "^1.0.32",
+    "@guardian/bridge": "workspace:*",
+    "@guardian/orchestrations": "workspace:*",
+    "@supabase/supabase-js": "^2.101.1"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",
