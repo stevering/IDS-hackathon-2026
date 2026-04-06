@@ -1,0 +1,275 @@
+/**
+ * Guardian meta-tools — injectable into every LLM call alongside the focus tools.
+ *
+ * These 3 tools let the LLM discover and invoke MCP instances that are NOT
+ * in the current conversation's focus selection.
+ *
+ * - guardian_list_instances       → returns all online instances with metadata
+ * - guardian_get_instance_tools   → returns the tool spec for a non-focus instance
+ * - guardian_call_instance_tool   → proxy-executes a tool on a non-focus instance
+ */
+
+import type { LLMToolDefinition } from "@guardian/orchestrations";
+import { type InstanceManifestEntry, discoverMCPToolsV2, executeMCPToolV2 } from "./mcp-v2.js";
+import { callBridgedMCP } from "./mcp-bridge-client.js";
+import { createClient } from "@supabase/supabase-js";
+import { createMCPClient } from "@ai-sdk/mcp";
+import { BUILTIN_PRESETS, buildToolPrefix } from "@guardian/orchestrations";
+import { createLogger } from "../lib/log.js";
+
+const log = createLogger("guardian-meta");
+
+// ---------------------------------------------------------------------------
+// Tool specifications (injected into the LLM tool catalog)
+// ---------------------------------------------------------------------------
+
+export const GUARDIAN_META_TOOL_SPECS: LLMToolDefinition[] = [
+  {
+    name: "guardian_list_instances",
+    description:
+      "List all MCP instances the user has configured and that are currently online. " +
+      "Returns instances grouped by category (design, code) with labels, tool counts, and focus status. " +
+      "Use this to discover which instances are available before calling guardian_call_instance_tool.",
+    parameters: { type: "object", properties: {}, required: [] },
+  },
+  {
+    name: "guardian_get_instance_tools",
+    description:
+      "Get the list of tools exposed by a specific MCP instance, identified by its label. " +
+      "Use this to inspect what a non-focus instance can do before invoking it.",
+    parameters: {
+      type: "object",
+      properties: {
+        label: { type: "string", description: "The instance label, e.g. 'work', 'cursor_mac'." },
+      },
+      required: ["label"],
+    },
+  },
+  {
+    name: "guardian_call_instance_tool",
+    description:
+      "Execute a tool on a non-focus MCP instance. Use this when the user refers to another " +
+      "account, device, or editor than the current focus. The tool_name is the raw name " +
+      "(without the prefix), e.g. 'get_selection' not 'figma_work_get_selection'.",
+    parameters: {
+      type: "object",
+      properties: {
+        label: { type: "string", description: "The instance label." },
+        tool_name: { type: "string", description: "The raw tool name, without prefix." },
+        arguments: { type: "object", description: "Tool arguments.", additionalProperties: true },
+      },
+      required: ["label", "tool_name", "arguments"],
+    },
+  },
+];
+
+// ---------------------------------------------------------------------------
+// Execution context — set once per workflow turn, consumed by meta-tool handlers
+// ---------------------------------------------------------------------------
+
+export type MetaToolContext = {
+  userId: string;
+  manifest: InstanceManifestEntry[];
+};
+
+// ---------------------------------------------------------------------------
+// Meta-tool handler
+// ---------------------------------------------------------------------------
+
+export async function executeGuardianMetaTool(
+  ctx: MetaToolContext,
+  toolName: string,
+  args: Record<string, unknown>,
+): Promise<{ success: boolean; result?: unknown; error?: string }> {
+  switch (toolName) {
+    case "guardian_list_instances":
+      return handleListInstances(ctx);
+
+    case "guardian_get_instance_tools":
+      return handleGetInstanceTools(ctx, args.label as string);
+
+    case "guardian_call_instance_tool":
+      return handleCallInstanceTool(
+        ctx,
+        args.label as string,
+        args.tool_name as string,
+        (args.arguments as Record<string, unknown>) ?? {},
+      );
+
+    default:
+      return { success: false, error: `Unknown guardian meta-tool: ${toolName}` };
+  }
+}
+
+// ---------------------------------------------------------------------------
+// guardian_list_instances
+// ---------------------------------------------------------------------------
+
+function handleListInstances(ctx: MetaToolContext): { success: boolean; result: unknown } {
+  const grouped: Record<string, Array<{
+    label: string;
+    preset: string;
+    display_name: string | null;
+    scope: string;
+    tool_count: number;
+    tool_prefix: string;
+    is_focus: boolean;
+  }>> = { design: [], code: [] };
+
+  for (const entry of ctx.manifest) {
+    const cat = entry.category === "design" || entry.category === "code" ? entry.category : "design";
+    grouped[cat].push({
+      label: entry.label,
+      preset: entry.presetType,
+      display_name: entry.displayName,
+      scope: entry.scope,
+      tool_count: entry.toolCount,
+      tool_prefix: entry.toolPrefix,
+      is_focus: entry.isFocus,
+    });
+  }
+
+  return { success: true, result: grouped };
+}
+
+// ---------------------------------------------------------------------------
+// guardian_get_instance_tools
+// ---------------------------------------------------------------------------
+
+async function handleGetInstanceTools(
+  ctx: MetaToolContext,
+  label: string,
+): Promise<{ success: boolean; result?: unknown; error?: string }> {
+  const entry = ctx.manifest.find((e) => e.label === label);
+  if (!entry) {
+    return { success: false, error: `No instance with label "${label}". Use guardian_list_instances to see available labels.` };
+  }
+
+  // For bridged instances, ask the overlay for tools/list
+  if (entry.scope === "local") {
+    const supabase = createServiceClient();
+    const { data: rows } = await supabase.rpc("list_mcp_instances_service", { p_user_id: ctx.userId });
+    const inst = ((rows ?? []) as Array<{ id: string; device_id: string | null }>).find((r) => r.id === entry.instanceId);
+
+    if (!inst?.device_id) {
+      return { success: false, error: `Instance "${label}" has no device — bridge offline?` };
+    }
+
+    const result = await callBridgedMCP({
+      userId: ctx.userId,
+      deviceId: inst.device_id,
+      instanceId: entry.instanceId,
+      method: "tools/list",
+    });
+
+    if (!result.ok) return { success: false, error: result.error };
+
+    return { success: true, result: result.result };
+  }
+
+  // For cloud instances, connect and list
+  const preset = BUILTIN_PRESETS[entry.presetType];
+  const url = preset?.cloud_url;
+  if (!url) return { success: false, error: `No URL for ${label}` };
+
+  const supabase = createServiceClient();
+  const { data: tokensJson } = await supabase.rpc("get_mcp_connection_service", {
+    p_user_id: ctx.userId,
+    p_server_id: entry.presetType,
+  });
+
+  if (!tokensJson) return { success: false, error: `No token for ${label}` };
+  const tokens = JSON.parse(tokensJson as string);
+  if (!tokens.access_token) return { success: false, error: `Token expired for ${label}` };
+
+  const client = await createMCPClient({
+    transport: { type: "http", url, headers: { Authorization: `Bearer ${tokens.access_token}` } },
+  });
+  const mcpTools = await client.tools();
+  await client.close();
+
+  const toolList = Object.entries(mcpTools).map(([name, tool]) => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const t = tool as any;
+    return { name, description: t.description ?? "" };
+  });
+
+  return { success: true, result: toolList };
+}
+
+// ---------------------------------------------------------------------------
+// guardian_call_instance_tool
+// ---------------------------------------------------------------------------
+
+async function handleCallInstanceTool(
+  ctx: MetaToolContext,
+  label: string,
+  toolName: string,
+  args: Record<string, unknown>,
+): Promise<{ success: boolean; result?: unknown; error?: string }> {
+  const entry = ctx.manifest.find((e) => e.label === label);
+  if (!entry) {
+    return { success: false, error: `No instance with label "${label}".` };
+  }
+
+  log.info(`Meta-tool call: ${label}/${toolName}`, { args: JSON.stringify(args).slice(0, 200) });
+
+  return executeMCPToolV2({
+    userId: ctx.userId,
+    instanceId: entry.instanceId,
+    toolName,
+    arguments: args,
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Helper
+// ---------------------------------------------------------------------------
+
+function createServiceClient() {
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL ?? process.env.STORAGE_SUPABASE_URL;
+  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.STORAGE_SUPABASE_SERVICE_ROLE_KEY;
+  if (!supabaseUrl || !serviceKey) throw new Error("Supabase credentials not configured");
+  return createClient(supabaseUrl, serviceKey);
+}
+
+// ---------------------------------------------------------------------------
+// System prompt builder — generates the "Tool instances and labels" block
+// ---------------------------------------------------------------------------
+
+export function buildInstanceSystemPrompt(manifest: InstanceManifestEntry[]): string {
+  if (manifest.length === 0) return "";
+
+  const lines: string[] = [
+    "## Tool instances and labels",
+    "",
+    "The user has configured these MCP instances (label in parentheses):",
+    "",
+  ];
+
+  const byCategory: Record<string, InstanceManifestEntry[]> = { design: [], code: [] };
+  for (const e of manifest) {
+    (byCategory[e.category] ?? []).push(e);
+  }
+
+  for (const [cat, entries] of Object.entries(byCategory)) {
+    if (entries.length === 0) continue;
+    lines.push(`${cat.charAt(0).toUpperCase() + cat.slice(1)}:`);
+    for (const e of entries) {
+      const focusTag = e.isFocus ? " ← FOCUS" : "";
+      const scopeTag = e.scope === "local" ? " [local bridged]" : "";
+      const name = e.displayName ?? BUILTIN_PRESETS[e.presetType]?.display_name ?? e.presetType;
+      lines.push(`- ${name} (${e.label})${scopeTag}${focusTag}`);
+    }
+    lines.push("");
+  }
+
+  lines.push(
+    "Tool naming: <preset>_<label>_<action>.",
+    "Default: use focus tools directly.",
+    "When the user mentions another label, use `guardian_call_instance_tool`.",
+    "Use `guardian_list_instances` to refresh the list if needed.",
+  );
+
+  return lines.join("\n");
+}
