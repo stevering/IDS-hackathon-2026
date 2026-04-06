@@ -20,6 +20,8 @@ import { persistChatMessage, loadChatHistory } from "./activities/chat-persisten
 import { broadcastChatEvent } from "./activities/chat-broadcast.js";
 import { fetchFigmaDocs } from "./activities/fetch-docs.js";
 import { discoverMCPTools, executeMCPTool, pairFCCloudRelay, closeStdioPool } from "./activities/mcp.js";
+import { discoverMCPToolsV2, executeMCPToolV2 } from "./activities/mcp-v2.js";
+import { executeGuardianMetaTool, buildInstanceSystemPrompt } from "./activities/guardian-meta-tools.js";
 
 /**
  * Detects transient transport errors that warrant a retry during startup.
@@ -136,6 +138,11 @@ async function run() {
       executeMCPTool,
       pairFCCloudRelay,
       closeStdioPool,
+      // V2 instance-based activities
+      discoverMCPToolsV2,
+      executeMCPToolV2,
+      executeGuardianMetaTool,
+      buildInstanceSystemPrompt,
     },
   });
 

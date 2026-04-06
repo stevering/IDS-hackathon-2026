@@ -160,6 +160,7 @@ export async function POST(request: Request) {
   const {
     conversationId, message, model, mcpServerIds, figmaPluginClientId, images,
     selectedNode, figmaPluginContext, connectedAgents, isLocalPlugin, source, keyId,
+    designInstanceId, codeInstanceId,
   } = body as {
     conversationId: string;
     message: string;
@@ -173,6 +174,10 @@ export async function POST(request: Request) {
     isLocalPlugin?: boolean;
     source?: string;
     keyId?: string;
+    /** V2: focus Design MCP instance ID (from TargetSelector) */
+    designInstanceId?: string;
+    /** V2: focus Code MCP instance ID (from TargetSelector) */
+    codeInstanceId?: string;
   };
 
   if (!conversationId || !message) {
@@ -250,6 +255,8 @@ export async function POST(request: Request) {
         systemPrompt,
         mcpServerIds: mcpServerIds ?? [],
         figmaPluginClientId,
+        focusDesignInstanceId: designInstanceId,
+        focusCodeInstanceId: codeInstanceId,
       }],
     });
 

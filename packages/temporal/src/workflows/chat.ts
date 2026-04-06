@@ -44,6 +44,9 @@ import type {
   ChatBroadcastActivities,
   FigmaActivities,
   MCPActivities,
+  MCPV2Activities,
+  GuardianMetaActivities,
+  InstanceManifestEntry,
 } from "../activities/types.js";
 
 // ---------------------------------------------------------------------------
@@ -76,6 +79,16 @@ const { discoverMCPTools, executeMCPTool } = proxyActivities<MCPActivities>({
   retry: { maximumAttempts: 2 },
 });
 
+const { discoverMCPToolsV2, executeMCPToolV2 } = proxyActivities<MCPV2Activities>({
+  startToCloseTimeout: "60 seconds",
+  retry: { maximumAttempts: 2 },
+});
+
+const { executeGuardianMetaTool } = proxyActivities<GuardianMetaActivities>({
+  startToCloseTimeout: "30 seconds",
+  retry: { maximumAttempts: 1 },
+});
+
 // ---------------------------------------------------------------------------
 // Workflow params
 // ---------------------------------------------------------------------------
@@ -91,10 +104,14 @@ export type ChatWorkflowParams = {
   model?: string;
   /** System prompt */
   systemPrompt?: string;
-  /** MCP server IDs to connect */
+  /** MCP server IDs to connect (legacy V1 path) */
   mcpServerIds?: string[];
   /** Figma plugin client ID (for figma_execute tool) */
   figmaPluginClientId?: string;
+  /** V2: focus Design MCP instance ID (from TargetSelector) */
+  focusDesignInstanceId?: string;
+  /** V2: focus Code MCP instance ID (from TargetSelector) */
+  focusCodeInstanceId?: string;
 };
 
 // ---------------------------------------------------------------------------
@@ -155,17 +172,56 @@ export async function chatWorkflow(params: ChatWorkflowParams): Promise<void> {
   }
 
   // ── Discover MCP tools ──────────────────────────────────────────────────
-  // Always include the Guardian MCP (built-in), plus user-enabled external MCPs
-  const allMcpServerIds = ["guardian", ...(params.mcpServerIds ?? [])];
+  // V2 path: instance-based, when focus IDs are provided by the TargetSelector.
+  // V1 fallback: legacy mcpServerIds-based (during transition).
   let mcpTools: LLMToolDefinition[] = [];
-  try {
-    mcpTools = await discoverMCPTools({
-      userId: params.userId,
-      mcpServerIds: allMcpServerIds,
-      pluginClientId: params.figmaPluginClientId,
-    });
-  } catch {
-    // Non-fatal: continue without MCP tools
+  let instanceManifest: InstanceManifestEntry[] = [];
+  const useV2 = !!(params.focusDesignInstanceId || params.focusCodeInstanceId);
+
+  if (useV2) {
+    try {
+      const v2Result = await discoverMCPToolsV2({
+        userId: params.userId,
+        focusDesignInstanceId: params.focusDesignInstanceId,
+        focusCodeInstanceId: params.focusCodeInstanceId,
+      });
+      mcpTools = v2Result.focusTools;
+      instanceManifest = v2Result.instanceManifest;
+    } catch {
+      // Non-fatal: continue without MCP tools
+    }
+  } else {
+    // Legacy V1: hardcoded server IDs
+    const allMcpServerIds = ["guardian", ...(params.mcpServerIds ?? [])];
+    try {
+      mcpTools = await discoverMCPTools({
+        userId: params.userId,
+        mcpServerIds: allMcpServerIds,
+        pluginClientId: params.figmaPluginClientId,
+      });
+    } catch {
+      // Non-fatal
+    }
+  }
+
+  // ── V2: inject Guardian meta-tools + instance system prompt ──────────────
+  if (useV2 && instanceManifest.length > 0) {
+    // Add the 3 meta-tools to the catalog (always available)
+    const metaSpecs: LLMToolDefinition[] = [
+      { name: "guardian_list_instances", description: "List all MCP instances the user has configured and that are currently online.", parameters: { type: "object", properties: {}, required: [] } },
+      { name: "guardian_get_instance_tools", description: "Get the list of tools exposed by a specific MCP instance (by label).", parameters: { type: "object", properties: { label: { type: "string" } }, required: ["label"] } },
+      { name: "guardian_call_instance_tool", description: "Execute a tool on a non-focus MCP instance (by label).", parameters: { type: "object", properties: { label: { type: "string" }, tool_name: { type: "string" }, arguments: { type: "object" } }, required: ["label", "tool_name", "arguments"] } },
+    ];
+    mcpTools.push(...metaSpecs);
+
+    // Inject the instance manifest into the system prompt
+    const manifestBlock = buildManifestPrompt(instanceManifest);
+    if (manifestBlock) {
+      messages[0] = {
+        ...messages[0],
+        content: (messages[0].content ?? "") + "\n\n" + manifestBlock,
+      };
+    }
   }
 
   // ── Process first message ───────────────────────────────────────────────
@@ -283,8 +339,48 @@ export async function chatWorkflow(params: ChatWorkflowParams): Promise<void> {
               ? JSON.stringify(result.result ?? { success: true })
               : `Error: ${result.error ?? "unknown"}`;
             isError = !result.success;
+          } else if (useV2 && tc.name.startsWith("guardian_") && ["guardian_list_instances", "guardian_get_instance_tools", "guardian_call_instance_tool"].includes(tc.name)) {
+            // V2: Guardian meta-tool (instance discovery / proxy)
+            const result = await executeGuardianMetaTool({
+              userId: params.userId,
+              manifest: instanceManifest,
+              toolName: tc.name,
+              args: tc.arguments,
+            });
+            toolResult = result.success
+              ? JSON.stringify(result.result ?? { success: true })
+              : `Error: ${result.error ?? "unknown"}`;
+            isError = !result.success;
+          } else if (useV2) {
+            // V2: instance-based MCP tool execution
+            const resolved = resolveV2Tool(tc.name, instanceManifest);
+            if (resolved) {
+              const result = await executeMCPToolV2({
+                userId: params.userId,
+                instanceId: resolved.instanceId,
+                toolName: resolved.rawName,
+                arguments: tc.arguments,
+              });
+              toolResult = result.success
+                ? JSON.stringify(result.result ?? { success: true })
+                : `Error: ${result.error ?? "unknown"}`;
+              isError = !result.success;
+            } else {
+              // Fallback: try V1 resolution (e.g., guardian_ prefix tools)
+              const resolvedV1 = resolveServerForTool(tc.name);
+              const result = await executeMCPTool({
+                userId: params.userId,
+                serverId: resolvedV1.serverId,
+                toolName: resolvedV1.rawName,
+                arguments: tc.arguments,
+              });
+              toolResult = result.success
+                ? JSON.stringify(result.result ?? { success: true })
+                : `Error: ${result.error ?? "unknown"}`;
+              isError = !result.success;
+            }
           } else {
-            // MCP tool execution (Guardian or external MCP servers)
+            // Legacy V1: MCP tool execution (Guardian or external MCP servers)
             const resolved = resolveServerForTool(tc.name);
             const result = await executeMCPTool({
               userId: params.userId,
@@ -375,4 +471,52 @@ function resolveServerForTool(prefixedName: string): { serverId: string; rawName
   }
   // Fallback: assume guardian
   return { serverId: "guardian", rawName: prefixedName };
+}
+
+/**
+ * V2: resolve a prefixed tool name against the instance manifest.
+ * Tool name format: <preset_slug>_<label>_<raw_tool_name>
+ * Returns the instanceId and raw tool name, or null if no match.
+ */
+function resolveV2Tool(
+  prefixedName: string,
+  manifest: InstanceManifestEntry[],
+): { instanceId: string; rawName: string } | null {
+  for (const entry of manifest) {
+    if (prefixedName.startsWith(entry.toolPrefix)) {
+      return {
+        instanceId: entry.instanceId,
+        rawName: prefixedName.slice(entry.toolPrefix.length),
+      };
+    }
+  }
+  return null;
+}
+
+/**
+ * V2: build the system prompt block describing available instances.
+ * Imported from guardian-meta-tools but kept pure (no activity call) since
+ * Temporal workflows cannot call non-deterministic code.
+ */
+function buildManifestPrompt(manifest: InstanceManifestEntry[]): string {
+  if (manifest.length === 0) return "";
+  const lines: string[] = ["## Tool instances and labels", ""];
+  const byCategory: Record<string, InstanceManifestEntry[]> = {};
+  for (const e of manifest) {
+    (byCategory[e.category] ??= []).push(e);
+  }
+  for (const [cat, entries] of Object.entries(byCategory)) {
+    lines.push(`${cat.charAt(0).toUpperCase() + cat.slice(1)}:`);
+    for (const e of entries) {
+      const focus = e.isFocus ? " ← FOCUS" : "";
+      const scope = e.scope === "local" ? " [local bridged]" : "";
+      lines.push(`- ${e.displayName ?? e.presetType} (${e.label})${scope}${focus}`);
+    }
+    lines.push("");
+  }
+  lines.push(
+    "Tool naming: <preset>_<label>_<action>.",
+    "Default: use focus tools. For other instances, use guardian_call_instance_tool.",
+  );
+  return lines.join("\n");
 }

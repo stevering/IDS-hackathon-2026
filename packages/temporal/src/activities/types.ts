@@ -134,3 +134,48 @@ export interface MCPActivities {
     agentId?: string;
   }): Promise<void>;
 }
+
+// ---------------------------------------------------------------------------
+// MCP V2 Activities (instance-based routing)
+// ---------------------------------------------------------------------------
+
+export type InstanceManifestEntry = {
+  instanceId: string;
+  label: string;
+  presetType: string;
+  category: string;
+  scope: string;
+  displayName: string | null;
+  toolPrefix: string;
+  toolCount: number;
+  isFocus: boolean;
+};
+
+export interface MCPV2Activities {
+  discoverMCPToolsV2(params: {
+    userId: string;
+    focusDesignInstanceId?: string;
+    focusCodeInstanceId?: string;
+  }): Promise<{
+    focusTools: LLMToolDefinition[];
+    instanceManifest: InstanceManifestEntry[];
+  }>;
+
+  executeMCPToolV2(params: {
+    userId: string;
+    instanceId: string;
+    toolName: string;
+    arguments: Record<string, unknown>;
+  }): Promise<{ success: boolean; result?: unknown; error?: string }>;
+}
+
+export interface GuardianMetaActivities {
+  executeGuardianMetaTool(params: {
+    userId: string;
+    manifest: InstanceManifestEntry[];
+    toolName: string;
+    args: Record<string, unknown>;
+  }): Promise<{ success: boolean; result?: unknown; error?: string }>;
+
+  buildInstanceSystemPrompt(manifest: InstanceManifestEntry[]): string;
+}
