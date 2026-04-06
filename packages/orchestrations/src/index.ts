@@ -71,3 +71,6 @@ export {
 // Logic utilities
 export * from "./logic/index.js";
 
+// MCP registry + bridge protocol (shared across web, temporal, overlay)
+export * from "./mcp/index.js";
+
