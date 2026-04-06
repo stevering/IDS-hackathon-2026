@@ -2158,7 +2158,10 @@ export default function Home() {
   });
 
   // ── Temporal chat workflow (feature-flagged alternative to useChat) ───
-  const temporalChatEnabled = process.env.NEXT_PUBLIC_TEMPORAL_CHAT_ENABLED === "true";
+  // Phase -1: legacy /api/chat deleted — temporal is now the only chat runtime.
+  // The legacy useChat path below is dead code (temporalChatEnabled always true).
+  // TODO: remove useChat + DefaultChatTransport + transport in Phase -1b cleanup.
+  const temporalChatEnabled = true;
 
   // Map enabledMcps UI keys to Temporal MCP server IDs
   const temporalMcpServerIds = useMemo(() => {
@@ -2177,6 +2180,10 @@ export default function Home() {
     [clients, myClientId]
   );
 
+  // Extract instance IDs from TargetSelector (V2 path: instance:uuid format)
+  const focusDesignInstanceId = selectedDesignTarget?.startsWith("instance:") ? selectedDesignTarget.slice(9) : undefined;
+  const focusCodeInstanceId = selectedCodeTarget?.startsWith("instance:") ? selectedCodeTarget.slice(9) : undefined;
+
   const chatWorkflow = useChatWorkflow({
     conversationId: activeConversationId,
     model: selectedModel || undefined,
@@ -2189,6 +2196,8 @@ export default function Home() {
     isLocalPlugin: !!figmaPluginContext,
     source: selectedSource,
     keyId: selectedKeyId,
+    designInstanceId: focusDesignInstanceId,
+    codeInstanceId: focusCodeInstanceId,
   });
 
   // Unified variables: point to Temporal workflow or legacy useChat.

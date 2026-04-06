@@ -83,6 +83,9 @@ type UseChatWorkflowParams = {
   isLocalPlugin?: boolean;
   source?: string;
   keyId?: string;
+  // V2: focus instance IDs from TargetSelector
+  designInstanceId?: string;
+  codeInstanceId?: string;
 };
 
 // ---------------------------------------------------------------------------
@@ -101,6 +104,8 @@ export function useChatWorkflow({
   isLocalPlugin,
   source,
   keyId,
+  designInstanceId,
+  codeInstanceId,
 }: UseChatWorkflowParams): UseChatWorkflowReturn {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [status, setStatus] = useState<ChatWorkflowStatus>("idle");
@@ -504,6 +509,8 @@ export function useChatWorkflow({
             model,
             mcpServerIds,
             figmaPluginClientId,
+            designInstanceId,
+            codeInstanceId,
             ...dynamicContext,
           }),
         });
