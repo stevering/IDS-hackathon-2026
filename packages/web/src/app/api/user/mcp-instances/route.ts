@@ -4,18 +4,17 @@ import {
   BUILTIN_PRESETS,
   DEVICE_ONLINE_TTL_MS,
   buildToolPrefix,
+  categoryOf,
+  scopeOf,
 } from "@guardian/orchestrations";
 
 /**
- * GET /api/user/mcp-instances
+ * MCP Instances CRUD API.
  *
- * Returns the authenticated user's MCP instances enriched with:
- *   - preset metadata (display_name, category, scope, transport, is_template)
- *   - connection status (for cloud: is the OAuth token present and not expired?)
- *   - device online state (for local: is last_seen_at recent?)
- *   - computed tool prefix
- *
- * Phase 0: read-only. POST/PATCH/DELETE are added in Phase 3.
+ * GET  — list all instances enriched with preset/connection/device metadata
+ * POST — create a new instance (local MCPs; cloud created via OAuth callback dual-write)
+ * PATCH — update label, display_name, enabled, config
+ * DELETE — remove instance (+ revoke OAuth token for cloud)
  */
 export async function GET() {
   const supabase = await createClient();
@@ -146,4 +145,199 @@ export async function GET() {
     instances: enriched,
     defaults: defaultsMap,
   });
+}
+
+// ---------------------------------------------------------------------------
+// Helper: generate a unique label for a new instance
+// ---------------------------------------------------------------------------
+
+const LABEL_RE = /^[a-z0-9_]+$/;
+
+async function generateUniqueLabel(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  baseLabel: string,
+): Promise<string> {
+  const slug = baseLabel.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "");
+  const { data: existing } = await supabase
+    .from("user_mcp_instances")
+    .select("label")
+    .like("label", `${slug}%`);
+  const taken = new Set((existing ?? []).map((r) => r.label as string));
+  if (!taken.has(slug)) return slug;
+  for (let i = 2; i < 100; i++) {
+    const candidate = `${slug}_${i}`;
+    if (!taken.has(candidate)) return candidate;
+  }
+  return `${slug}_${Date.now().toString(36)}`;
+}
+
+// ---------------------------------------------------------------------------
+// POST /api/user/mcp-instances — create a new instance
+// ---------------------------------------------------------------------------
+
+export async function POST(req: Request) {
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+  const body = await req.json().catch(() => null);
+  if (!body) return NextResponse.json({ error: "Invalid body" }, { status: 400 });
+
+  const presetType = body.preset_type as string | undefined;
+  if (!presetType || !BUILTIN_PRESETS[presetType]) {
+    return NextResponse.json({ error: `Unknown preset_type: ${presetType}` }, { status: 400 });
+  }
+
+  const preset = BUILTIN_PRESETS[presetType];
+  const category = categoryOf(presetType)!;
+  const scope = scopeOf(presetType)!;
+
+  // Label: use provided or auto-generate
+  let label = body.label as string | undefined;
+  if (label) {
+    if (!LABEL_RE.test(label)) {
+      return NextResponse.json({ error: "Label must match ^[a-z0-9_]+$" }, { status: 400 });
+    }
+  } else {
+    label = await generateUniqueLabel(supabase, preset.preset_slug);
+  }
+
+  // Device (required for local)
+  const deviceId = body.device_id as string | undefined;
+  if (scope === "local" && !deviceId) {
+    return NextResponse.json({ error: "device_id required for local instances" }, { status: 400 });
+  }
+
+  const config = body.config ?? {};
+  const displayName = body.display_name as string | undefined;
+  const connectionServerId = scope === "cloud" ? presetType : null;
+
+  const { data, error } = await supabase
+    .from("user_mcp_instances")
+    .insert({
+      user_id: user.id,
+      preset_type: presetType,
+      category,
+      scope,
+      label,
+      display_name: displayName ?? null,
+      device_id: deviceId ?? null,
+      config,
+      connection_server_id: connectionServerId,
+      enabled: true,
+    })
+    .select("id, label")
+    .single();
+
+  if (error) {
+    if (error.code === "23505") {
+      return NextResponse.json({ error: `Label "${label}" is already in use` }, { status: 409 });
+    }
+    return NextResponse.json({ error: error.message }, { status: 500 });
+  }
+
+  return NextResponse.json({ id: data.id, label: data.label }, { status: 201 });
+}
+
+// ---------------------------------------------------------------------------
+// PATCH /api/user/mcp-instances?id=<uuid> — update instance fields
+// ---------------------------------------------------------------------------
+
+export async function PATCH(req: Request) {
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+  const instanceId = new URL(req.url).searchParams.get("id");
+  if (!instanceId) return NextResponse.json({ error: "id query param required" }, { status: 400 });
+
+  const body = await req.json().catch(() => null);
+  if (!body) return NextResponse.json({ error: "Invalid body" }, { status: 400 });
+
+  const updates: Record<string, unknown> = {};
+
+  if (body.label !== undefined) {
+    if (!LABEL_RE.test(body.label)) {
+      return NextResponse.json({ error: "Label must match ^[a-z0-9_]+$" }, { status: 400 });
+    }
+    updates.label = body.label;
+  }
+  if (body.display_name !== undefined) updates.display_name = body.display_name;
+  if (body.enabled !== undefined) updates.enabled = body.enabled;
+  if (body.config !== undefined) updates.config = body.config;
+
+  if (Object.keys(updates).length === 0) {
+    return NextResponse.json({ error: "Nothing to update" }, { status: 400 });
+  }
+
+  updates.updated_at = new Date().toISOString();
+
+  const { error } = await supabase
+    .from("user_mcp_instances")
+    .update(updates)
+    .eq("id", instanceId)
+    .eq("user_id", user.id);
+
+  if (error) {
+    if (error.code === "23505") {
+      return NextResponse.json({ error: `Label "${body.label}" is already in use` }, { status: 409 });
+    }
+    return NextResponse.json({ error: error.message }, { status: 500 });
+  }
+
+  return NextResponse.json({ ok: true });
+}
+
+// ---------------------------------------------------------------------------
+// DELETE /api/user/mcp-instances?id=<uuid> — remove instance + revoke token
+// ---------------------------------------------------------------------------
+
+export async function DELETE(req: Request) {
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+  const instanceId = new URL(req.url).searchParams.get("id");
+  if (!instanceId) return NextResponse.json({ error: "id query param required" }, { status: 400 });
+
+  // Fetch instance to check if we need to revoke a cloud token
+  const { data: inst } = await supabase
+    .from("user_mcp_instances")
+    .select("connection_server_id, scope")
+    .eq("id", instanceId)
+    .eq("user_id", user.id)
+    .single();
+
+  if (!inst) {
+    return NextResponse.json({ error: "Instance not found" }, { status: 404 });
+  }
+
+  // For cloud instances, also revoke the OAuth token
+  if (inst.scope === "cloud" && inst.connection_server_id) {
+    try {
+      await supabase.rpc("delete_mcp_connection", {
+        p_server_id: inst.connection_server_id as string,
+      });
+    } catch { /* non-fatal — token may already be gone */ }
+  }
+
+  // Delete the instance row
+  const { error } = await supabase
+    .from("user_mcp_instances")
+    .delete()
+    .eq("id", instanceId)
+    .eq("user_id", user.id);
+
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+
+  // Also clean up category defaults pointing to this instance
+  try {
+    await supabase
+      .from("user_category_defaults")
+      .update({ instance_id: null, updated_at: new Date().toISOString() })
+      .eq("instance_id", instanceId)
+      .eq("user_id", user.id);
+  } catch { /* non-fatal */ }
+
+  return NextResponse.json({ ok: true });
 }

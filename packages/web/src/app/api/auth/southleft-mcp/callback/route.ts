@@ -9,6 +9,7 @@ import {
 } from "@/lib/southleft-mcp-oauth";
 import { writeOAuthResult } from "@/lib/oauth-store";
 import { createClient } from "@/lib/supabase/server";
+import { ensureMCPInstance } from "@/lib/mcp-instance-sync";
 
 function requestOrigin(request: NextRequest): string {
   const proto = request.headers.get("x-forwarded-proto") || (request.nextUrl.protocol.replace(":", ""));
@@ -152,6 +153,9 @@ setTimeout(function(){document.getElementById('close-hint').style.display='block
             p_expires_at: expiresAt,
           });
           console.log("[Southleft Callback] Tokens persisted to Supabase Vault");
+
+          // Dual-write: ensure a user_mcp_instances row exists
+          await ensureMCPInstance(supabase, user.id, "figma_console");
         }
       } catch (vaultErr) {
         console.error("[Southleft Callback] Vault dual-write failed (non-fatal):", vaultErr);

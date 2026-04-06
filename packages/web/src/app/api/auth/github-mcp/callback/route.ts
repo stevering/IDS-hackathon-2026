@@ -10,6 +10,7 @@ import {
 import { getBaseUrl } from "@/lib/figma-mcp-oauth";
 import { writeOAuthResult } from "@/lib/oauth-store";
 import { createClient } from "@/lib/supabase/server";
+import { ensureMCPInstance } from "@/lib/mcp-instance-sync";
 
 const COOKIE_OAUTH_SESSION = "github_oauth_session";
 
@@ -81,6 +82,9 @@ export async function GET(request: NextRequest) {
             p_scopes: "repo",
             p_expires_at: expiresAt,
           });
+
+          // Dual-write: ensure a user_mcp_instances row exists
+          await ensureMCPInstance(supabase, user.id, "github");
         }
         // If no session in popup, the main page will persist via /api/user/connected-services/persist
       } catch (vaultErr) {

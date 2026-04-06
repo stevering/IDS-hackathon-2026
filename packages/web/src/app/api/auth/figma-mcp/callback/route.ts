@@ -11,6 +11,7 @@ import {
 import {getBaseUrl} from "@/lib/get-base-url";
 import { writeOAuthResult } from "@/lib/oauth-store";
 import { createClient } from "@/lib/supabase/server";
+import { ensureMCPInstance } from "@/lib/mcp-instance-sync";
 
 const COOKIE_OAUTH_SESSION = "figma_oauth_session";
 
@@ -133,6 +134,9 @@ export async function GET(request: NextRequest) {
             p_expires_at: expiresAt,
           });
           console.log("[Figma MCP Callback] Tokens persisted to Supabase Vault");
+
+          // Dual-write: ensure a user_mcp_instances row exists for this cloud connection
+          await ensureMCPInstance(supabase, user.id, "figma_mcp");
         }
       } catch (vaultErr) {
         console.error("[Figma MCP Callback] Vault dual-write failed (non-fatal):", vaultErr);
