@@ -6,6 +6,7 @@ import { useGuardianPresence } from "@/app/hooks/useGuardianPresence";
 import { ConnectedClients } from "@/components/ConnectedClients";
 import { GlassDropdown } from "@/components/GlassDropdown";
 import { LegalFooter } from "@/components/LegalFooter";
+import { useUserMCPInstances, type CloudPresetView } from "@/app/hooks/useUserMCPInstances";
 
 type StoredKey = {
   id: string;
@@ -129,13 +130,16 @@ export default function AccountPage() {
   const [guardEnabled, setGuardEnabled] = useState(true);
   const [savingOrchSettings, setSavingOrchSettings] = useState(false);
 
-  // Connected MCP services
+  // Connected MCP services (legacy — kept for backward compat during migration)
   const [mcpServices, setMcpServices] = useState<Array<{
     id: string; name: string; description: string; authPath: string;
     connected: boolean; expired: boolean; scopes: string | null;
     connectedAt: string | null; expiresAt: string | null;
   }>>([]);
   const [disconnectingService, setDisconnectingService] = useState<string | null>(null);
+
+  // New MCP instance registry (Phase 3)
+  const mcpHook = useUserMCPInstances();
 
   // Developer settings
   const [developerMode, setDeveloperMode] = useState(false);
@@ -1111,129 +1115,114 @@ export default function AccountPage() {
         </div>
       </section>
 
-      {/* ── Connected Services (MCP) ── */}
+      {/* ── Cloud Services (MCP) ── */}
       <section className="mb-8">
-        <h2 className="text-sm font-medium mb-1">Connected services</h2>
+        <h2 className="text-sm font-medium mb-1">Cloud services</h2>
         <p className="text-xs text-white/40 mb-4">
-          Connect external services to enable structured tools in orchestrations. Agents will automatically use these tools when available.
+          Connect cloud MCP services to enable structured tools in workflows. Agents use these tools automatically.
         </p>
 
-        {loading ? (
+        {mcpHook.loading ? (
           <div className="space-y-2">
-            {[1, 2].map((i) => (
+            {[1, 2, 3].map((i) => (
               <div key={i} className="h-14 rounded-xl bg-white/[0.04] animate-pulse" />
             ))}
           </div>
-        ) : mcpServices.length === 0 ? (
-          <p className="text-sm text-white/30 py-4 text-center">
-            No services available.
-          </p>
         ) : (
           <div className="space-y-2">
-            {mcpServices.map((svc) => (
+            {mcpHook.cloudPresets.map((cp) => (
+              <CloudServiceRow
+                key={cp.preset_type}
+                preset={cp}
+                isDefault={
+                  mcpHook.defaults[cp.category as "design" | "code"] === cp.instance?.id
+                }
+                disconnecting={disconnectingService === cp.preset_type}
+                onConnect={() => {
+                  const sessionId = Math.random().toString(36).slice(2);
+                  const authUrl = cp.oauth_auth_path + (cp.oauth_auth_path.includes("?") ? "&" : "?") + `session=${sessionId}`;
+                  const w = window.open(authUrl, "_blank", "width=500,height=700,popup=1");
+                  const poll = setInterval(() => {
+                    if (w?.closed) {
+                      clearInterval(poll);
+                      setTimeout(() => { mcpHook.reload(); loadData(); }, 500);
+                    }
+                  }, 500);
+                }}
+                onDisconnect={async () => {
+                  if (!cp.instance) return;
+                  setDisconnectingService(cp.preset_type);
+                  try {
+                    await fetch(`/api/user/mcp-instances?id=${encodeURIComponent(cp.instance.id)}`, { method: "DELETE" });
+                    // Also clean legacy localStorage tokens
+                    if (cp.preset_type === "figma_mcp") localStorage.removeItem("figma_mcp_tokens");
+                    if (cp.preset_type === "github") localStorage.removeItem("github_mcp_tokens");
+                    if (cp.preset_type === "figma_console") localStorage.removeItem("southleft_access_token");
+                    await mcpHook.reload();
+                    await loadData();
+                  } finally {
+                    setDisconnectingService(null);
+                  }
+                }}
+                onSetDefault={async () => {
+                  if (!cp.instance) return;
+                  await fetch("/api/user/category-defaults", {
+                    method: "PUT",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ category: cp.category, instance_id: cp.instance.id }),
+                  });
+                  await mcpHook.reload();
+                }}
+                onLabelChange={async (newLabel: string) => {
+                  if (!cp.instance) return false;
+                  const res = await fetch(`/api/user/mcp-instances?id=${encodeURIComponent(cp.instance.id)}`, {
+                    method: "PATCH",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ label: newLabel }),
+                  });
+                  if (res.ok) await mcpHook.reload();
+                  return res.ok;
+                }}
+              />
+            ))}
+          </div>
+        )}
+      </section>
+
+      {/* ── Local Services (Guardian Bridge) ── */}
+      <section className="mb-8">
+        <h2 className="text-sm font-medium mb-1">Local services</h2>
+        <p className="text-xs text-white/40 mb-4">
+          Local MCP servers running on your machine, proxied via the Guardian overlay.
+        </p>
+
+        {mcpHook.localInstances.length === 0 ? (
+          <div className="px-4 py-6 rounded-xl bg-white/[0.04] border border-white/[0.08] text-center">
+            <p className="text-sm text-white/30 mb-2">No local services configured</p>
+            <p className="text-xs text-white/20">
+              Install and run the Guardian overlay on your machine, then pair it from the overlay settings.
+            </p>
+          </div>
+        ) : (
+          <div className="space-y-2">
+            {mcpHook.localInstances.map((inst) => (
               <div
-                key={svc.id}
-                className="flex items-center justify-between gap-3 px-4 py-3 rounded-xl bg-white/[0.06] border border-white/[0.1] backdrop-blur-lg backdrop-saturate-[1.3]"
+                key={inst.id}
+                className="flex items-center justify-between gap-3 px-4 py-3 rounded-xl bg-white/[0.06] border border-white/[0.1]"
               >
                 <div className="flex items-center gap-2.5 min-w-0">
-                  <span
-                    className={`shrink-0 w-2 h-2 rounded-full ${
-                      svc.connected
-                        ? svc.expired
-                          ? "bg-amber-400"
-                          : "bg-emerald-400"
-                        : "bg-white/20"
-                    }`}
-                  />
+                  <span className={`shrink-0 w-2 h-2 rounded-full ${inst.ready ? "bg-emerald-400" : "bg-white/20"}`} />
                   <div className="min-w-0">
-                    <span className="text-sm font-medium">{svc.name}</span>
-                    <p className="text-[11px] text-white/30 truncate">{svc.description}</p>
+                    <span className="text-sm font-medium">{inst.display_name ?? inst.label}</span>
+                    <p className="text-[11px] text-white/30 truncate">
+                      {inst.device ? `${inst.device.name} ${inst.device.online ? "" : "(offline)"}` : inst.preset_type}
+                      {inst.ready && ` — ${inst.tool_prefix}*`}
+                    </p>
                   </div>
                 </div>
-                <div className="flex items-center gap-2 shrink-0">
-                  {svc.connected ? (
-                    <>
-                      {svc.expired && (
-                        <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-amber-500/20 border border-amber-500/30 text-amber-300">
-                          expired
-                        </span>
-                      )}
-                      <span className="text-xs text-white/30 hidden sm:block">
-                        {svc.connectedAt ? new Date(svc.connectedAt).toLocaleDateString() : ""}
-                      </span>
-                      <button
-                        onClick={async () => {
-                          setDisconnectingService(svc.id);
-                          try {
-                            await fetch(`/api/user/connected-services?server_id=${encodeURIComponent(svc.id)}`, {
-                              method: "DELETE",
-                            });
-                            await loadData();
-                          } finally {
-                            setDisconnectingService(null);
-                          }
-                        }}
-                        disabled={disconnectingService === svc.id}
-                        className="text-xs text-red-400/70 hover:text-red-400 transition-colors disabled:opacity-40 cursor-pointer"
-                      >
-                        {disconnectingService === svc.id ? "Disconnecting..." : "Disconnect"}
-                      </button>
-                    </>
-                  ) : (
-                    <button
-                      onClick={() => {
-                        const sessionId = Math.random().toString(36).slice(2);
-                        const authUrl = svc.authPath + (svc.authPath.includes("?") ? "&" : "?") + `session=${sessionId}`;
-                        const w = window.open(authUrl, "_blank", "width=500,height=700,popup=1");
-                        let handled = false;
-
-                        const persistTokens = async (tokensJson: string) => {
-                          await fetch("/api/user/connected-services/persist", {
-                            method: "POST",
-                            headers: { "Content-Type": "application/json" },
-                            body: JSON.stringify({ serverId: svc.id, tokensJson }),
-                          });
-                        };
-
-                        // Primary: postMessage from popup (works if window.opener survives cross-origin)
-                        const handler = async (e: MessageEvent) => {
-                          if (handled) return;
-                          if (e.data?.tokensJson && e.data?.success) {
-                            handled = true;
-                            try { await persistTokens(e.data.tokensJson); } catch {}
-                            loadData();
-                            window.removeEventListener("message", handler);
-                          }
-                        };
-                        window.addEventListener("message", handler);
-
-                        // Fallback: poll oauth-store after popup closes (works even if postMessage fails)
-                        const poll = setInterval(() => {
-                          if (w?.closed) {
-                            clearInterval(poll);
-                            setTimeout(async () => {
-                              window.removeEventListener("message", handler);
-                              if (!handled) {
-                                try {
-                                  const res = await fetch("/api/set-oauth-result", { headers: { "X-Auth-Token": sessionId } });
-                                  const data = await res.json();
-                                  if (data?.success && data?.tokens) {
-                                    const tokensJson = Object.values(data.tokens)[0] as string;
-                                    if (tokensJson) await persistTokens(tokensJson);
-                                  }
-                                } catch {}
-                                loadData();
-                              }
-                            }, 300);
-                          }
-                        }, 500);
-                      }}
-                      className="text-xs px-3 py-1.5 rounded-lg bg-white/10 border border-white/15 hover:bg-white/15 transition-colors cursor-pointer"
-                    >
-                      Connect
-                    </button>
-                  )}
-                </div>
+                <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-white/5 text-white/30 font-mono">
+                  {inst.label}
+                </span>
               </div>
             ))}
           </div>
@@ -1466,6 +1455,129 @@ export default function AccountPage() {
       </section>
 
       <LegalFooter />
+    </div>
+  );
+}
+
+// ── Cloud Service Row (sub-component) ─────────────────────────────────────
+
+function CloudServiceRow({
+  preset,
+  isDefault,
+  disconnecting,
+  onConnect,
+  onDisconnect,
+  onSetDefault,
+  onLabelChange,
+}: {
+  preset: CloudPresetView;
+  isDefault: boolean;
+  disconnecting: boolean;
+  onConnect: () => void;
+  onDisconnect: () => void;
+  onSetDefault: () => void;
+  onLabelChange: (label: string) => Promise<boolean>;
+}) {
+  const [editingLabel, setEditingLabel] = useState(false);
+  const [labelDraft, setLabelDraft] = useState("");
+  const [labelError, setLabelError] = useState<string | null>(null);
+
+  const inst = preset.instance;
+  const connected = !!inst?.connection;
+  const expired = inst?.connection?.expired ?? false;
+
+  return (
+    <div className="flex items-center justify-between gap-3 px-4 py-3 rounded-xl bg-white/[0.06] border border-white/[0.1] backdrop-blur-lg backdrop-saturate-[1.3]">
+      <div className="flex items-center gap-2.5 min-w-0">
+        <span
+          className={`shrink-0 w-2 h-2 rounded-full ${
+            connected
+              ? expired ? "bg-amber-400" : "bg-emerald-400"
+              : "bg-white/20"
+          }`}
+        />
+        <div className="min-w-0">
+          <span className="text-sm font-medium">{preset.display_name}</span>
+          <p className="text-[11px] text-white/30 truncate">{preset.description}</p>
+        </div>
+      </div>
+
+      <div className="flex items-center gap-2 shrink-0">
+        {connected ? (
+          <>
+            {/* Label badge (click to edit) */}
+            {editingLabel ? (
+              <form
+                onSubmit={async (e) => {
+                  e.preventDefault();
+                  setLabelError(null);
+                  if (!/^[a-z0-9_]+$/.test(labelDraft)) {
+                    setLabelError("a-z, 0-9, _ only");
+                    return;
+                  }
+                  const ok = await onLabelChange(labelDraft);
+                  if (ok) setEditingLabel(false);
+                  else setLabelError("Label taken");
+                }}
+                className="flex items-center gap-1"
+              >
+                <input
+                  autoFocus
+                  value={labelDraft}
+                  onChange={(e) => { setLabelDraft(e.target.value); setLabelError(null); }}
+                  onBlur={() => { setEditingLabel(false); setLabelError(null); }}
+                  className="w-20 text-[10px] px-1.5 py-0.5 rounded bg-white/10 border border-white/20 text-white font-mono focus:outline-none focus:border-violet-400"
+                />
+                {labelError && <span className="text-[9px] text-red-400">{labelError}</span>}
+              </form>
+            ) : (
+              <button
+                onClick={() => { setLabelDraft(inst?.label ?? ""); setEditingLabel(true); }}
+                className="text-[10px] px-1.5 py-0.5 rounded-full bg-white/5 text-white/40 font-mono hover:bg-white/10 transition-colors cursor-pointer"
+                title="Click to rename label"
+              >
+                {inst?.label}
+              </button>
+            )}
+
+            {expired && (
+              <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-amber-500/20 border border-amber-500/30 text-amber-300">
+                expired
+              </span>
+            )}
+
+            {!isDefault && (
+              <button
+                onClick={onSetDefault}
+                className="text-[10px] text-white/30 hover:text-white/60 transition-colors cursor-pointer"
+                title="Set as default for this category"
+              >
+                set default
+              </button>
+            )}
+            {isDefault && (
+              <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-violet-500/20 text-violet-300">
+                default
+              </span>
+            )}
+
+            <button
+              onClick={onDisconnect}
+              disabled={disconnecting}
+              className="text-xs text-red-400/70 hover:text-red-400 transition-colors disabled:opacity-40 cursor-pointer"
+            >
+              {disconnecting ? "..." : "Disconnect"}
+            </button>
+          </>
+        ) : (
+          <button
+            onClick={onConnect}
+            className="text-xs px-3 py-1.5 rounded-lg bg-white/10 border border-white/15 hover:bg-white/15 transition-colors cursor-pointer"
+          >
+            Connect
+          </button>
+        )}
+      </div>
     </div>
   );
 }
