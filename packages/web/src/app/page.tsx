@@ -10,6 +10,7 @@ import { useFigmaPlugin, pushPluginEvent, type PluginEvent, type FigmaPluginCont
 import { useFigmaExecuteChannel } from "./hooks/useFigmaExecuteChannel";
 import { useClientRegistry } from "./hooks/useClientRegistry";
 import { TargetSelector, type TargetItem } from "@/components/TargetSelector";
+import { useUserMCPInstances } from "./hooks/useUserMCPInstances";
 import { UserMenu } from "@/components/UserMenu";
 import { EditableClientId } from "@/components/EditableClientId";
 import { GlassDropdown } from "@/components/GlassDropdown";
@@ -1339,6 +1340,9 @@ export default function Home() {
   const [selectedDesignTarget, setSelectedDesignTarget] = useState<string | null>(null);
   const [selectedCodeTarget, setSelectedCodeTarget] = useState<string | null>(null);
 
+  // New MCP instances hook (Phase 4) — sources TargetSelector items
+  const mcpInstances = useUserMCPInstances();
+
 
 
   const isDev = process.env.NODE_ENV === 'development';
@@ -1499,10 +1503,12 @@ export default function Home() {
   }, [codeProjectPath, figmaMcpUrl, figmaOAuth, enabledMcps]);
 
   // ── Target items for Design and Code selectors ──────────────────────
+  // ── TargetSelector data (Phase 4 — sourced from user_mcp_instances) ──
+
   const designTargets: TargetItem[] = useMemo(() => {
     const items: TargetItem[] = [];
 
-    // Live Figma plugins from presence
+    // Live Figma plugins from presence (unchanged — not MCP, direct Guardian protocol)
     const plugins = clients.filter(c => c.type === "figma-plugin");
     if (plugins.length > 0) {
       plugins.forEach(c => items.push({
@@ -1526,82 +1532,46 @@ export default function Home() {
       });
     }
 
-    // Figma MCP (REST API)
-    if (enabledMcps.figma !== false) {
-      const configured = !!figmaMcpUrl || figmaOAuth || !!figmaAccessToken;
-      const reachable = mcpReachable.figma ?? false;
-      const status = !configured ? "not-configured" as const : reachable ? "active" as const : "offline" as const;
+    // Design MCP instances from user_mcp_instances (cloud + local)
+    for (const inst of mcpInstances.instances.filter(i => i.category === "design" && i.enabled)) {
+      const status = inst.ready ? "active" as const
+        : inst.connection ? "offline" as const
+        : "not-configured" as const;
       items.push({
-        id: "mcp:figma",
+        id: `instance:${inst.id}`,
         kind: "mcp",
-        label: "Figma MCP",
+        label: inst.display_name ?? inst.preset?.display_name ?? inst.label,
+        subtitle: inst.device ? `${inst.device.name}${inst.device.online ? "" : " (offline)"}` : inst.label,
         status,
-        tooltip: status === "active" ? "Active" : status === "offline" ? "Offline" : "Not configured",
-        description: !configured
-          ? "Set a Figma MCP URL or sign in with Figma OAuth in settings."
-          : reachable
-            ? "Figma REST API connected. Can read and analyze design files."
-            : "Figma MCP configured but not reachable. Check if the server is running or re-authenticate.",
-      });
-    }
-
-    // Figma Console MCP (Southleft)
-    if (enabledMcps.figmaConsole) {
-      const reachable = mcpReachable.figmaConsole ?? false;
-      items.push({
-        id: "mcp:figmaConsole",
-        kind: "mcp",
-        label: "Figma Console",
-        status: reachable ? "active" : "not-configured",
-        tooltip: reachable ? "Active" : "Not configured",
-        description: reachable
-          ? "Figma Console connected via OAuth. Provides advanced design introspection."
-          : "Sign in with Figma Console in settings to enable.",
+        tooltip: status === "active" ? "Active" : status === "offline" ? "Offline" : "Not connected",
+        description: inst.preset?.description ?? `${inst.preset_type} MCP`,
       });
     }
 
     return items;
-  }, [clients, enabledMcps, figmaOAuth, figmaAccessToken, figmaMcpUrl, mcpReachable]);
+  }, [clients, mcpInstances.instances]);
 
   const codeTargets: TargetItem[] = useMemo(() => {
     const items: TargetItem[] = [];
 
-    // Code Editor MCP (local SSE)
-    if (enabledMcps.code !== false) {
-      const configured = !!(codeProjectPath?.trim());
-      const reachable = mcpReachable.code ?? false;
-      const status = !configured ? "not-configured" as const : reachable ? "active" as const : "offline" as const;
+    // Code MCP instances from user_mcp_instances (cloud + local)
+    for (const inst of mcpInstances.instances.filter(i => i.category === "code" && i.enabled)) {
+      const status = inst.ready ? "active" as const
+        : inst.connection ? "offline" as const
+        : "not-configured" as const;
       items.push({
-        id: "mcp:code",
+        id: `instance:${inst.id}`,
         kind: "mcp",
-        label: "Code Editor",
+        label: inst.display_name ?? inst.preset?.display_name ?? inst.label,
+        subtitle: inst.device ? `${inst.device.name}${inst.device.online ? "" : " (offline)"}` : inst.label,
         status,
-        tooltip: status === "active" ? "Active" : status === "offline" ? "Offline" : "Not configured",
-        description: !configured
-          ? "Set a Code MCP URL in settings to connect your local editor."
-          : reachable
-            ? "Code MCP connected. Can read and write project files."
-            : "Code MCP configured but not reachable. Check if the server is running.",
-      });
-    }
-
-    // GitHub MCP
-    if (enabledMcps.github) {
-      const reachable = mcpReachable.github ?? false;
-      items.push({
-        id: "mcp:github",
-        kind: "mcp",
-        label: "GitHub MCP",
-        status: reachable ? "active" : "not-configured",
-        tooltip: reachable ? "Active" : "Not configured",
-        description: reachable
-          ? "GitHub API connected via OAuth. Can access repositories and issues."
-          : "Sign in with GitHub in settings to enable.",
+        tooltip: status === "active" ? "Active" : status === "offline" ? "Offline" : "Not connected",
+        description: inst.preset?.description ?? `${inst.preset_type} MCP`,
       });
     }
 
     return items;
-  }, [codeProjectPath, githubOAuth, enabledMcps, mcpReachable]);
+  }, [mcpInstances.instances]);
 
   const handleModelDropdownClose = useCallback(() => {
     setModelDropdownOpen(false);
@@ -2686,265 +2656,8 @@ export default function Home() {
   const figmaMode = getMcpConnectionMode(figmaMcpUrl || (figmaOAuth ? "https://mcp.figma.com/mcp" : ""));
   const codeMode = getMcpConnectionMode(codeProjectPath || "");
 
-  // ── Settings content for sidebar tab ──────────────────────────────
-  const settingsContent = (
-      <>
-          {/* MCP Toggles */}
-          <div className="mb-4 p-3 bg-white/5 rounded-md border border-white/10">
-            <p className="text-xs text-white/50 mb-2 font-medium">Enable MCPs</p>
-            <div className="space-y-2">
-              <label className="flex items-center gap-2 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={enabledMcps.figma}
-                  onChange={() => toggleMcp('figma')}
-                  className="w-4 h-4 rounded border-white/20 bg-white/5 text-violet-500 focus:ring-violet-500/50"
-                />
-                <span className="text-xs text-white/70">Figma MCP</span>
-              </label>
-              <label className="flex items-center gap-2 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={enabledMcps.figmaConsole}
-                  onChange={() => toggleMcp('figmaConsole')}
-                  className="w-4 h-4 rounded border-white/20 bg-white/5 text-violet-500 focus:ring-violet-500/50"
-                />
-                <span className="text-xs text-white/70">Figma Console (Southleft)</span>
-              </label>
-              <label className="flex items-center gap-2 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={enabledMcps.github}
-                  onChange={() => toggleMcp('github')}
-                  className="w-4 h-4 rounded border-white/20 bg-white/5 text-violet-500 focus:ring-violet-500/50"
-                />
-                <span className="text-xs text-white/70">GitHub MCP</span>
-              </label>
-              <label className="flex items-center gap-2 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={enabledMcps.code}
-                  onChange={() => toggleMcp('code')}
-                  className="w-4 h-4 rounded border-white/20 bg-white/5 text-violet-500 focus:ring-violet-500/50"
-                />
-                <span className="text-xs text-white/70">Code MCP</span>
-              </label>
-            </div>
-          </div>
-
-          <div className="space-y-4">
-            <div>
-              <div className="flex items-center justify-between mb-1">
-                <label className="block text-xs text-white/50">
-                  Figma MCP URL
-                </label>
-                <button
-                  onClick={() => setProxyModalOpen(true)}
-                  title="Configure a local proxy"
-                  className="text-[10px] px-2 py-0.5 bg-white/10 hover:bg-white/20 text-white/60 hover:text-white/80 rounded transition-colors cursor-pointer"
-                >
-                  Configure proxy
-                </button>
-              </div>
-              <input
-                type="url"
-                value={figmaMcpUrl}
-                onChange={(e) => setFigmaMcpUrl(e.target.value)}
-                placeholder="http://127.0.0.1:3845/mcp"
-                className="w-full bg-white/5 border border-white/10 rounded-md px-3 py-2 text-sm text-white placeholder:text-white/20 focus:outline-none focus:border-white/30 disabled:opacity-50 disabled:cursor-not-allowed"
-              />
-              <div className="flex items-center gap-1.5 mt-1.5">
-                <div
-                  className={`w-1.5 h-1.5 rounded-full ${figmaConnected ? "bg-emerald-400" : "bg-white/20"}`}
-                />
-                <span className={`text-xs ${figmaMode.color}`}>
-                  {figmaConnected ? figmaMode.label : "Not configured"}
-                </span>
-              </div>
-            </div>
-
-            <div>
-              <label className="block text-xs text-white/50 mb-1">
-                Figma Authentication
-              </label>
-              {figmaOAuth ? (
-                <div className="flex items-center gap-2">
-                  <div className="flex-1 flex items-center gap-1.5 bg-emerald-500/10 border border-emerald-500/20 rounded-md px-3 py-2">
-                    <div className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
-                    <span className="text-xs text-emerald-300">Connected via OAuth</span>
-                  </div>
-                  <button
-                    onClick={() => {
-                      fetch("/api/auth/figma-mcp/status", {
-                        method: "DELETE",
-                        headers: {
-                          "X-Auth-Token": tunnelSecret || "",
-                        },
-                      }).then(() => {
-                        localStorage.removeItem('figma_mcp_tokens');
-                        setFigmaOAuth(false);
-                      });
-                    }}
-                    className="px-2 py-2 text-xs text-red-400 hover:bg-red-500/10 rounded-md transition-colors cursor-pointer"
-                  >
-                    Disconnect
-                  </button>
-                </div>
-              ) : (
-                <button
-                  onClick={async () => {
-                    // Attempt Dynamic Client Registration first (required for mcp:connect scope)
-                    try {
-                      const res = await fetch("/api/auth/figma-mcp/register", { method: "POST" });
-                      if (res.ok) {
-                        console.log("[Figma] DCR successful, proceeding with MCP OAuth");
-                      } else {
-                        console.warn("[Figma] DCR failed (status", res.status, "), falling back to standard OAuth");
-                      }
-                    } catch (e) {
-                      console.warn("[Figma] DCR request failed, falling back to standard OAuth:", e);
-                    }
-                    // Open popup (works inside Figma plugin iframe)
-                    const session = Math.random().toString(36).slice(2) + Date.now().toString(36);
-                    figmaOAuthSessionRef.current = session;
-                    window.open(`/api/auth/figma-mcp?session=${session}`, 'figma-oauth', 'width=600,height=700,scrollbars=yes,resizable=yes');
-                    setFigmaWaitingForOAuth(true);
-                  }}
-                  className="block w-full text-center bg-[#a259ff]/20 border border-[#a259ff]/30 hover:bg-[#a259ff]/30 rounded-md px-3 py-2 text-sm text-[#a259ff] transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-                  disabled={figmaWaitingForOAuth}
-                >
-                  {figmaWaitingForOAuth ? "⏳ Waiting for Figma…" : "Sign in with Figma"}
-                </button>
-              )}
-            </div>
-
-{/* Southleft Figma Console */}
-<div className="mt-4 pt-4 border-t border-white/5">
-  <label className="block text-xs text-white/50 mb-2 font-medium">Figma Console (Southleft)</label>
-  {southleftOAuth ? (
-    <div className="flex items-center gap-2">
-      <div className="flex-1 flex items-center gap-1.5 bg-emerald-500/10 border border-emerald-500/20 rounded-md px-3 py-2">
-        <div className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
-        <span className="text-xs text-emerald-300">Connected via OAuth</span>
-      </div>
-      <button
-        onClick={async () => {
-          await fetch('/api/auth/southleft-mcp/disconnect', { method: 'POST' });
-          localStorage.removeItem('southleft_access_token');
-          setSouthleftOAuth(false);
-        }}
-        className="px-2 py-2 text-xs text-red-400 hover:bg-red-500/10 rounded-md transition-colors cursor-pointer"
-      >
-        Disconnect
-      </button>
-    </div>
-  ) : (
-    <button
-      onClick={() => {
-        const session = Math.random().toString(36).slice(2) + Date.now().toString(36);
-        oauthSessionRef.current = session;
-        window.open(`/api/auth/southleft-mcp?session=${session}`, 'southleft-oauth', 'width=600,height=700,scrollbars=yes,resizable=yes');
-        setWaitingForOAuth(true);
-      }}
-      className="w-full text-center bg-gradient-to-r from-purple-600/20 to-pink-600/20 border border-purple-500/30 hover:from-purple-600/30 hover:to-pink-600/30 rounded-md px-3 py-2.5 text-sm text-purple-300 font-medium transition-all hover:shadow-lg"
-    >
-      🎛️ Sign in with Figma Console
-    </button>
-  )}
-  <span className="text-xs text-white/30 mt-1 block">Alternative MCP server</span>
-</div>
-
-           {/*  <div>
-              <label className="block text-xs text-white/50 mb-1">
-                Figma Access Token (legacy)
-              </label>
-              <input
-                type="password"
-                value={figmaAccessToken}
-                onChange={(e) => setFigmaAccessToken(e.target.value)}
-                placeholder="figd_..."
-                className="w-full bg-white/5 border border-white/10 rounded-md px-3 py-2 text-sm text-white placeholder:text-white/20 focus:outline-none focus:border-white/30"
-              />
-              <span className="text-xs text-white/30 mt-1 block">
-                Fallback if OAuth not used.
-              </span>
-            </div> */}
-
-            <div>
-              <label className="block text-xs text-white/50 mb-1">
-                Code Editor MCP Url
-              </label>
-              <input
-                type="text"
-                value={codeProjectPath}
-                onChange={(e) => setCodeProjectPath(e.target.value)}
-                placeholder="http://127.0.0.1:3846/sse"
-                className="w-full bg-white/5 border border-white/10 rounded-md px-3 py-2 text-sm text-white placeholder:text-white/20 focus:outline-none focus:border-white/30"
-              />
-              <div className="flex items-center gap-1.5 mt-1.5">
-                <div
-                  className={`w-1.5 h-1.5 rounded-full ${codeConnected ? "bg-emerald-400" : "bg-white/20"}`}
-                />
-                <span className={`text-xs ${codeMode.color}`}>
-                  {codeConnected ? codeMode.label : "Not configured"}
-                </span>
-              </div>
-            </div>
-
-{/* GitHub MCP */}
-<div className="mt-4 pt-4 border-t border-white/5">
-  <label className="block text-xs text-white/50 mb-2 font-medium">GitHub MCP</label>
-  {githubOAuth ? (
-    <div className="flex items-center gap-2">
-      <div className="flex-1 flex items-center gap-1.5 bg-emerald-500/10 border border-emerald-500/20 rounded-md px-3 py-2">
-        <div className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
-        <span className="text-xs text-emerald-300">Connected via OAuth</span>
-      </div>
-      <button
-        onClick={() => {
-          fetch("/api/auth/github-mcp/status", {
-            method: "DELETE",
-            headers: {
-              "X-Auth-Token": tunnelSecret || "",
-            },
-          }).then(() => {
-            localStorage.removeItem('github_mcp_tokens');
-            setGithubOAuth(false);
-          });
-        }}
-        className="px-2 py-2 text-xs text-red-400 hover:bg-red-500/10 rounded-md transition-colors cursor-pointer"
-      >
-        Disconnect
-      </button>
-    </div>
-  ) : (
-    <button
-      onClick={() => {
-        // Open popup (works inside Figma plugin iframe)
-        const session = Math.random().toString(36).slice(2) + Date.now().toString(36);
-        githubOAuthSessionRef.current = session;
-        window.open(`/api/auth/github-mcp?session=${session}`, 'github-oauth', 'width=600,height=700,scrollbars=yes,resizable=yes');
-        setGithubWaitingForOAuth(true);
-      }}
-      className="w-full text-center bg-gradient-to-r from-gray-600/20 to-black/20 border border-gray-500/30 hover:from-gray-600/30 hover:to-black/30 rounded-md px-3 py-2.5 text-sm text-gray-300 font-medium transition-all hover:shadow-lg disabled:opacity-50 disabled:cursor-not-allowed"
-      disabled={githubWaitingForOAuth}
-    >
-      {githubWaitingForOAuth ? "⏳ Waiting for GitHub…" : "🌐 Sign in with GitHub"}
-    </button>
-  )}
-  <span className="text-xs text-white/30 mt-1 block">GitHub repos MCP (online)</span>
-</div>
-
-          </div>
-
-          <div className="mt-6 p-3 bg-white/5 rounded-md">
-            <p className="text-xs text-white/40 leading-relaxed">
-              Set your online URLs for Figma MCP and Code MCP,
-              or configure your local proxy.
-            </p>
-          </div>
-      </>
-    );
+  // ── Settings content removed — MCP connections managed in Account page ──
+  // TODO(Phase 4 follow-up): clean up dead state vars (figmaOAuth, enabledMcps, etc.)
 
     const hasBannerPad = (!isFigmaPlugin && orchConv.isRelatedToOrchestration)
       || (isFigmaPlugin && pluginOrch.hasOrchestration);
@@ -2991,7 +2704,6 @@ export default function Home() {
           onRename={renameConversation}
           collapsed={sidebarCollapsed}
           onToggleCollapse={toggleSidebar}
-          settingsContent={settingsContent}
           childrenMap={childrenMap}
           activeWorkflowId={temporal.isActive ? temporal.workflowId : null}
         />
