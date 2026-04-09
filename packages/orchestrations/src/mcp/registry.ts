@@ -181,6 +181,9 @@ export function isTemplatePreset(presetType: string): boolean {
  */
 export function buildToolPrefix(presetType: string, label: string): string {
   const slug = presetSlugOf(presetType);
+  // When label matches slug (default single instance), don't double the prefix.
+  // e.g., figmaconsole + figmaconsole → "figmaconsole_" not "figmaconsole_figmaconsole_"
+  if (label === slug) return `${slug}_`;
   return `${slug}_${label}_`;
 }
 

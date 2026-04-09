@@ -76,11 +76,14 @@ export type MetaToolContext = {
 // Meta-tool handler
 // ---------------------------------------------------------------------------
 
-export async function executeGuardianMetaTool(
-  ctx: MetaToolContext,
-  toolName: string,
-  args: Record<string, unknown>,
-): Promise<{ success: boolean; result?: unknown; error?: string }> {
+export async function executeGuardianMetaTool(params: {
+  userId: string;
+  manifest: InstanceManifestEntry[];
+  toolName: string;
+  args: Record<string, unknown>;
+}): Promise<{ success: boolean; result?: unknown; error?: string }> {
+  const ctx: MetaToolContext = { userId: params.userId, manifest: params.manifest };
+  const { toolName, args } = params;
   switch (toolName) {
     case "guardian_list_instances":
       return handleListInstances(ctx);
@@ -209,15 +212,22 @@ async function handleCallInstanceTool(
 ): Promise<{ success: boolean; result?: unknown; error?: string }> {
   const entry = ctx.manifest.find((e) => e.label === label);
   if (!entry) {
-    return { success: false, error: `No instance with label "${label}".` };
+    return { success: false, error: `No instance with label "${label}". Available labels: ${ctx.manifest.map(e => e.label).join(", ")}` };
   }
 
-  log.info(`Meta-tool call: ${label}/${toolName}`, { args: JSON.stringify(args).slice(0, 200) });
+  // Auto-strip the prefix if the LLM passed a prefixed tool name
+  // e.g. "figmaconsole_list_components" → "list_components"
+  let rawToolName = toolName;
+  if (toolName.startsWith(entry.toolPrefix)) {
+    rawToolName = toolName.slice(entry.toolPrefix.length);
+  }
+
+  log.info(`Meta-tool call: ${label}/${rawToolName}`, { args: JSON.stringify(args).slice(0, 200) });
 
   return executeMCPToolV2({
     userId: ctx.userId,
     instanceId: entry.instanceId,
-    toolName,
+    toolName: rawToolName,
     arguments: args,
   });
 }
@@ -260,15 +270,26 @@ export function buildInstanceSystemPrompt(manifest: InstanceManifestEntry[]): st
       const scopeTag = e.scope === "local" ? " [local bridged]" : "";
       const name = e.displayName ?? BUILTIN_PRESETS[e.presetType]?.display_name ?? e.presetType;
       lines.push(`- ${name} (${e.label})${scopeTag}${focusTag}`);
+      if (e.toolNames && e.toolNames.length > 0 && !e.isFocus) {
+        lines.push(`  Tools: ${e.toolNames.join(", ")}`);
+      }
     }
     lines.push("");
   }
 
   lines.push(
-    "Tool naming: <preset>_<label>_<action>.",
+    "## Rules",
+    "",
+    "Tool naming: `<preset>_<label>_<action>` (e.g. `github_github_list_repos`).",
     "Default: use focus tools directly.",
-    "When the user mentions another label, use `guardian_call_instance_tool`.",
-    "Use `guardian_list_instances` to refresh the list if needed.",
+    "When the user mentions another instance label, use `guardian_call_instance_tool(label, raw_tool_name, args)`.",
+    "  - `tool_name` must be the RAW name without prefix (e.g. `list_repos`, NOT `github_github_list_repos`).",
+    "Use `guardian_list_instances` to see available labels.",
+    "",
+    "IMPORTANT: Figma plugins (from presence, e.g. 'Figma-Desktop-catevi') are NOT MCP instances.",
+    "Do NOT call `guardian_call_instance_tool` with a plugin short ID.",
+    "To execute code on a Figma plugin, use the `figma_plugin_execute` tool directly.",
+    "MCP instances listed above have labels like 'figma', 'figmaconsole', 'github' — use only these labels.",
   );
 
   return lines.join("\n");

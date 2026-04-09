@@ -447,6 +447,22 @@ export function useChatWorkflow({
         channel.unsubscribe();
         channelRef.current = null;
       })
+      .on("broadcast", { event: "stream_error" }, (payload) => {
+        const { error: errMsg } = payload.payload as { requestId: string; error: string };
+        console.error("[ChatWorkflow] stream_error received:", errMsg);
+
+        // Remove the empty streaming placeholder if present
+        if (streamingMsgRef.current) {
+          const emptyId = streamingMsgRef.current.id;
+          setMessages((prev) => prev.filter((m) => m.id !== emptyId));
+          streamingMsgRef.current = null;
+        }
+
+        // Error shown via PeekBanner (page.tsx syncs chatWorkflow.error → chatErrorMsg)
+        // No chat message added — banner is sufficient.
+        setError(errMsg);
+        setStatus("idle");
+      })
       .subscribe();
   }, []);
 

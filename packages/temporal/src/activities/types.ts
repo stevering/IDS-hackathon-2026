@@ -148,6 +148,7 @@ export type InstanceManifestEntry = {
   displayName: string | null;
   toolPrefix: string;
   toolCount: number;
+  toolNames: string[];
   isFocus: boolean;
 };
 

@@ -61,6 +61,7 @@ export type InstanceManifestEntry = {
   displayName: string | null;
   toolPrefix: string;
   toolCount: number;
+  toolNames: string[];
   isFocus: boolean;
 };
 
@@ -105,7 +106,7 @@ export async function discoverMCPToolsV2(params: {
       let tools: LLMToolDefinition[];
 
       if (inst.scope === "cloud") {
-        tools = await discoverCloudInstance(supabase, inst, prefix, preset, log);
+        tools = await discoverCloudInstance(supabase, params.userId, inst, prefix, preset, log);
       } else {
         tools = await discoverBridgedInstance(params.userId, inst, prefix, log);
       }
@@ -119,6 +120,7 @@ export async function discoverMCPToolsV2(params: {
         displayName: inst.display_name,
         toolPrefix: prefix,
         toolCount: tools.length,
+        toolNames: tools.map((t) => t.name.startsWith(prefix) ? t.name.slice(prefix.length) : t.name),
         isFocus,
       });
 
@@ -138,6 +140,7 @@ export async function discoverMCPToolsV2(params: {
         displayName: inst.display_name,
         toolPrefix: prefix,
         toolCount: 0,
+        toolNames: [],
         isFocus,
       });
     }
@@ -153,6 +156,7 @@ export async function discoverMCPToolsV2(params: {
 
 async function discoverCloudInstance(
   supabase: ReturnType<typeof createServiceClient>,
+  userId: string,
   inst: DBInstance,
   prefix: string,
   preset: BuiltinPreset | undefined,
@@ -163,29 +167,21 @@ async function discoverCloudInstance(
     return [];
   }
 
-  // Special case: Guardian MCP uses service-role auth
   let accessToken: string | undefined;
   if (inst.preset_type === "guardian") {
     accessToken = process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.STORAGE_SUPABASE_SERVICE_ROLE_KEY;
   } else {
     const { data: tokensJson, error } = await supabase.rpc("get_mcp_connection_service", {
-      p_user_id: inst.connection_server_id ? undefined : undefined, // unused param placeholder
+      p_user_id: userId,
       p_server_id: inst.connection_server_id,
     });
 
-    // get_mcp_connection_service takes (p_user_id, p_server_id)
-    // but we need to pass the user_id explicitly
-    const { data: tokensJson2, error: error2 } = await supabase.rpc("get_mcp_connection_service", {
-      p_user_id: (inst as unknown as { user_id: string }).user_id ?? "",
-      p_server_id: inst.connection_server_id,
-    });
-
-    if (error2 || !tokensJson2) {
+    if (error || !tokensJson) {
       log.warn(`${inst.label}: no vault token for ${inst.connection_server_id}`);
       return [];
     }
 
-    const tokens = JSON.parse(tokensJson2 as string);
+    const tokens = JSON.parse(tokensJson as string);
     accessToken = tokens.access_token;
     if (!accessToken) {
       log.warn(`${inst.label}: token has no access_token`);
@@ -202,7 +198,7 @@ async function discoverCloudInstance(
   const headers: Record<string, string> = {};
   if (accessToken) headers["Authorization"] = `Bearer ${accessToken}`;
   if (inst.preset_type === "guardian") {
-    headers["X-Guardian-User-Id"] = (inst as unknown as { user_id: string }).user_id ?? "";
+    headers["X-Guardian-User-Id"] = userId;
   }
 
   const client = await createMCPClient({
@@ -344,7 +340,16 @@ export async function executeMCPToolV2(params: {
     await client.close();
 
     if (result && typeof result === "object" && (result as Record<string, unknown>).isError) {
-      return { success: false, result, error: "Tool reported an error" };
+      // Extract the actual error text from the MCP CallToolResult content
+      let errorText = "Tool reported an error";
+      try {
+        const r = result as { content?: Array<{ type: string; text?: string }> };
+        if (Array.isArray(r.content)) {
+          const texts = r.content.filter(c => c.type === "text" && c.text).map(c => c.text);
+          if (texts.length > 0) errorText = texts.join("\n");
+        }
+      } catch { /* use fallback */ }
+      return { success: false, result, error: errorText };
     }
 
     log.info(`Execution succeeded on ${inst.label}/${params.toolName}`);

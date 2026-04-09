@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { BUILTIN_PRESETS, type Category } from "@guardian/orchestrations";
+import { BUILTIN_PRESETS, type Category } from "@guardian/orchestrations/mcp";
 
 /** Enriched instance as returned by GET /api/user/mcp-instances. */
 export type MCPInstance = {

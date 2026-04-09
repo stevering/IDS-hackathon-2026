@@ -2044,6 +2044,8 @@ export default function Home() {
   const [chatErrorMsg, setChatErrorMsg] = useState<string | null>(null);
   const [errorCount, setErrorCount] = useState(0);
 
+  // (temporal error sync is below, after chatWorkflow declaration)
+
   // Serialize figma_plugin_execute calls — the AI can issue multiple in the same turn,
   // but concurrent addToolResult calls corrupt the SDK's internal state, causing
   // "Tool result is missing for tool call figma_plugin_execute:N" errors.
@@ -2206,6 +2208,14 @@ export default function Home() {
   const status = chatWorkflow.status === "idle" ? "ready" as const : "streaming" as const;
   const error = chatWorkflow.error ? new Error(chatWorkflow.error) : undefined;
   const setMessages = chatWorkflow.setMessages as typeof legacySetMessages;
+
+  // Sync temporal chat errors to the PeekBanner error UI
+  useEffect(() => {
+    if (chatWorkflow.error) {
+      setChatErrorMsg(chatWorkflow.error);
+      setErrorCount((c) => c + 1);
+    }
+  }, [chatWorkflow.error]);
 
   // Safe wrapper around addToolResult — catches SDK internal errors
   // (e.g. "Cannot read properties of undefined (reading 'state')" when

@@ -1142,10 +1142,63 @@ export default function AccountPage() {
                   const sessionId = Math.random().toString(36).slice(2);
                   const authUrl = cp.oauth_auth_path + (cp.oauth_auth_path.includes("?") ? "&" : "?") + `session=${sessionId}`;
                   const w = window.open(authUrl, "_blank", "width=500,height=700,popup=1");
+                  let handled = false;
+
+                  // Listen for postMessage from popup (primary path when callback runs)
+                  const handler = async (e: MessageEvent) => {
+                    if (handled) return;
+                    if (e.data?.success) {
+                      handled = true;
+                      window.removeEventListener("message", handler);
+                      if (e.data?.tokensJson) {
+                        try {
+                          await fetch("/api/user/connected-services/persist", {
+                            method: "POST",
+                            headers: { "Content-Type": "application/json" },
+                            body: JSON.stringify({ serverId: cp.preset_type, tokensJson: e.data.tokensJson }),
+                          });
+                        } catch { /* non-fatal */ }
+                      }
+                      await mcpHook.reload();
+                      await loadData();
+                    }
+                  };
+                  window.addEventListener("message", handler);
+
+                  // Fallback: poll for popup closure → check oauth-store for tokens
                   const poll = setInterval(() => {
                     if (w?.closed) {
                       clearInterval(poll);
-                      setTimeout(() => { mcpHook.reload(); loadData(); }, 500);
+                      setTimeout(async () => {
+                        window.removeEventListener("message", handler);
+                        if (!handled) {
+                          try {
+                            // Read tokens from in-memory oauth-store (works even when cookies are cross-domain)
+                            const res = await fetch("/api/set-oauth-result", { headers: { "X-Auth-Token": sessionId } });
+                            const data = await res.json();
+                            if (data?.success && data?.tokens) {
+                              const tokensJson = Object.values(data.tokens)[0] as string;
+                              if (tokensJson) {
+                                await fetch("/api/user/connected-services/persist", {
+                                  method: "POST",
+                                  headers: { "Content-Type": "application/json" },
+                                  body: JSON.stringify({ serverId: cp.preset_type, tokensJson }),
+                                });
+                              }
+                            }
+                          } catch { /* non-fatal */ }
+                          // Also try cookie-based persist as last resort
+                          try {
+                            await fetch("/api/user/connected-services/persist", {
+                              method: "POST",
+                              headers: { "Content-Type": "application/json" },
+                              body: "{}",
+                            });
+                          } catch { /* non-fatal */ }
+                          await mcpHook.reload();
+                          await loadData();
+                        }
+                      }, 500);
                     }
                   }, 500);
                 }}

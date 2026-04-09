@@ -109,7 +109,7 @@ export async function callLLMStreaming(params: LLMStreamingParams): Promise<LLMC
     | { role: "system"; content: string }
     | { role: "user"; content: string | Array<{ type: "text"; text: string } | { type: "image"; image: string }> }
     | { role: "assistant"; content: Array<{ type: "text"; text: string } | { type: "tool-call"; toolCallId: string; toolName: string; input: Record<string, unknown> }> }
-    | { role: "tool"; content: Array<{ type: "tool-result"; toolCallId: string; toolName: string; output: string; isError?: boolean }> }
+    | { role: "tool"; content: Array<{ type: "tool-result"; toolCallId: string; toolName: string; result: string; isError?: boolean }> }
   > = [];
 
   // Build a map of toolCallId -> toolName for tool result messages
@@ -137,7 +137,9 @@ export async function callLLMStreaming(params: LLMStreamingParams): Promise<LLMC
       const tcId = m.toolCallId ?? "unknown";
       aiMessages.push({
         role: "tool",
-        content: [{ type: "tool-result", toolCallId: tcId, toolName: toolCallNames.get(tcId) ?? "unknown", output: m.content }],
+        // AI SDK v6 Zod schema expects { output: { type: "text", value } } but TS types say { result }.
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        content: [{ type: "tool-result", toolCallId: tcId, toolName: toolCallNames.get(tcId) ?? "unknown", output: { type: "text", value: m.content } } as any],
       });
       continue;
     }
@@ -161,7 +163,19 @@ export async function callLLMStreaming(params: LLMStreamingParams): Promise<LLMC
   }
 
   const benchmarkStart = Date.now();
-  log.info("starting streaming LLM call [v2-snapshots]", { model: resolved.modelId, msgCount: aiMessages.length, hasTools: !!toolSet });
+  const toolCount = toolSet ? Object.keys(toolSet).length : 0;
+  log.info("starting streaming LLM call [v2-snapshots]", { model: resolved.modelId, msgCount: aiMessages.length, toolCount });
+  if (toolSet && toolCount > 0) {
+    log.info("tool catalog", { names: Object.keys(toolSet).join(", ") });
+  }
+  // Debug: log full message structure for diagnosis
+  if (aiMessages.length > 3) {
+    // Only dump on multi-turn calls (where tool results are present)
+    for (let i = 3; i < aiMessages.length; i++) {
+      const m = aiMessages[i];
+      log.info(`msg[${i}] dump`, { json: JSON.stringify(m).slice(0, 500) });
+    }
+  }
 
   // Stream the LLM call
   const result = streamText({
@@ -213,50 +227,70 @@ export async function callLLMStreaming(params: LLMStreamingParams): Promise<LLMC
   }, HEARTBEAT_INTERVAL_MS);
 
   try {
-    // Stream text deltas
-    const textStream = result.textStream;
-    for await (const chunk of textStream) {
-      if (!firstTokenAt) firstTokenAt = Date.now();
-      tokenCount++;
-      fullText += chunk;
-      textBuffer += chunk;
-
-      const now = Date.now();
-      if (channel && now - lastBroadcastAt >= BROADCAST_BUFFER_MS) {
-        lastBroadcastAt = now;
-        channel.send({
-          type: "broadcast",
-          event: "text_delta",
-          payload: { requestId: params.requestId, content: textBuffer },
-        }).catch(() => {}); // Non-fatal
-        textBuffer = "";
-      }
-
-      // Periodic DB snapshot + Realtime snapshot for F5 recovery
-      if (now - lastSnapshotAt >= DB_SNAPSHOT_INTERVAL_MS) {
-        lastSnapshotAt = now;
-        log.info("DB snapshot", { msgId: snapshotMessageId, textLen: fullText.length });
-        // DB snapshot (fire-and-forget — .then() triggers the request)
-        if (snapshotSupabase && snapshotMessageId) {
-          snapshotSupabase
-            .from("messages")
-            .update({
-              content: fullText,
-              parts: [{ type: "text", text: fullText, state: "streaming" }],
-            })
-            .eq("id", snapshotMessageId)
-            .then(() => {});
+    // Iterate fullStream to catch ALL events including API errors.
+    // We handle text-delta, reasoning, tool-call, error, and finish events.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let streamToolCalls: any[] = [];
+    for await (const part of result.fullStream) {
+      if (part.type === "error") {
+        const errObj = part.error as Error & { value?: unknown };
+        let apiMsg = errObj?.message ?? String(part.error);
+        if (errObj?.value && typeof errObj.value === "object") {
+          const val = errObj.value as { error?: string; code?: string };
+          if (val.error) apiMsg = val.error;
         }
-        // Realtime snapshot — broadcast full accumulated text so F5 clients can catch up
-        if (channel) {
+        throw new Error(apiMsg);
+      }
+      if (part.type === "reasoning-delta") {
+        fullReasoning += (part as { text?: string }).text ?? "";
+        continue;
+      }
+      if (part.type === "tool-call") {
+        streamToolCalls.push(part);
+        continue;
+      }
+      if (part.type === "text-delta") {
+        const chunk = part.text;
+        if (!firstTokenAt) firstTokenAt = Date.now();
+        tokenCount++;
+        fullText += chunk;
+        textBuffer += chunk;
+
+        const now = Date.now();
+        if (channel && now - lastBroadcastAt >= BROADCAST_BUFFER_MS) {
+          lastBroadcastAt = now;
           channel.send({
             type: "broadcast",
-            event: "text_snapshot",
-            payload: { requestId: params.requestId, content: fullText },
-          }).catch(() => {});
+            event: "text_delta",
+            payload: { requestId: params.requestId, content: textBuffer },
+          }).catch(() => {}); // Non-fatal
+          textBuffer = "";
         }
-      }
-    }
+
+        // Periodic DB snapshot + Realtime snapshot for F5 recovery
+        if (now - lastSnapshotAt >= DB_SNAPSHOT_INTERVAL_MS) {
+          lastSnapshotAt = now;
+          log.info("DB snapshot", { msgId: snapshotMessageId, textLen: fullText.length });
+          if (snapshotSupabase && snapshotMessageId) {
+            snapshotSupabase
+              .from("messages")
+              .update({
+                content: fullText,
+                parts: [{ type: "text", text: fullText, state: "streaming" }],
+              })
+              .eq("id", snapshotMessageId)
+              .then(() => {});
+          }
+          if (channel) {
+            channel.send({
+              type: "broadcast",
+              event: "text_snapshot",
+              payload: { requestId: params.requestId, content: fullText },
+            }).catch(() => {});
+          }
+        }
+      } // end text-delta
+    } // end fullStream loop
 
     // Flush remaining text buffer
     if (channel && textBuffer) {
@@ -267,14 +301,18 @@ export async function callLLMStreaming(params: LLMStreamingParams): Promise<LLMC
       }).catch(() => {});
     }
 
-    // Await individual promise properties from the stream result
-    const [reasoningText, toolCalls, usage] = await Promise.all([
-      result.reasoningText,
-      result.toolCalls,
-      result.usage,
-    ]);
+    // Use values collected from the fullStream loop (reasoning + tool calls).
+    // Usage is still awaited from the result since it comes with the finish event.
+    const toolCalls = streamToolCalls.length > 0 ? streamToolCalls : null;
+    let usage: { inputTokens?: number; outputTokens?: number } | undefined;
+    try {
+      usage = await Promise.race([
+        result.usage,
+        new Promise<undefined>((r) => setTimeout(() => r(undefined), 3000)),
+      ]);
+    } catch { /* non-fatal */ }
 
-    fullReasoning = reasoningText ?? "";
+    // fullReasoning already collected from the fullStream loop (reasoning events)
 
     // Broadcast tool calls if any
     if (channel && toolCalls?.length) {
@@ -290,6 +328,14 @@ export async function callLLMStreaming(params: LLMStreamingParams): Promise<LLMC
           },
         }).catch(() => {});
       }
+    }
+
+    // Detect empty response (0 tokens, 0 tool calls) — always an error.
+    // The AI SDK throws TypeValidationError async from its internal SSE parser.
+    // We surface the real error by awaiting result.text (which forces full resolution).
+    if (tokenCount === 0 && !toolCalls?.length) {
+      // Empty response with no errors caught by fullStream — use fallback message
+      throw new Error("LLM returned an empty response (0 tokens, 0 tool calls). The model may be at capacity.");
     }
 
     // Final DB snapshot — mark message as complete
@@ -377,10 +423,48 @@ export async function callLLMStreaming(params: LLMStreamingParams): Promise<LLMC
           }
         : undefined,
     };
+  } catch (streamErr) {
+    const errMsg = streamErr instanceof Error ? streamErr.message : String(streamErr);
+    log.error("streaming LLM call failed", { error: errMsg });
+
+    // Clean up the pre-created empty message (otherwise it shows as blank in the UI)
+    if (snapshotSupabase && snapshotMessageId) {
+      try {
+        await snapshotSupabase
+          .from("messages")
+          .delete()
+          .eq("id", snapshotMessageId);
+      } catch { /* non-fatal */ }
+    }
+
+    // Broadcast the error so the frontend can display it immediately
+    if (channel) {
+      log.info("broadcasting stream_error to frontend", { requestId: params.requestId });
+      try {
+        await channel.send({
+          type: "broadcast",
+          event: "stream_error",
+          payload: { requestId: params.requestId, error: errMsg },
+        });
+        log.info("stream_error broadcast sent");
+      } catch (broadcastErr) {
+        log.error("stream_error broadcast failed", { error: String(broadcastErr) });
+      }
+    } else {
+      log.warn("no channel available for stream_error broadcast");
+    }
+
+    // Re-throw so the workflow's catch block can persist the error message
+    throw streamErr;
   } finally {
     clearInterval(heartbeatTimer);
     if (channel) {
       channel.unsubscribe();
     }
   }
+}
+
+/** Try to parse a string as JSON; return the original string if it fails. */
+function tryParseJSON(value: string): unknown {
+  try { return JSON.parse(value); } catch { return value; }
 }

@@ -56,7 +56,7 @@ import type {
 const { callLLMStreaming } = proxyActivities<StreamingLLMActivities>({
   startToCloseTimeout: "5 minutes",
   heartbeatTimeout: "30 seconds",
-  retry: { maximumAttempts: 2 },
+  retry: { maximumAttempts: 1 }, // No auto-retry — errors shown to user immediately via stream_error
 });
 
 const { persistChatMessage, loadChatHistory } = proxyActivities<ChatPersistenceActivities>({
@@ -283,14 +283,8 @@ export async function chatWorkflow(params: ChatWorkflowParams): Promise<void> {
       } catch (err) {
         errorMessage = err instanceof Error ? err.message : String(err);
         status = "error";
-        // Persist error as assistant message
-        await persistChatMessage({
-          conversationId: params.conversationId,
-          role: "assistant",
-          content: `[Error: ${errorMessage}]`,
-          userId: params.userId,
-          metadata: { error: true },
-        });
+        // Error is broadcast via stream_error from the activity's catch block.
+        // Don't persist as a chat message — the frontend shows it via the error banner.
         return;
       }
 
@@ -511,12 +505,21 @@ function buildManifestPrompt(manifest: InstanceManifestEntry[]): string {
       const focus = e.isFocus ? " ← FOCUS" : "";
       const scope = e.scope === "local" ? " [local bridged]" : "";
       lines.push(`- ${e.displayName ?? e.presetType} (${e.label})${scope}${focus}`);
+      if (e.toolNames.length > 0 && !e.isFocus) {
+        lines.push(`  Tools: ${e.toolNames.join(", ")}`);
+      }
     }
     lines.push("");
   }
   lines.push(
-    "Tool naming: <preset>_<label>_<action>.",
-    "Default: use focus tools. For other instances, use guardian_call_instance_tool.",
+    "",
+    "Tool naming: `<preset>_<label>_<action>` (e.g. `github_github_list_repos`).",
+    "Default: use focus tools directly. For other instances, call `guardian_call_instance_tool(label, raw_tool_name, args)`.",
+    "  - `tool_name` = RAW name without prefix (e.g. `list_repos`, NOT `github_github_list_repos`).",
+    "",
+    "IMPORTANT: Figma plugins (presence entries like 'Figma-Desktop-xxxxx') are NOT MCP instances.",
+    "Do NOT use guardian_call_instance_tool with plugin names — use `figma_plugin_execute` instead.",
+    "Only use instance labels shown above (e.g. 'figma', 'figmaconsole', 'github').",
   );
   return lines.join("\n");
 }

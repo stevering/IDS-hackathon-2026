@@ -6,7 +6,8 @@ import {
   buildToolPrefix,
   categoryOf,
   scopeOf,
-} from "@guardian/orchestrations";
+} from "@guardian/orchestrations/mcp";
+import { ensureMCPInstance } from "@/lib/mcp-instance-sync";
 
 /**
  * MCP Instances CRUD API.
@@ -26,7 +27,7 @@ export async function GET() {
   }
 
   // Load instances (RLS scopes to this user automatically)
-  const { data: instances, error: instErr } = await supabase
+  let { data: instances, error: instErr } = await supabase
     .from("user_mcp_instances")
     .select(
       "id, preset_type, category, scope, label, display_name, device_id, config, connection_server_id, enabled, created_at, updated_at",
@@ -46,6 +47,35 @@ export async function GET() {
   const { data: connections } = await supabase
     .from("user_mcp_connections")
     .select("server_id, scopes, expires_at, created_at");
+
+  // ── Reconciliation: auto-create instance rows for legacy connections ──
+  // Users who connected OAuth BEFORE migration 032 have rows in user_mcp_connections
+  // but NOT in user_mcp_instances. Create the missing instances now.
+  if (connections && connections.length > 0 && instances) {
+    const existingServerIds = new Set(
+      instances
+        .filter((i) => i.scope === "cloud")
+        .map((i) => i.connection_server_id as string),
+    );
+    for (const conn of connections) {
+      const serverId = conn.server_id as string;
+      if (!existingServerIds.has(serverId)) {
+        try {
+          await ensureMCPInstance(supabase, user.id, serverId);
+        } catch { /* non-fatal — will retry on next load */ }
+      }
+    }
+    // Re-fetch instances if we created any
+    if (connections.some((c) => !existingServerIds.has(c.server_id as string))) {
+      const { data: refreshed } = await supabase
+        .from("user_mcp_instances")
+        .select(
+          "id, preset_type, category, scope, label, display_name, device_id, config, connection_server_id, enabled, created_at, updated_at",
+        )
+        .order("created_at", { ascending: true });
+      if (refreshed) instances = refreshed;
+    }
+  }
 
   // Load category defaults
   const { data: defaults } = await supabase

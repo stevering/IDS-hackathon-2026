@@ -157,6 +157,7 @@ export async function POST(request: Request) {
   const userId = user.id;
 
   const body = await request.json();
+  console.log("[chat-temporal/start] RAW body keys:", Object.keys(body), "designInstanceId:", body.designInstanceId, "codeInstanceId:", body.codeInstanceId);
   const {
     conversationId, message, model, mcpServerIds, figmaPluginClientId, images,
     selectedNode, figmaPluginContext, connectedAgents, isLocalPlugin, source, keyId,
@@ -242,6 +243,46 @@ export async function POST(request: Request) {
       p_metadata: {},
     });
 
+    // Resolve instance IDs server-side if frontend didn't provide them.
+    // This handles: race conditions (hook not loaded yet), plugin-selected design target, etc.
+    let resolvedDesignInstanceId = designInstanceId;
+    let resolvedCodeInstanceId = codeInstanceId;
+    if (!resolvedDesignInstanceId || !resolvedCodeInstanceId) {
+      try {
+        const { data: defaults } = await supabase
+          .from("user_category_defaults")
+          .select("category, instance_id")
+          .eq("user_id", userId);
+        for (const d of defaults ?? []) {
+          if (!resolvedDesignInstanceId && d.category === "design" && d.instance_id) {
+            resolvedDesignInstanceId = d.instance_id as string;
+          }
+          if (!resolvedCodeInstanceId && d.category === "code" && d.instance_id) {
+            resolvedCodeInstanceId = d.instance_id as string;
+          }
+        }
+      } catch { /* non-fatal — V1 fallback will handle it */ }
+
+      // Last resort: pick the first enabled instance per category
+      if (!resolvedDesignInstanceId || !resolvedCodeInstanceId) {
+        try {
+          const { data: instances } = await supabase
+            .from("user_mcp_instances")
+            .select("id, category, scope")
+            .eq("enabled", true)
+            .order("created_at", { ascending: true });
+          for (const inst of instances ?? []) {
+            if (!resolvedDesignInstanceId && inst.category === "design") {
+              resolvedDesignInstanceId = inst.id as string;
+            }
+            if (!resolvedCodeInstanceId && inst.category === "code") {
+              resolvedCodeInstanceId = inst.id as string;
+            }
+          }
+        } catch { /* non-fatal */ }
+      }
+    }
+
     // Start the workflow
     await client.workflow.start("chatWorkflow", {
       workflowId,
@@ -255,8 +296,8 @@ export async function POST(request: Request) {
         systemPrompt,
         mcpServerIds: mcpServerIds ?? [],
         figmaPluginClientId,
-        focusDesignInstanceId: designInstanceId,
-        focusCodeInstanceId: codeInstanceId,
+        focusDesignInstanceId: resolvedDesignInstanceId,
+        focusCodeInstanceId: resolvedCodeInstanceId,
       }],
     });
 
@@ -266,7 +307,7 @@ export async function POST(request: Request) {
       .update({ metadata: { chatWorkflowId: workflowId } })
       .eq("id", conversationId);
 
-    log.info("chatWorkflow started", { conv: conversationId, model: resolvedModel, mcpServerIds: mcpServerIds ?? [], figmaPluginClientId: figmaPluginClientId ?? null, hasDynamicCtx: dynamicCtx.length > 0 });
+    log.info("chatWorkflow started", { conv: conversationId, model: resolvedModel, mcpServerIds: mcpServerIds ?? [], figmaPluginClientId: figmaPluginClientId ?? null, hasDynamicCtx: dynamicCtx.length > 0, designInstanceId: designInstanceId ?? null, codeInstanceId: codeInstanceId ?? null });
 
     return NextResponse.json({ workflowId, conversationId });
   } catch (err) {

@@ -10,6 +10,8 @@ import {
   getBaseUrl,
 } from "@/lib/figma-mcp-oauth";
 import { writeOAuthResult } from "@/lib/oauth-store";
+import { createClient } from "@/lib/supabase/server";
+import { ensureMCPInstance } from "@/lib/mcp-instance-sync";
 
 const COOKIE_OAUTH_SESSION = "figma_oauth_session";
 
@@ -95,11 +97,44 @@ export async function GET(request: NextRequest) {
         },
       });
     }
-    // Tokens already valid — notify the polling client directly
-    writeOAuthResult(session, { type: "figma-mcp-auth", success: true });
+    // Tokens already valid — persist to DB (fast-path: callback won't run)
+    let tokensJson: string | undefined;
+    for (const c of pendingCookies) {
+      if (c.name === "figma_mcp_tokens" && c.value) {
+        tokensJson = c.value as string;
+      }
+    }
+    // Fallback: read from existing cookie if not in pendingCookies
+    if (!tokensJson) {
+      tokensJson = cookieStore.get("figma_mcp_tokens")?.value;
+    }
+    if (tokensJson) {
+      try {
+        const supabase = await createClient();
+        const { data: { user } } = await supabase.auth.getUser();
+        if (user) {
+          const parsed = JSON.parse(tokensJson);
+          const expiresAt = parsed.expires_in
+            ? new Date(Date.now() + parsed.expires_in * 1000).toISOString()
+            : null;
+          await supabase.rpc("upsert_mcp_connection", {
+            p_server_id: "figma_mcp",
+            p_tokens_json: tokensJson,
+            p_scopes: useMcpMode ? "mcp:connect" : "current_user:read,file_content:read,file_metadata:read,projects:read",
+            p_expires_at: expiresAt,
+          });
+          await ensureMCPInstance(supabase, user.id, "figma_mcp");
+          console.log("[Figma MCP OAuth] Fast-path: tokens persisted to DB + instance created");
+        }
+      } catch (err) {
+        console.error("[Figma MCP OAuth] Fast-path DB write failed (non-fatal):", err);
+      }
+    }
+
+    writeOAuthResult(session, { type: "figma-mcp-auth", success: true, tokens: tokensJson ? { figma_mcp_tokens: tokensJson } : undefined });
     return new NextResponse(
       `<!DOCTYPE html><html><head><meta charset="UTF-8"></head><body><script>
-        if (window.opener) { try { window.opener.postMessage({ type: 'figma-oauth-complete', success: true }, '*'); } catch(e) {} }
+        if (window.opener) { try { window.opener.postMessage({ type: 'figma-oauth-complete', success: true, tokensJson: ${JSON.stringify(tokensJson ?? null)} }, '*'); } catch(e) {} }
         window.close();
       </script></body></html>`,
       { headers: { "Content-Type": "text/html" } }

@@ -10,7 +10,7 @@
  */
 
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { BUILTIN_PRESETS, categoryOf, scopeOf } from "@guardian/orchestrations";
+import { BUILTIN_PRESETS, categoryOf, scopeOf } from "@guardian/orchestrations/mcp";
 
 export async function ensureMCPInstance(
   supabase: SupabaseClient,

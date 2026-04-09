@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
-import { DEVICE_ONLINE_TTL_MS } from "@guardian/orchestrations";
+import { DEVICE_ONLINE_TTL_MS } from "@guardian/orchestrations/mcp";
 
 /**
  * GET /api/user/devices

@@ -71,6 +71,9 @@ export {
 // Logic utilities
 export * from "./logic/index.js";
 
-// MCP registry + bridge protocol (shared across web, temporal, overlay)
-export * from "./mcp/index.js";
+// MCP registry + bridge protocol
+// Web (Turbopack) uses subpath: import ... from "@guardian/orchestrations/mcp"
+// Temporal/overlay (tsx/vitest) uses this barrel re-export via .js extensions:
+export * from "./mcp/registry.js";
+export * from "./mcp/bridge-protocol.js";
 

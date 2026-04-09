@@ -1,9 +1,11 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { cookies } from "next/headers";
+import { ensureMCPInstance } from "@/lib/mcp-instance-sync";
 
 /** Cookie name → server ID mapping */
 const COOKIE_TO_SERVER: Record<string, { serverId: string; scopes: string }> = {
+  figma_mcp_tokens: { serverId: "figma_mcp", scopes: "mcp:connect" },
   github_mcp_tokens: { serverId: "github", scopes: "repo" },
   southleft_mcp_tokens: { serverId: "figma_console", scopes: "file_content:read,library_content:read,file_variables:read" },
 };
@@ -34,6 +36,8 @@ export async function POST(req: Request) {
         p_expires_at: expiresAt,
       });
       persisted.push(body.serverId);
+      // Dual-write: ensure instance row exists
+      try { await ensureMCPInstance(supabase, user.id, body.serverId); } catch { /* non-fatal */ }
     } catch { /* continue */ }
   }
 
@@ -54,6 +58,8 @@ export async function POST(req: Request) {
         p_expires_at: expiresAt,
       });
       persisted.push(serverId);
+      // Dual-write: ensure instance row exists
+      try { await ensureMCPInstance(supabase, user.id, serverId); } catch { /* non-fatal */ }
     } catch { /* non-fatal, continue with other cookies */ }
   }
 
