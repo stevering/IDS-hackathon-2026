@@ -146,9 +146,27 @@ setTimeout(function(){document.getElementById('close-hint').style.display='block
           const expiresAt = parsed.expires_in
             ? new Date(Date.now() + parsed.expires_in * 1000).toISOString()
             : null;
+
+          // Embed DCR client credentials into the tokens JSON so the Temporal worker
+          // can refresh tokens without access to the per-user cookie. Southleft uses
+          // Dynamic Client Registration — the client_id/client_secret are unique
+          // to this user and generated at connect time.
+          if (tokens.southleft_mcp_client_info) {
+            try {
+              const clientInfo = JSON.parse(tokens.southleft_mcp_client_info);
+              parsed._guardian_client_info = {
+                client_id: clientInfo.client_id,
+                client_secret: clientInfo.client_secret,
+              };
+              console.log("[Southleft Callback] DCR client_info embedded into Vault tokens");
+            } catch (err) {
+              console.warn("[Southleft Callback] Failed to parse client_info for embedding:", err);
+            }
+          }
+
           await supabase.rpc("upsert_mcp_connection", {
             p_server_id: "figma_console",
-            p_tokens_json: tokens.southleft_mcp_tokens,
+            p_tokens_json: JSON.stringify(parsed),
             p_scopes: "file_content:read,library_content:read,file_variables:read",
             p_expires_at: expiresAt,
           });

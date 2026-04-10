@@ -38,6 +38,13 @@ export type BuiltinPreset = {
    */
   oauth_token_endpoint?: string;
   /**
+   * Cloud only: Base URL for RFC 8414 OAuth authorization server metadata discovery.
+   * Alternative to oauth_token_endpoint — the token_endpoint is fetched from
+   * `<url>/.well-known/oauth-authorization-server` at refresh time (cached).
+   * Used by Figma MCP (mcp.figma.com) which publishes its metadata dynamically.
+   */
+  oauth_discovery_url?: string;
+  /**
    * Cloud only: env var name holding the client_id for refresh requests.
    * If absent, refresh is skipped (assumes user manually re-auths on expiration).
    */
@@ -83,8 +90,12 @@ export const BUILTIN_PRESETS: Record<string, BuiltinPreset> = {
     cloud_url: "https://mcp.figma.com/mcp",
     oauth_scopes: "mcp:connect",
     oauth_auth_path: "/api/auth/figma-mcp",
-    // Refresh not implemented for Figma (90-day token lifetime, low churn).
-    // Can be enabled later by setting oauth_token_endpoint.
+    // Figma MCP publishes token endpoint via RFC 8414 discovery at mcp.figma.com.
+    // `expires_in` advertised as 90 days but server may invalidate earlier →
+    // reactive refresh on 401 handles that case.
+    oauth_discovery_url: "https://mcp.figma.com",
+    oauth_client_id_env: "FIGMA_CLIENT_ID",
+    oauth_client_secret_env: "FIGMA_CLIENT_SECRET",
     is_template: false,
   },
   figma_console: {
@@ -99,6 +110,11 @@ export const BUILTIN_PRESETS: Record<string, BuiltinPreset> = {
     cloud_url: "https://figma-console-mcp.southleft.com/mcp",
     oauth_scopes: "file_content:read,library_content:read,file_variables:read",
     oauth_auth_path: "/api/auth/southleft-mcp",
+    // Southleft uses DCR (Dynamic Client Registration) — no static client creds in env.
+    // The client_id/client_secret are generated at connect time and stored in the
+    // Vault alongside the tokens (`_guardian_client_info` field). The refresh helper
+    // extracts them from there instead of env vars.
+    oauth_discovery_url: "https://figma-console-mcp.southleft.com",
     is_template: false,
   },
   github: {

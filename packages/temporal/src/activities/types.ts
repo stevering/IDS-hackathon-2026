@@ -150,6 +150,8 @@ export type InstanceManifestEntry = {
   toolCount: number;
   toolNames: string[];
   isFocus: boolean;
+  /** Populated when discovery failed for this instance. Surfaced to the UI via broadcast. */
+  error?: string;
 };
 
 export interface MCPV2Activities {

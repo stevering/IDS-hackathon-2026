@@ -269,9 +269,20 @@ export function buildInstanceSystemPrompt(manifest: InstanceManifestEntry[]): st
       const focusTag = e.isFocus ? " ← FOCUS" : "";
       const scopeTag = e.scope === "local" ? " [local bridged]" : "";
       const name = e.displayName ?? BUILTIN_PRESETS[e.presetType]?.display_name ?? e.presetType;
-      lines.push(`- ${name} (${e.label})${scopeTag}${focusTag}`);
-      if (e.toolNames && e.toolNames.length > 0 && !e.isFocus) {
-        lines.push(`  Tools: ${e.toolNames.join(", ")}`);
+
+      // Instance line
+      if (e.error) {
+        // Instance failed discovery — mark UNAVAILABLE and show reason
+        const shortError = e.error.length > 120 ? e.error.slice(0, 120) + "…" : e.error;
+        lines.push(`- ${name} (${e.label})${scopeTag} ⚠️ UNAVAILABLE`);
+        lines.push(`  Reason: ${shortError}`);
+        lines.push(`  DO NOT call tools on this instance. DO NOT call guardian_call_instance_tool with label="${e.label}".`);
+        lines.push(`  If user asks about ${name}, tell them: "${name} is not reachable (reason: ${shortError}). Please reconnect it in Account page or check your credentials."`);
+      } else {
+        lines.push(`- ${name} (${e.label})${scopeTag}${focusTag}`);
+        if (e.toolNames && e.toolNames.length > 0 && !e.isFocus) {
+          lines.push(`  Tools: ${e.toolNames.join(", ")}`);
+        }
       }
     }
     lines.push("");
@@ -285,6 +296,18 @@ export function buildInstanceSystemPrompt(manifest: InstanceManifestEntry[]): st
     "When the user mentions another instance label, use `guardian_call_instance_tool(label, raw_tool_name, args)`.",
     "  - `tool_name` must be the RAW name without prefix (e.g. `list_repos`, NOT `github_github_list_repos`).",
     "Use `guardian_list_instances` to see available labels.",
+    "",
+    "## UNAVAILABLE instances — CRITICAL",
+    "",
+    "Any instance marked ⚠️ UNAVAILABLE above has failed discovery and CANNOT be called.",
+    "- DO NOT call `guardian_call_instance_tool` with its label.",
+    "- DO NOT call any tool with its prefix.",
+    "- DO NOT try to use it as a fallback.",
+    "- If the user asks for something involving an UNAVAILABLE instance:",
+    "  1. Check if another instance (same category, different label) can serve the request → use it directly.",
+    "  2. Check if a Figma plugin is connected (presence) → use `figma_plugin_execute` as alternative.",
+    "  3. Otherwise, respond with the canned message from the instance entry above.",
+    "- DO NOT attempt to call the UNAVAILABLE instance 'just in case' — the error will propagate and waste a turn.",
     "",
     "IMPORTANT: Figma plugins (from presence, e.g. 'Figma-Desktop-catevi') are NOT MCP instances.",
     "Do NOT call `guardian_call_instance_tool` with a plugin short ID.",

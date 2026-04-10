@@ -2186,11 +2186,23 @@ export default function Home() {
   const focusDesignInstanceId = selectedDesignTarget?.startsWith("instance:") ? selectedDesignTarget.slice(9) : undefined;
   const focusCodeInstanceId = selectedCodeTarget?.startsWith("instance:") ? selectedCodeTarget.slice(9) : undefined;
 
+  // Extract plugin clientId from TargetSelector if the user selected a plugin
+  // as design target. This allows figma_plugin_execute and Southleft cloud relay
+  // pairing to work when the webapp runs in a regular browser tab (not inside
+  // the Figma plugin iframe).
+  const selectedDesignItem = designTargets.find((t) => t.id === selectedDesignTarget);
+  const targetPluginClientId = selectedDesignItem?.kind === "plugin"
+    ? selectedDesignItem.clientId
+    : undefined;
+
   const chatWorkflow = useChatWorkflow({
     conversationId: activeConversationId,
     model: selectedModel || undefined,
     mcpServerIds: temporalMcpServerIds,
-    figmaPluginClientId: isFigmaPlugin ? myClientId : undefined,
+    // Priority: (1) plugin selected in TargetSelector → its clientId
+    //           (2) webapp running inside Figma plugin iframe → own clientId
+    //           (3) no plugin available → undefined (skips pairing + plugin execute)
+    figmaPluginClientId: targetPluginClientId ?? (isFigmaPlugin ? myClientId : undefined),
     enabled: temporalChatEnabled,
     selectedNode,
     figmaPluginContext,
@@ -3557,8 +3569,35 @@ export default function Home() {
               )}
               </div>
               <div className="relative mx-auto max-w-3xl">
-                {/* PeekBanner — anchored above the form, slides behind it on retract */}
-                <div className="absolute bottom-full left-0 right-0 mb-2 z-0">
+                {/* Stacked PeekBanners — anchored above the form, flex-col to stack vertically */}
+                <div className="absolute bottom-full left-0 right-0 mb-2 z-0 flex flex-col gap-2">
+                  {/* MCP Discovery Warning PeekBanner — amber, shows failed MCP connections */}
+                  <PeekBanner
+                    open={chatWorkflow.mcpDiscoveryFailures.length > 0}
+                    onClose={() => chatWorkflow.clearMCPDiscoveryFailures()}
+                  >
+                    {chatWorkflow.mcpDiscoveryFailures.length > 0 && (
+                      <div className="px-4 py-2.5 pr-16 rounded-xl bg-amber-500/10 border border-amber-500/25 backdrop-blur-lg text-xs text-amber-200/90">
+                        <div className="font-medium text-amber-300 mb-1.5">
+                          ⚠️ {chatWorkflow.mcpDiscoveryFailures.length} MCP {chatWorkflow.mcpDiscoveryFailures.length > 1 ? "services failed" : "service failed"} to connect
+                        </div>
+                        <ul className="space-y-1">
+                          {chatWorkflow.mcpDiscoveryFailures.map((f, i) => (
+                            <li key={i} className="text-[11px] leading-relaxed">
+                              <span className="font-medium text-amber-200">{f.displayName}</span>
+                              <span className="text-amber-400/60 font-mono ml-1.5">({f.label})</span>
+                              <div className="text-amber-200/60 font-mono mt-0.5 break-all">{f.error.slice(0, 300)}</div>
+                            </li>
+                          ))}
+                        </ul>
+                        <div className="mt-2 text-[10px] text-amber-300/50">
+                          These tools are unavailable for this conversation. Try reconnecting from <a href="/account" className="underline hover:text-amber-200">Account page</a>.
+                        </div>
+                      </div>
+                    )}
+                  </PeekBanner>
+
+                  {/* Chat Error PeekBanner — red, for fatal chat errors */}
                   <PeekBanner key={errorCount} open={!!chatErrorMsg} onClose={() => setChatErrorMsg(null)}>
                     {(() => {
                       if (!chatErrorMsg) return null;

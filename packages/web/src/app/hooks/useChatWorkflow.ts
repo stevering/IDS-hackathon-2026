@@ -36,12 +36,24 @@ export type ChatMessage = {
 
 export type ChatWorkflowStatus = "idle" | "streaming" | "tool_executing" | "error";
 
+/** One entry per MCP instance that failed discovery at workflow start. */
+export type MCPDiscoveryFailure = {
+  label: string;
+  displayName: string;
+  presetType: string;
+  scope: string;
+  error: string;
+};
+
 export type UseChatWorkflowReturn = {
   messages: ChatMessage[];
   sendMessage: (msg: { text: string }) => void;
   status: ChatWorkflowStatus;
   error: string | undefined;
   setMessages: (msgs: ChatMessage[]) => void;
+  /** Discovery failures surfaced from the Temporal worker (MCP instances that couldn't be reached). */
+  mcpDiscoveryFailures: MCPDiscoveryFailure[];
+  clearMCPDiscoveryFailures: () => void;
 };
 
 // ---------------------------------------------------------------------------
@@ -110,6 +122,8 @@ export function useChatWorkflow({
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [status, setStatus] = useState<ChatWorkflowStatus>("idle");
   const [error, setError] = useState<string | undefined>();
+  const [mcpDiscoveryFailures, setMcpDiscoveryFailures] = useState<MCPDiscoveryFailure[]>([]);
+  const clearMCPDiscoveryFailures = useCallback(() => setMcpDiscoveryFailures([]), []);
   const workflowIdRef = useRef<string | null>(null);
   const channelRef = useRef<ReturnType<ReturnType<typeof createClient>["channel"]> | null>(null);
   const streamingMsgRef = useRef<{ id: string; text: string; reasoning: string } | null>(null);
@@ -390,6 +404,13 @@ export function useChatWorkflow({
           )
         );
       })
+      .on("broadcast", { event: "mcp_discovery_error" }, (payload) => {
+        const { failures } = payload.payload as { failures: MCPDiscoveryFailure[] };
+        if (Array.isArray(failures) && failures.length > 0) {
+          console.warn("[ChatWorkflow] MCP discovery failures:", failures);
+          setMcpDiscoveryFailures(failures);
+        }
+      })
       .on("broadcast", { event: "text_complete" }, (payload) => {
         const { content, reasoning, hasToolCalls } = payload.payload as {
           content: string;
@@ -553,7 +574,7 @@ export function useChatWorkflow({
     };
   }, []);
 
-  return { messages, sendMessage, status, error, setMessages };
+  return { messages, sendMessage, status, error, setMessages, mcpDiscoveryFailures, clearMCPDiscoveryFailures };
 }
 
 // ---------------------------------------------------------------------------

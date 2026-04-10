@@ -31,16 +31,83 @@ export type StoredTokens = {
   expires_in?: number;
   refresh_token?: string;
   scope?: string;
+  /**
+   * Internal field (not from OAuth server) used to carry DCR-registered
+   * client credentials from callback to worker. Set by OAuth callbacks that
+   * use Dynamic Client Registration (Southleft, future Figma MCP rework).
+   */
+  _guardian_client_info?: {
+    client_id?: string;
+    client_secret?: string;
+  };
   [key: string]: unknown;
 };
 
-/** Per-provider refresh configuration (from BUILTIN_PRESETS or user-supplied). */
+/**
+ * Per-provider refresh configuration (from BUILTIN_PRESETS or user-supplied).
+ * Either `tokenEndpoint` (explicit) or `discoveryUrl` (for RFC 8414 discovery)
+ * must be provided.
+ */
 export type OAuthRefreshConfig = {
-  tokenEndpoint: string;
+  /** Direct token endpoint (e.g. GitHub's). */
+  tokenEndpoint?: string;
+  /**
+   * Base URL of the OAuth server for RFC 8414 discovery.
+   * token_endpoint is fetched from `<discoveryUrl>/.well-known/oauth-authorization-server`.
+   * Used by Figma MCP (mcp.figma.com) which publishes its metadata dynamically.
+   */
+  discoveryUrl?: string;
   clientId: string;
   /** Omit for public clients (PKCE only). */
   clientSecret?: string;
 };
+
+// ---------------------------------------------------------------------------
+// RFC 8414 token endpoint discovery (cached per worker process)
+// ---------------------------------------------------------------------------
+
+const tokenEndpointCache = new Map<string, string>();
+
+/**
+ * Discover the OAuth 2.0 token endpoint from a server's well-known metadata.
+ * Tries both OAuth 2.0 Authorization Server Metadata (RFC 8414) and OpenID
+ * Connect discovery as fallback.
+ */
+export async function discoverTokenEndpoint(baseUrl: string): Promise<string | null> {
+  const trimmed = baseUrl.replace(/\/$/, "");
+  const cached = tokenEndpointCache.get(trimmed);
+  if (cached) return cached;
+
+  const candidates = [
+    `${trimmed}/.well-known/oauth-authorization-server`,
+    `${trimmed}/.well-known/openid-configuration`,
+  ];
+
+  for (const url of candidates) {
+    try {
+      const res = await fetch(url, { headers: { Accept: "application/json" } });
+      if (!res.ok) continue;
+      const meta = (await res.json()) as { token_endpoint?: unknown };
+      if (typeof meta.token_endpoint === "string" && meta.token_endpoint.length > 0) {
+        tokenEndpointCache.set(trimmed, meta.token_endpoint);
+        log.info(`Discovered token endpoint for ${trimmed}: ${meta.token_endpoint}`);
+        return meta.token_endpoint;
+      }
+    } catch {
+      // Try next candidate
+    }
+  }
+
+  log.warn(`Could not discover token endpoint from ${trimmed}`);
+  return null;
+}
+
+/** Resolve the token endpoint from config — explicit or discovered. */
+async function resolveTokenEndpoint(config: OAuthRefreshConfig): Promise<string | null> {
+  if (config.tokenEndpoint) return config.tokenEndpoint;
+  if (config.discoveryUrl) return discoverTokenEndpoint(config.discoveryUrl);
+  return null;
+}
 
 export type RefreshResult =
   | { refreshed: false; tokens: StoredTokens }
@@ -76,6 +143,13 @@ export async function refreshOAuthToken(
   refreshToken: string,
   config: OAuthRefreshConfig,
 ): Promise<StoredTokens> {
+  const tokenEndpoint = await resolveTokenEndpoint(config);
+  if (!tokenEndpoint) {
+    throw new Error(
+      `No token endpoint available (neither explicit nor discoverable from ${config.discoveryUrl ?? "<none>"})`,
+    );
+  }
+
   const body = new URLSearchParams();
   body.set("grant_type", "refresh_token");
   body.set("refresh_token", refreshToken);
@@ -84,7 +158,7 @@ export async function refreshOAuthToken(
     body.set("client_secret", config.clientSecret);
   }
 
-  const res = await fetch(config.tokenEndpoint, {
+  const res = await fetch(tokenEndpoint, {
     method: "POST",
     headers: {
       "Content-Type": "application/x-www-form-urlencoded",
@@ -96,7 +170,7 @@ export async function refreshOAuthToken(
   if (!res.ok) {
     const text = await res.text().catch(() => "");
     throw new Error(
-      `Refresh failed ${res.status} at ${config.tokenEndpoint}: ${text.slice(0, 200)}`,
+      `Refresh failed ${res.status} at ${tokenEndpoint}: ${text.slice(0, 200)}`,
     );
   }
 
@@ -216,29 +290,146 @@ export async function refreshOAuthTokenIfNeeded(params: {
 }
 
 // ---------------------------------------------------------------------------
+// Reactive refresh — force refresh ignoring expires_at (for 401 retry paths)
+// ---------------------------------------------------------------------------
+
+/**
+ * Unconditionally refresh the stored tokens, regardless of expires_at.
+ * Used as a last-resort retry when an API returns 401 despite the token
+ * appearing still valid (e.g., Figma's expires_in sometimes lies, or the
+ * provider rotated/revoked the token out-of-band).
+ *
+ * Returns the fresh tokens on success, or null if refresh is impossible
+ * (no refresh_token, no config, or HTTP error).
+ */
+export async function forceRefreshOAuthToken(params: {
+  supabase: SupabaseClient;
+  userId: string;
+  serverId: string;
+  currentTokens: StoredTokens;
+  refreshConfig?: OAuthRefreshConfig;
+  scopes?: string;
+}): Promise<StoredTokens | null> {
+  const refreshToken = params.currentTokens.refresh_token;
+  if (!refreshToken) {
+    log.warn(`No refresh_token for ${params.serverId} — cannot force refresh`);
+    return null;
+  }
+  if (!params.refreshConfig) {
+    log.warn(`No refresh config for ${params.serverId} — cannot force refresh`);
+    return null;
+  }
+
+  log.info(`Force-refreshing ${params.serverId} token (reactive path, bypassing expires_at)`);
+
+  let newTokens: StoredTokens;
+  try {
+    newTokens = await refreshOAuthToken(refreshToken, params.refreshConfig);
+  } catch (err) {
+    log.error(`Force refresh failed for ${params.serverId}`, { error: String(err) });
+    return null;
+  }
+
+  if (!newTokens.refresh_token) {
+    newTokens.refresh_token = refreshToken;
+  }
+
+  const expiresInSec = typeof newTokens.expires_in === "number" ? newTokens.expires_in : null;
+  const newExpiresAt =
+    expiresInSec != null ? new Date(Date.now() + expiresInSec * 1000).toISOString() : null;
+
+  const { error: upsertErr } = await params.supabase.rpc("upsert_mcp_connection_service", {
+    p_user_id: params.userId,
+    p_server_id: params.serverId,
+    p_tokens_json: JSON.stringify(newTokens),
+    p_scopes: params.scopes ?? null,
+    p_expires_at: newExpiresAt,
+  });
+
+  if (upsertErr) {
+    log.error(`Failed to persist force-refreshed tokens`, { error: upsertErr.message });
+  } else {
+    log.info(`${params.serverId} token force-refreshed successfully, new expiry: ${newExpiresAt}`);
+  }
+
+  return newTokens;
+}
+
+// ---------------------------------------------------------------------------
 // Helper: resolve refresh config from a BUILTIN_PRESETS entry
 // ---------------------------------------------------------------------------
 
+/**
+ * Partial refresh config — may be missing clientId/clientSecret if they come
+ * from per-user DCR registration instead of global env vars. Call
+ * `completeRefreshConfig(partial, storedTokens)` to resolve the final creds.
+ */
+export type PartialRefreshConfig = {
+  tokenEndpoint?: string;
+  discoveryUrl?: string;
+  clientId?: string;
+  clientSecret?: string;
+};
+
 export function resolveRefreshConfigFromPreset(preset: {
   oauth_token_endpoint?: string;
+  oauth_discovery_url?: string;
   oauth_client_id_env?: string;
   oauth_client_secret_env?: string;
-}): OAuthRefreshConfig | undefined {
-  if (!preset.oauth_token_endpoint) return undefined;
-  if (!preset.oauth_client_id_env) return undefined;
+}): PartialRefreshConfig | undefined {
+  // Need either an explicit endpoint or a discovery URL
+  if (!preset.oauth_token_endpoint && !preset.oauth_discovery_url) return undefined;
 
-  const clientId = process.env[preset.oauth_client_id_env];
-  if (!clientId) {
-    log.warn(`Missing env var ${preset.oauth_client_id_env} — cannot refresh`);
-    return undefined;
-  }
-
+  const clientId = preset.oauth_client_id_env
+    ? process.env[preset.oauth_client_id_env]
+    : undefined;
   const clientSecret = preset.oauth_client_secret_env
     ? process.env[preset.oauth_client_secret_env]
     : undefined;
 
   return {
     tokenEndpoint: preset.oauth_token_endpoint,
+    discoveryUrl: preset.oauth_discovery_url,
+    clientId,
+    clientSecret,
+  };
+}
+
+/**
+ * Given a partial config (from preset) and stored tokens, produce the final
+ * OAuthRefreshConfig by filling in missing credentials from the stored
+ * `_guardian_client_info` field (set by DCR-aware callbacks).
+ *
+ * Silent — returns undefined without logging. Callers decide whether a missing
+ * config is noteworthy (e.g. `refreshOAuthTokenIfNeeded` only logs when a
+ * refresh is actually needed).
+ */
+export function completeRefreshConfig(
+  partial: PartialRefreshConfig | undefined,
+  storedTokens: StoredTokens,
+): OAuthRefreshConfig | undefined {
+  if (!partial) return undefined;
+  if (!partial.tokenEndpoint && !partial.discoveryUrl) return undefined;
+
+  let clientId = partial.clientId;
+  let clientSecret = partial.clientSecret;
+
+  // Fill from stored DCR client_info if env credentials are missing
+  const storedInfo = storedTokens._guardian_client_info;
+  if (storedInfo) {
+    if (!clientId && typeof storedInfo.client_id === "string") {
+      clientId = storedInfo.client_id;
+    }
+    if (!clientSecret && typeof storedInfo.client_secret === "string") {
+      clientSecret = storedInfo.client_secret;
+    }
+  }
+
+  if (!clientId) return undefined;
+
+  return {
+    tokenEndpoint: partial.tokenEndpoint,
+    discoveryUrl: partial.discoveryUrl,
     clientId,
     clientSecret,
   };

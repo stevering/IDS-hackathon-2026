@@ -74,7 +74,7 @@ const { executeFigmaCode } = proxyActivities<FigmaActivities>({
   retry: { maximumAttempts: 1 },
 });
 
-const { discoverMCPTools, executeMCPTool } = proxyActivities<MCPActivities>({
+const { discoverMCPTools, executeMCPTool, pairFCCloudRelay } = proxyActivities<MCPActivities>({
   startToCloseTimeout: "60 seconds",
   retry: { maximumAttempts: 2 },
 });
@@ -204,6 +204,26 @@ export async function chatWorkflow(params: ChatWorkflowParams): Promise<void> {
     }
   }
 
+  // ── Auto-pair Figma Console (Southleft) cloud relay ──────────────────────
+  // Southleft's figmaconsole_figma_execute write tools require the plugin to
+  // be paired with their cloud relay via `figma_pair_plugin`. Without this,
+  // every write tool call fails with "No plugin connected to cloud relay".
+  // Pair once here (idempotent) so the LLM can use write tools immediately.
+  const hasFigmaConsoleCloud = useV2
+    ? instanceManifest.some((e) => e.presetType === "figma_console")
+    : (params.mcpServerIds ?? []).includes("figma_console");
+  if (hasFigmaConsoleCloud && params.figmaPluginClientId) {
+    try {
+      await pairFCCloudRelay({
+        userId: params.userId,
+        pluginClientId: params.figmaPluginClientId,
+      });
+    } catch {
+      // Non-fatal: write tools may fail but read tools still work.
+      // User will see "No plugin connected to cloud relay" error on first write.
+    }
+  }
+
   // ── V2: inject Guardian meta-tools + instance system prompt ──────────────
   if (useV2 && instanceManifest.length > 0) {
     // Add the 3 meta-tools to the catalog (always available)
@@ -221,6 +241,29 @@ export async function chatWorkflow(params: ChatWorkflowParams): Promise<void> {
         ...messages[0],
         content: (messages[0].content ?? "") + "\n\n" + manifestBlock,
       };
+    }
+
+    // Surface discovery errors to the UI via a dedicated broadcast event.
+    // The frontend listens to this and shows a dismissible warning banner.
+    const failedInstances = instanceManifest.filter((i) => i.error);
+    if (failedInstances.length > 0) {
+      try {
+        await broadcastChatEvent({
+          conversationId: params.conversationId,
+          event: "mcp_discovery_error",
+          payload: {
+            failures: failedInstances.map((i) => ({
+              label: i.label,
+              displayName: i.displayName ?? i.presetType,
+              presetType: i.presetType,
+              scope: i.scope,
+              error: i.error ?? "Unknown error",
+            })),
+          },
+        });
+      } catch {
+        // Non-fatal — continue without notification
+      }
     }
   }
 
@@ -499,14 +542,26 @@ function buildManifestPrompt(manifest: InstanceManifestEntry[]): string {
   for (const e of manifest) {
     (byCategory[e.category] ??= []).push(e);
   }
+  let hasUnavailable = false;
   for (const [cat, entries] of Object.entries(byCategory)) {
     lines.push(`${cat.charAt(0).toUpperCase() + cat.slice(1)}:`);
     for (const e of entries) {
       const focus = e.isFocus ? " ← FOCUS" : "";
       const scope = e.scope === "local" ? " [local bridged]" : "";
-      lines.push(`- ${e.displayName ?? e.presetType} (${e.label})${scope}${focus}`);
-      if (e.toolNames.length > 0 && !e.isFocus) {
-        lines.push(`  Tools: ${e.toolNames.join(", ")}`);
+      const name = e.displayName ?? e.presetType;
+
+      if (e.error) {
+        hasUnavailable = true;
+        const shortError = e.error.length > 120 ? e.error.slice(0, 120) + "…" : e.error;
+        lines.push(`- ${name} (${e.label})${scope} ⚠️ UNAVAILABLE`);
+        lines.push(`  Reason: ${shortError}`);
+        lines.push(`  DO NOT call tools on this instance. DO NOT call guardian_call_instance_tool with label="${e.label}".`);
+        lines.push(`  If user asks about ${name}, tell them: "${name} is not reachable (reason: ${shortError}). Please reconnect it in Account page."`);
+      } else {
+        lines.push(`- ${name} (${e.label})${scope}${focus}`);
+        if (e.toolNames.length > 0 && !e.isFocus) {
+          lines.push(`  Tools: ${e.toolNames.join(", ")}`);
+        }
       }
     }
     lines.push("");
@@ -517,6 +572,25 @@ function buildManifestPrompt(manifest: InstanceManifestEntry[]): string {
     "Default: use focus tools directly. For other instances, call `guardian_call_instance_tool(label, raw_tool_name, args)`.",
     "  - `tool_name` = RAW name without prefix (e.g. `list_repos`, NOT `github_github_list_repos`).",
     "",
+  );
+
+  if (hasUnavailable) {
+    lines.push(
+      "## UNAVAILABLE instances — CRITICAL",
+      "",
+      "Any instance marked ⚠️ UNAVAILABLE has failed discovery and CANNOT be called.",
+      "- DO NOT call `guardian_call_instance_tool` with its label.",
+      "- DO NOT call any tool with its prefix.",
+      "- DO NOT try to use it as a fallback 'just in case' — the error will propagate and waste a turn.",
+      "- If the user asks for something involving an UNAVAILABLE instance:",
+      "  1. Try another instance in the same category (e.g. figmaconsole instead of figma).",
+      "  2. Check if a Figma plugin is connected (presence) → use `figma_plugin_execute` as alternative.",
+      "  3. Otherwise, tell the user the canned reconnect message from the instance entry above — do NOT narrate a long procedure.",
+      "",
+    );
+  }
+
+  lines.push(
     "IMPORTANT: Figma plugins (presence entries like 'Figma-Desktop-xxxxx') are NOT MCP instances.",
     "Do NOT use guardian_call_instance_tool with plugin names — use `figma_plugin_execute` instead.",
     "Only use instance labels shown above (e.g. 'figma', 'figmaconsole', 'github').",

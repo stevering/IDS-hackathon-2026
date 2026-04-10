@@ -19,8 +19,24 @@ import {
 } from "@guardian/orchestrations";
 import type { LLMToolDefinition } from "@guardian/orchestrations";
 import { callBridgedMCP } from "./mcp-bridge-client.js";
-import { refreshOAuthTokenIfNeeded, resolveRefreshConfigFromPreset, type StoredTokens } from "./oauth-refresh.js";
+import {
+  refreshOAuthTokenIfNeeded,
+  forceRefreshOAuthToken,
+  resolveRefreshConfigFromPreset,
+  completeRefreshConfig,
+  type StoredTokens,
+} from "./oauth-refresh.js";
 import { createLogger } from "../lib/log.js";
+
+// ---------------------------------------------------------------------------
+// 401 detection (library-agnostic string match on the error message)
+// ---------------------------------------------------------------------------
+
+function is401Error(err: unknown): boolean {
+  if (!err) return false;
+  const msg = err instanceof Error ? err.message : String(err);
+  return /\b401\b/.test(msg) || /Unauthorized/i.test(msg);
+}
 
 // ---------------------------------------------------------------------------
 // Supabase helper
@@ -64,6 +80,8 @@ export type InstanceManifestEntry = {
   toolCount: number;
   toolNames: string[];
   isFocus: boolean;
+  /** Populated when discovery failed for this instance (surfaced to the UI). */
+  error?: string;
 };
 
 // ---------------------------------------------------------------------------
@@ -131,7 +149,8 @@ export async function discoverMCPToolsV2(params: {
 
       log.info(`${inst.label}: ${tools.length} tools ${isFocus ? "(FOCUS)" : ""}`);
     } catch (err) {
-      log.error(`Failed to discover ${inst.label}`, { error: String(err) });
+      const errorMsg = err instanceof Error ? err.message : String(err);
+      log.error(`Failed to discover ${inst.label}`, { error: errorMsg });
       manifest.push({
         instanceId: inst.id,
         label: inst.label,
@@ -143,6 +162,7 @@ export async function discoverMCPToolsV2(params: {
         toolCount: 0,
         toolNames: [],
         isFocus,
+        error: errorMsg,
       });
     }
   }
@@ -210,8 +230,10 @@ async function loadCloudAccessToken(
   const scopes = (connRow?.scopes as string | null) ?? undefined;
 
   // Refresh if expiring soon and the preset declares a refresh endpoint.
-  // No-op for presets without oauth_token_endpoint (e.g. Figma today).
-  const refreshConfig = preset ? resolveRefreshConfigFromPreset(preset) : undefined;
+  // Credentials come from env vars OR from the stored tokens (_guardian_client_info)
+  // for DCR-based providers (Southleft, future Figma MCP).
+  const partialConfig = preset ? resolveRefreshConfigFromPreset(preset) : undefined;
+  const refreshConfig = completeRefreshConfig(partialConfig, currentTokens);
   const refreshResult = await refreshOAuthTokenIfNeeded({
     supabase,
     userId,
@@ -235,8 +257,61 @@ async function loadCloudAccessToken(
   return accessToken;
 }
 
+/**
+ * Force a reactive token refresh and return the new access token.
+ * Used on 401 errors when the proactive refresh didn't fire (e.g. expires_at
+ * is wrong). Returns undefined if refresh is impossible.
+ */
+async function forceRefreshCloudToken(
+  supabase: ReturnType<typeof createServiceClient>,
+  userId: string,
+  inst: DBInstance,
+  preset: BuiltinPreset | undefined,
+  log: ReturnType<typeof createLogger>,
+): Promise<string | undefined> {
+  if (!inst.connection_server_id || !preset) return undefined;
+
+  const { data: tokensJson } = await supabase.rpc("get_mcp_connection_service", {
+    p_user_id: userId,
+    p_server_id: inst.connection_server_id,
+  });
+  if (!tokensJson) return undefined;
+
+  let currentTokens: StoredTokens;
+  try {
+    currentTokens = JSON.parse(tokensJson as string) as StoredTokens;
+  } catch {
+    return undefined;
+  }
+
+  const { data: connRow } = await supabase
+    .from("user_mcp_connections")
+    .select("scopes")
+    .eq("user_id", userId)
+    .eq("server_id", inst.connection_server_id)
+    .maybeSingle();
+
+  const partialConfig = resolveRefreshConfigFromPreset(preset);
+  const refreshConfig = completeRefreshConfig(partialConfig, currentTokens);
+  const newTokens = await forceRefreshOAuthToken({
+    supabase,
+    userId,
+    serverId: inst.connection_server_id,
+    currentTokens,
+    refreshConfig,
+    scopes: (connRow?.scopes as string | null) ?? undefined,
+  });
+
+  if (!newTokens?.access_token) {
+    log.warn(`${inst.label}: force refresh failed, cannot retry`);
+    return undefined;
+  }
+
+  return newTokens.access_token;
+}
+
 // ---------------------------------------------------------------------------
-// Cloud instance discovery (direct HTTP with Vault token)
+// Cloud instance discovery (direct HTTP with Vault token + 401 retry)
 // ---------------------------------------------------------------------------
 
 async function discoverCloudInstance(
@@ -247,26 +322,45 @@ async function discoverCloudInstance(
   preset: BuiltinPreset | undefined,
   log: ReturnType<typeof createLogger>,
 ): Promise<LLMToolDefinition[]> {
-  const accessToken = await loadCloudAccessToken(supabase, userId, inst, preset, log);
-  if (!accessToken) return [];
-
   const url = preset?.cloud_url ?? (inst.config as { url?: string }).url;
   if (!url) {
     log.warn(`${inst.label}: no URL`);
     return [];
   }
 
-  const headers: Record<string, string> = {};
-  if (accessToken) headers["Authorization"] = `Bearer ${accessToken}`;
-  if (inst.preset_type === "guardian") {
-    headers["X-Guardian-User-Id"] = userId;
-  }
+  const initialToken = await loadCloudAccessToken(supabase, userId, inst, preset, log);
+  if (!initialToken) return [];
 
-  const client = await createMCPClient({
-    transport: { type: "http", url, headers: Object.keys(headers).length > 0 ? headers : undefined },
-  });
-  const mcpTools = await client.tools();
-  await client.close();
+  // Attempt discovery with the current token; on 401, force a refresh and retry once.
+  const tryFetch = async (accessToken: string) => {
+    const headers: Record<string, string> = { Authorization: `Bearer ${accessToken}` };
+    if (inst.preset_type === "guardian") {
+      headers["X-Guardian-User-Id"] = userId;
+    }
+    const client = await createMCPClient({
+      transport: { type: "http", url, headers },
+    });
+    try {
+      return await client.tools();
+    } finally {
+      await client.close().catch(() => {});
+    }
+  };
+
+  let mcpTools;
+  try {
+    mcpTools = await tryFetch(initialToken);
+  } catch (err) {
+    if (!is401Error(err)) throw err;
+    log.warn(`${inst.label}: 401 on discovery — attempting force refresh`);
+    const refreshedToken = await forceRefreshCloudToken(supabase, userId, inst, preset, log);
+    if (!refreshedToken) {
+      log.error(`${inst.label}: force refresh failed, cannot retry`);
+      throw err;
+    }
+    mcpTools = await tryFetch(refreshedToken);
+    log.info(`${inst.label}: discovery succeeded after reactive refresh`);
+  }
 
   return Object.entries(mcpTools).map(([name, tool]) => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -359,33 +453,53 @@ export async function executeMCPToolV2(params: {
     return { success: false, error: result.error };
   }
 
-  // Cloud: direct HTTP call with auto-refresh
+  // Cloud: direct HTTP call with proactive + reactive refresh
   const preset = BUILTIN_PRESETS[inst.preset_type];
-  const accessToken = await loadCloudAccessToken(supabase, params.userId, inst, preset, log);
-  if (!accessToken) {
-    return { success: false, error: `Instance ${inst.label} is not connected (no OAuth token)` };
-  }
-
   const url = preset?.cloud_url ?? (inst.config as { url?: string }).url;
   if (!url) {
     return { success: false, error: `No URL for ${inst.label}` };
   }
 
-  try {
+  const initialToken = await loadCloudAccessToken(supabase, params.userId, inst, preset, log);
+  if (!initialToken) {
+    return { success: false, error: `Instance ${inst.label} is not connected (no OAuth token)` };
+  }
+
+  // Single tool call with potential 401 retry after reactive refresh.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const tryExecute = async (accessToken: string): Promise<any> => {
     const headers: Record<string, string> = { Authorization: `Bearer ${accessToken}` };
     const client = await createMCPClient({
       transport: { type: "http", url, headers },
     });
-    const mcpTools = await client.tools();
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const tool = mcpTools[params.toolName] as any;
-    if (!tool) {
-      await client.close();
-      return { success: false, error: `Tool "${params.toolName}" not found on ${inst.label}` };
+    try {
+      const mcpTools = await client.tools();
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const tool = mcpTools[params.toolName] as any;
+      if (!tool) {
+        throw new Error(`Tool "${params.toolName}" not found on ${inst.label}`);
+      }
+      return await tool.execute(params.arguments, { toolCallId: `mcp-${Date.now()}` });
+    } finally {
+      await client.close().catch(() => {});
     }
+  };
 
-    const result = await tool.execute(params.arguments, { toolCallId: `mcp-${Date.now()}` });
-    await client.close();
+  try {
+    let result;
+    try {
+      result = await tryExecute(initialToken);
+    } catch (err) {
+      if (!is401Error(err)) throw err;
+      log.warn(`${inst.label}: 401 on exec — attempting force refresh`);
+      const refreshedToken = await forceRefreshCloudToken(supabase, params.userId, inst, preset, log);
+      if (!refreshedToken) {
+        log.error(`${inst.label}: force refresh failed, cannot retry`);
+        throw err;
+      }
+      result = await tryExecute(refreshedToken);
+      log.info(`${inst.label}: execution succeeded after reactive refresh`);
+    }
 
     if (result && typeof result === "object" && (result as Record<string, unknown>).isError) {
       // Extract the actual error text from the MCP CallToolResult content
