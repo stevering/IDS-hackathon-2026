@@ -31,6 +31,22 @@ export type BuiltinPreset = {
   oauth_scopes?: string;
   /** Cloud only: webapp route that initiates the OAuth flow. */
   oauth_auth_path?: string;
+  /**
+   * Cloud only: OAuth2 token endpoint for refresh_token grant (RFC 6749 §6).
+   * If defined, the worker will auto-refresh expired tokens before using them.
+   * If undefined, tokens are used as-is and expire naturally (user must re-auth).
+   */
+  oauth_token_endpoint?: string;
+  /**
+   * Cloud only: env var name holding the client_id for refresh requests.
+   * If absent, refresh is skipped (assumes user manually re-auths on expiration).
+   */
+  oauth_client_id_env?: string;
+  /**
+   * Cloud only: env var name holding the client_secret (for confidential clients).
+   * Public clients (PKCE) may omit this.
+   */
+  oauth_client_secret_env?: string;
   /** Local http/sse only: default URL if the user does not override. */
   default_local_url?: string;
   /** Local stdio only: command to spawn the subprocess. */
@@ -67,6 +83,8 @@ export const BUILTIN_PRESETS: Record<string, BuiltinPreset> = {
     cloud_url: "https://mcp.figma.com/mcp",
     oauth_scopes: "mcp:connect",
     oauth_auth_path: "/api/auth/figma-mcp",
+    // Refresh not implemented for Figma (90-day token lifetime, low churn).
+    // Can be enabled later by setting oauth_token_endpoint.
     is_template: false,
   },
   figma_console: {
@@ -95,6 +113,10 @@ export const BUILTIN_PRESETS: Record<string, BuiltinPreset> = {
     cloud_url: "https://api.githubcopilot.com/mcp",
     oauth_scopes: "repo",
     oauth_auth_path: "/api/auth/github-mcp",
+    // GitHub Apps with user-to-server expiration enabled: 8h access + rotating refresh.
+    oauth_token_endpoint: "https://github.com/login/oauth/access_token",
+    oauth_client_id_env: "GITHUB_CLIENT_ID",
+    oauth_client_secret_env: "GITHUB_CLIENT_SECRET",
     is_template: false,
   },
   figma_desktop: {

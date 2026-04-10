@@ -19,6 +19,7 @@ import {
 } from "@guardian/orchestrations";
 import type { LLMToolDefinition } from "@guardian/orchestrations";
 import { callBridgedMCP } from "./mcp-bridge-client.js";
+import { refreshOAuthTokenIfNeeded, resolveRefreshConfigFromPreset, type StoredTokens } from "./oauth-refresh.js";
 import { createLogger } from "../lib/log.js";
 
 // ---------------------------------------------------------------------------
@@ -151,6 +152,90 @@ export async function discoverMCPToolsV2(params: {
 }
 
 // ---------------------------------------------------------------------------
+// Shared helper: load cloud access token (with auto-refresh via RFC 6749)
+// ---------------------------------------------------------------------------
+
+/**
+ * For cloud instances, resolves the access token to use:
+ *   - Guardian (special): service-role key
+ *   - Other presets: reads from Vault, auto-refreshes if expiring soon
+ *
+ * Returns undefined if no token is available (caller should skip/fail).
+ */
+async function loadCloudAccessToken(
+  supabase: ReturnType<typeof createServiceClient>,
+  userId: string,
+  inst: DBInstance,
+  preset: BuiltinPreset | undefined,
+  log: ReturnType<typeof createLogger>,
+): Promise<string | undefined> {
+  // Special case: Guardian MCP uses service-role key directly
+  if (inst.preset_type === "guardian") {
+    return process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.STORAGE_SUPABASE_SERVICE_ROLE_KEY;
+  }
+
+  if (!inst.connection_server_id) {
+    log.warn(`${inst.label}: no connection_server_id (not connected)`);
+    return undefined;
+  }
+
+  // Fetch tokens from Vault
+  const { data: tokensJson, error } = await supabase.rpc("get_mcp_connection_service", {
+    p_user_id: userId,
+    p_server_id: inst.connection_server_id,
+  });
+
+  if (error || !tokensJson) {
+    log.warn(`${inst.label}: no vault token for ${inst.connection_server_id}`);
+    return undefined;
+  }
+
+  let currentTokens: StoredTokens;
+  try {
+    currentTokens = JSON.parse(tokensJson as string) as StoredTokens;
+  } catch {
+    log.warn(`${inst.label}: malformed tokens JSON`);
+    return undefined;
+  }
+
+  // Fetch expiry from user_mcp_connections metadata (non-sensitive, no Vault)
+  const { data: connRow } = await supabase
+    .from("user_mcp_connections")
+    .select("expires_at, scopes")
+    .eq("user_id", userId)
+    .eq("server_id", inst.connection_server_id)
+    .maybeSingle();
+
+  const expiresAt = connRow?.expires_at ? new Date(connRow.expires_at as string) : null;
+  const scopes = (connRow?.scopes as string | null) ?? undefined;
+
+  // Refresh if expiring soon and the preset declares a refresh endpoint.
+  // No-op for presets without oauth_token_endpoint (e.g. Figma today).
+  const refreshConfig = preset ? resolveRefreshConfigFromPreset(preset) : undefined;
+  const refreshResult = await refreshOAuthTokenIfNeeded({
+    supabase,
+    userId,
+    serverId: inst.connection_server_id,
+    currentTokens,
+    expiresAt,
+    refreshConfig,
+    scopes,
+  });
+
+  if (refreshResult.refreshed) {
+    log.info(`${inst.label}: token auto-refreshed`);
+  }
+
+  const accessToken = refreshResult.tokens.access_token;
+  if (!accessToken) {
+    log.warn(`${inst.label}: token has no access_token after refresh`);
+    return undefined;
+  }
+
+  return accessToken;
+}
+
+// ---------------------------------------------------------------------------
 // Cloud instance discovery (direct HTTP with Vault token)
 // ---------------------------------------------------------------------------
 
@@ -162,32 +247,8 @@ async function discoverCloudInstance(
   preset: BuiltinPreset | undefined,
   log: ReturnType<typeof createLogger>,
 ): Promise<LLMToolDefinition[]> {
-  if (!inst.connection_server_id) {
-    log.warn(`${inst.label}: no connection_server_id (not connected)`);
-    return [];
-  }
-
-  let accessToken: string | undefined;
-  if (inst.preset_type === "guardian") {
-    accessToken = process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.STORAGE_SUPABASE_SERVICE_ROLE_KEY;
-  } else {
-    const { data: tokensJson, error } = await supabase.rpc("get_mcp_connection_service", {
-      p_user_id: userId,
-      p_server_id: inst.connection_server_id,
-    });
-
-    if (error || !tokensJson) {
-      log.warn(`${inst.label}: no vault token for ${inst.connection_server_id}`);
-      return [];
-    }
-
-    const tokens = JSON.parse(tokensJson as string);
-    accessToken = tokens.access_token;
-    if (!accessToken) {
-      log.warn(`${inst.label}: token has no access_token`);
-      return [];
-    }
-  }
+  const accessToken = await loadCloudAccessToken(supabase, userId, inst, preset, log);
+  if (!accessToken) return [];
 
   const url = preset?.cloud_url ?? (inst.config as { url?: string }).url;
   if (!url) {
@@ -298,33 +359,20 @@ export async function executeMCPToolV2(params: {
     return { success: false, error: result.error };
   }
 
-  // Cloud: direct HTTP call
-  if (!inst.connection_server_id) {
+  // Cloud: direct HTTP call with auto-refresh
+  const preset = BUILTIN_PRESETS[inst.preset_type];
+  const accessToken = await loadCloudAccessToken(supabase, params.userId, inst, preset, log);
+  if (!accessToken) {
     return { success: false, error: `Instance ${inst.label} is not connected (no OAuth token)` };
   }
 
-  const { data: tokensJson } = await supabase.rpc("get_mcp_connection_service", {
-    p_user_id: params.userId,
-    p_server_id: inst.connection_server_id,
-  });
-
-  if (!tokensJson) {
-    return { success: false, error: `No token for ${inst.connection_server_id}` };
-  }
-
-  const tokens = JSON.parse(tokensJson as string);
-  if (!tokens.access_token) {
-    return { success: false, error: `Token for ${inst.label} has no access_token` };
-  }
-
-  const preset = BUILTIN_PRESETS[inst.preset_type];
   const url = preset?.cloud_url ?? (inst.config as { url?: string }).url;
   if (!url) {
     return { success: false, error: `No URL for ${inst.label}` };
   }
 
   try {
-    const headers: Record<string, string> = { Authorization: `Bearer ${tokens.access_token}` };
+    const headers: Record<string, string> = { Authorization: `Bearer ${accessToken}` };
     const client = await createMCPClient({
       transport: { type: "http", url, headers },
     });
