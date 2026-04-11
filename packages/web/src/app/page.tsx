@@ -3,7 +3,7 @@
 import { useChat } from "@ai-sdk/react";
 import { DefaultChatTransport, lastAssistantMessageIsCompleteWithToolCalls } from "ai";
 import { useChatWorkflow } from "./hooks/useChatWorkflow";
-import { useState, useRef, useEffect, useLayoutEffect, useMemo, useCallback } from "react";
+import { useState, useRef, useEffect, useLayoutEffect, useMemo, useCallback, Children, type ReactNode } from "react";
 import Link from "next/link";
 import type { GatewayModel } from "./api/gateway-models/route";
 import { useFigmaPlugin, pushPluginEvent, type PluginEvent, type FigmaPluginContext, type ExecuteCodeResult } from "./hooks/useFigmaPlugin";
@@ -63,6 +63,118 @@ const markdownComponents: Components = {
     </a>
   ),
 };
+
+/**
+ * Wrap each non-whitespace character of a text string in a
+ * `<span class="streaming-char">`. Whitespace (space / newline / tab) is
+ * kept as plain text so the browser can still wrap lines at natural word
+ * boundaries — otherwise every char would be an independent inline-block
+ * and the browser could break inside words.
+ *
+ * Keys are derived from the absolute offset of the char inside the string,
+ * so across re-renders (as more chars are appended) React's reconciler
+ * matches existing spans by key and does NOT re-mount them — which would
+ * re-trigger the CSS animation on every already-rendered char. Only NEW
+ * chars at the end actually mount → only NEW chars animate.
+ *
+ * `idSeed` discriminates keys across sibling string chunks so e.g. the
+ * second text child doesn't collide with the first.
+ */
+function wrapCharsInSpans(children: ReactNode, idSeed = ""): ReactNode {
+  return Children.map(children, (child, childIdx) => {
+    if (typeof child === "string") {
+      const out: ReactNode[] = [];
+      for (let i = 0; i < child.length; i++) {
+        const c = child[i];
+        if (c === " " || c === "\n" || c === "\t") {
+          // Plain text — preserves natural line-wrap points.
+          out.push(c);
+        } else {
+          out.push(
+            <span
+              key={`${idSeed}${childIdx}-${i}`}
+              className="streaming-char"
+            >
+              {c}
+            </span>
+          );
+        }
+      }
+      return <>{out}</>;
+    }
+    // Element children (<em>, <strong>, …) are rendered by their own
+    // streamingMarkdownComponents override, which recursively applies
+    // wrapCharsInSpans to THEIR children. So we just pass them through.
+    return child;
+  });
+}
+
+/**
+ * Markdown component overrides used ONLY for the currently-streaming
+ * assistant message. Every text-bearing element wraps its string children
+ * in per-character spans so the CSS `streaming-char-in` keyframe fires for
+ * each new character as it arrives.
+ *
+ * `code` (inline) and `pre`/code blocks are intentionally NOT overridden:
+ * animating monospace source char-by-char looks glitchy and is rarely
+ * worth the cost.
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const wrapFactory = (Tag: string) => ({ children, ...props }: any) => {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const Component = Tag as any;
+  return <Component {...props}>{wrapCharsInSpans(children, `${Tag}-`)}</Component>;
+};
+
+const streamingMarkdownComponents: Components = {
+  a: ({ href, children, ...props }) => (
+    <a href={href} target="_blank" rel="noopener noreferrer" {...props}>
+      {wrapCharsInSpans(children, "a-")}
+    </a>
+  ),
+  p: wrapFactory("p"),
+  li: wrapFactory("li"),
+  strong: wrapFactory("strong"),
+  em: wrapFactory("em"),
+  h1: wrapFactory("h1"),
+  h2: wrapFactory("h2"),
+  h3: wrapFactory("h3"),
+  h4: wrapFactory("h4"),
+  h5: wrapFactory("h5"),
+  h6: wrapFactory("h6"),
+  blockquote: wrapFactory("blockquote"),
+  del: wrapFactory("del"),
+};
+
+/**
+ * StreamingMarkdown — renders a streaming assistant message's current
+ * content via `streamingMarkdownComponents` so each char is wrapped in
+ * a `.streaming-char` span that runs the fade-in-blur keyframe on mount.
+ *
+ * NOTE: an earlier version of this component tried to split the content
+ * into a memoized "stable" zone (everything up to the last \n\n) and an
+ * animated "fresh" tail, to bound the per-char wrapping cost. That caused
+ * a visible flicker where letters near the split boundary appeared to
+ * CHANGE on screen: when a new `\n\n` migrated chars from fresh to stable,
+ * the fresh component's `<span>` keys (based on local offset inside the
+ * fresh substring) shifted by that delta. React reused the same DOM nodes
+ * at keys 0, 1, 2, … but their text content changed to the new first
+ * chars of the now-shorter fresh string — so "S", "e", "c" would visibly
+ * become "T", "h", "i" etc. Un-fixable without threading absolute text
+ * offsets through react-markdown's children tree (there's no clean hook
+ * for that). Dropped the split; perf is regained via the 20fps commit
+ * throttle in useChatWorkflow instead.
+ */
+function StreamingMarkdown({ content }: { content: string }) {
+  return (
+    <ReactMarkdown
+      remarkPlugins={[remarkGfm]}
+      components={streamingMarkdownComponents}
+    >
+      {fixUnpairedMarkdown(content)}
+    </ReactMarkdown>
+  );
+}
 
 /**
  * Fix markdown rendering issues in AI-generated content:
@@ -2178,10 +2290,10 @@ export default function Home() {
     figmaPluginContext,
     connectedAgents: temporalConnectedAgents,
     isLocalPlugin: !!figmaPluginContext,
-    source: selectedSource,
-    keyId: selectedKeyId,
-    designInstanceId: focusDesignInstanceId,
-    codeInstanceId: focusCodeInstanceId,
+    source: selectedSource ?? undefined,
+    keyId: selectedKeyId ?? undefined,
+    designInstanceId: focusDesignInstanceId ?? undefined,
+    codeInstanceId: focusCodeInstanceId ?? undefined,
   });
 
   // Unified chat variables — always Temporal (legacy useChat path is dead code).
@@ -3290,8 +3402,21 @@ export default function Home() {
                                       className="my-3 max-w-full rounded-lg border border-white/10"
                                     />
                                   )
+                                ) : isLoading && isLastMsg && m.role === "assistant" ? (
+                                  // Streaming bubble: use <StreamingMarkdown> which
+                                  // splits the content into a memoized stable zone
+                                  // (rendered once per paragraph) and a small fresh
+                                  // tail that goes through per-char span wrapping.
+                                  // This keeps the hot path bounded to ~100 chars
+                                  // regardless of total message length.
+                                  <StreamingMarkdown key={j} content={seg.content} />
                                 ) : (
-                                  <ReactMarkdown key={j} remarkPlugins={[remarkGfm]} components={markdownComponents}>
+                                  // Finalized message — plain markdown, no spans.
+                                  <ReactMarkdown
+                                    key={j}
+                                    remarkPlugins={[remarkGfm]}
+                                    components={markdownComponents}
+                                  >
                                     {fixUnpairedMarkdown(seg.content)}
                                   </ReactMarkdown>
                                 )

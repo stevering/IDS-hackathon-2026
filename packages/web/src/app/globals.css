@@ -838,6 +838,52 @@ select {
   border: 1px solid rgba(255, 255, 255, 0.08);
 }
 
+/* ── Streaming assistant text — per-character fade-in + blur ──────────────
+   Each character rendered inside the currently-streaming assistant message
+   is wrapped in a <span class="streaming-char"> by the
+   `streamingMarkdownComponents` override in page.tsx. The span runs this
+   single-shot keyframe on mount: starts at opacity 0 + blur(4px), resolves
+   to fully sharp over 260ms. Spaces are kept as plain text nodes (outside
+   spans) so natural line-wrapping still works at word boundaries.
+
+   `animation-fill-mode: backwards` applies the `from` state immediately on
+   mount (before the animation delay, if any), so there's no 1-frame flash
+   of unstyled content between render and animation start.
+
+   This animation is NEVER applied to finalized messages: the streaming
+   components are only used for the last assistant message while isLoading,
+   and swapped out for plain markdown on text_complete. */
+@keyframes streaming-char-in {
+  from {
+    opacity: 0;
+    filter: blur(3px);
+  }
+  to {
+    opacity: 1;
+    filter: blur(0);
+  }
+}
+
+.streaming-char {
+  /* `filter` requires a rendering layer; inline-block provides it without
+     breaking text flow in practice (spaces stay as plain text so the
+     browser still picks word-boundary break points correctly). */
+  display: inline-block;
+  /* 140ms (was 260ms) — short enough that only ~3 chars are simultaneously
+     mid-animation at typical typewriter speed, so each letter reads as a
+     distinct "pop in" rather than blending into a continuous fuzzy zone.
+     Blur starts at 3px (was 4px) for the same reason: faster clearance,
+     chars become recognisable earlier in their animation window. */
+  animation: streaming-char-in 140ms cubic-bezier(0.2, 0, 0, 1) backwards;
+  /* NOTE: we deliberately do NOT set `will-change` here. On a typical
+     bubble there are hundreds of .streaming-char elements alive at the
+     same time but only ~3 are actually mid-animation. Setting will-change
+     on all of them forces the compositor to promote every char to its own
+     GPU layer permanently, which ends up costing more than it saves. The
+     browser auto-promotes the actively-animating ones and drops the layer
+     as soon as the animation ends — that's the cheaper path here. */
+}
+
 .glass-input-bar {
   background: rgba(10, 10, 10, 0.2);
   backdrop-filter: blur(40px) saturate(1.6);

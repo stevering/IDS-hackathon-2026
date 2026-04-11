@@ -354,12 +354,24 @@ export function useChatWorkflow({
     smoothingRef.current = { textCursor: 0, reasoningCursor: 0, rafId: null, lastTick: 0 };
 
     // ── Smoothing tuning ─────────────────────────────────────────────────
-    // These three numbers control the typewriter feel. Local constants so
-    // they can be tweaked without changing the hook's public surface.
+    // These numbers control the typewriter feel. Local constants so they
+    // can be tweaked without changing the hook's public surface.
     const SMOOTHING_ENABLED = true;
-    const CATCH_UP_MS = 450;        // drain a burst within ~this window
-    const MIN_CHARS_PER_SEC = 60;   // floor — ensures the cursor never stalls
-    const MAX_CHARS_PER_SEC = 500;  // cap — prevents runaway on large backlogs
+    const CATCH_UP_MS = 450;          // drain a burst within ~this window
+    const MIN_CHARS_PER_SEC = 60;     // floor — ensures the cursor never stalls
+    const MAX_CHARS_PER_SEC = 500;    // cap — prevents runaway on large backlogs
+    // Minimum interval between React state commits. rAF fires at 60fps but
+    // each commit re-wraps ALL chars in every markdown element of the bubble
+    // through react-markdown + wrapCharsInSpans — O(N) where N is total
+    // message length. For a 2000-char response committing 60 times/sec
+    // bogs down the main thread. Committing at ~20fps (50ms) gives React
+    // room to breathe without making the typewriter feel stuttered: at
+    // ~120 chars/sec typewriter speed that's ~6 chars per commit, which
+    // combined with the per-char mount animation still reads as "one char
+    // at a time" since the char spans arrive slightly staggered in render.
+    // Drain rate accumulates between commits, so total throughput is
+    // unchanged — we just bundle more chars per React update.
+    const MIN_COMMIT_INTERVAL_MS = 50;
 
     // Commit the currently-displayed slice to React state. Reads the target
     // from streamingMsgRef and the cursors from smoothingRef, then rebuilds
@@ -384,9 +396,11 @@ export function useChatWorkflow({
       );
     };
 
-    // One animation frame of drain. Advances each cursor by a char count
-    // proportional to the elapsed frame time and the current backlog, then
-    // re-schedules itself if anything remains pending.
+    // One animation frame of drain. rAF fires at ~60fps but we only COMMIT
+    // to React state at ~30fps (MIN_COMMIT_INTERVAL_MS). On skipped frames
+    // the cursors stay in place and we re-queue another rAF — that means
+    // the ADVANCE calculation uses the full elapsed time since the last
+    // commit, so characters still arrive at the correct rate overall.
     const smoothTick = () => {
       const buf = smoothingRef.current;
       buf.rafId = null;
@@ -394,6 +408,17 @@ export function useChatWorkflow({
       if (!snap) return;
 
       const now = performance.now();
+
+      // Throttle gate: if we committed recently, skip advancing and
+      // re-queue another frame. Keeps the loop alive without spending
+      // React reconciliation cycles on every rAF.
+      if (now - buf.lastTick < MIN_COMMIT_INTERVAL_MS) {
+        if (snap.text.length > buf.textCursor || snap.reasoning.length > buf.reasoningCursor) {
+          buf.rafId = requestAnimationFrame(smoothTick);
+        }
+        return;
+      }
+
       const dt = Math.max(1, now - buf.lastTick);
       buf.lastTick = now;
 

@@ -209,7 +209,7 @@ export async function POST(request: Request) {
       .eq("id", conversationId)
       .eq("user_id", userId);
 
-    log.info("chatWorkflow started", { conv: conversationId, model: resolvedModel, mcpServerIds: mcpServerIds ?? [], figmaPluginClientId: figmaPluginClientId ?? null, hasDynamicCtx: dynamicCtx.length > 0, designInstanceId: designInstanceId ?? null, codeInstanceId: codeInstanceId ?? null });
+    log.info("chatWorkflow started", { conv: conversationId, model: resolvedModel, mcpServerIds: (mcpServerIds ?? []).join(",") || null, mcpServerCount: mcpServerIds?.length ?? 0, figmaPluginClientId: figmaPluginClientId ?? null, hasDynamicCtx: dynamicCtx.length > 0, designInstanceId: designInstanceId ?? null, codeInstanceId: codeInstanceId ?? null });
 
     return NextResponse.json({ workflowId, conversationId });
   } catch (err) {

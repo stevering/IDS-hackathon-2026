@@ -5,6 +5,7 @@
   "packageManager": "pnpm@10.9.0",
   "scripts": {
     "dev": "bash scripts/dev.sh",
+    "dev:web-prod": "bash scripts/dev.sh --web-prod",
     "dev:preview": "bash scripts/dev-preview.sh",
     "dev:prod": "GUARDIAN_URL=https://guardian.figdesys.com bash scripts/dev-preview.sh",
     "dev:apps": "turbo run dev --filter=@guardian/web --filter=@guardian/mcp-server --filter=@guardian/figma-plugin --filter=@guardian/figma-desktop-plugin --filter=@guardian/figma-widget --filter=@guardian/bridge --filter=@guardian/electron-overlay",

@@ -237,6 +237,29 @@ This starts **everything**:
 
 All output is printed to the terminal **and** written to `logs/dev.log` (gitignored).
 
+#### Production-mode web (perf testing)
+
+```bash
+pnpm dev:web-prod
+```
+
+Launches the full dev stack like `pnpm dev`, but `@guardian/web` is built
+with `next build` and served with `next start` instead of running under
+`next dev`. Everything else (Temporal server, Temporal worker, MCP server,
+Figma plugins, bridge, overlay) still runs in dev/watch mode.
+
+Use this when profiling the web app — dev mode adds heavy React overhead
+(`jsxDEV` stack capture, `createTask` instrumentation, double-render under
+StrictMode) that masks real bottlenecks in Chrome DevTools traces. Prod
+mode strips all of it.
+
+Caveats:
+- First build takes ~30-60s; subsequent rebuilds are incremental.
+- **No HMR on `@guardian/web`** — you have to stop (Ctrl+C) and re-run the
+  script to pick up code changes.
+- Port 3000 must be free before launching (the script will abort with a
+  hint if it's occupied).
+
 #### Individual services
 
 ```bash
