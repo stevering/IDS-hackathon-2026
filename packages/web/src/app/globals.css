@@ -89,7 +89,14 @@ select {
      background (see above rule), so only the outward halo is visible.
 
      Kept close to the variant 11 mockup's geometry: inset -6px, blur
-     14px, pulse from opacity 0.5 to 0.95 + scale 0.98 to 1.05. */
+     14px, pulse from opacity 0.5 to 0.95 + scale 0.98 to 1.05.
+
+     z-index: -1 pushes the halo BELOW the scroll container (and its
+     translucent scrollbar) so the scrollbar paints on top of it, just
+     like it paints on top of the rest of the app background. Relies
+     on the composer container having NO z-index and the .composer-aurora
+     wrapper NOT creating a stacking context, so this -1 escapes all the
+     way up to the slider's transform-based stacking context. */
   content: '';
   position: absolute;
   inset: -6px;
@@ -104,6 +111,7 @@ select {
     #a78bfa 100%
   );
   filter: blur(14px);
+  z-index: -1;
   pointer-events: none;
   animation:
     guardianAuroraSpin 3s linear infinite,

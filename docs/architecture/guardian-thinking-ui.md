@@ -83,6 +83,27 @@ Uses the `@property --aurora-angle` CSS custom property (declared in
 `globals.css`) to animate the conic gradient's starting angle, plus a
 secondary `::before` pseudo-element for the blurred pulse halo.
 
+**Scrollbar stacking.** The blurred halo (`.composer-aurora-active::before`)
+declares `z-index: -1` so it paints BEHIND the nearest ancestor stacking
+context — in practice, behind the chat panel's scroll container. This is
+what lets the native scrollbar paint on top of the halo instead of the
+halo being sharp-clipped at the scrollbar's edge (or worse, painting over
+the scrollbar).
+
+For `z-index: -1` to escape, **every ancestor of `.composer-aurora` up to
+the target stacking context must NOT create its own stacking context**.
+In particular, the composer wrapper div in `page.tsx` (`absolute bottom-0
+left-0 right-0 …`) must **not** carry `z-10` — the `z-index: 10` that
+used to sit there would trap the halo inside that local context. The
+chain currently walks up through `.composer-aurora` → the `max-w-3xl`
+form wrapper → the absolute-positioned composer wrapper → `.min-w-full
+h-full relative` → and finally lands in the slider's stacking context
+(created by the `transform` on `.flex.h-full.transition-transform`),
+which is the one that also hosts the scroll container. Inside that
+shared context the halo paints below, the scroll container (and its
+scrollbar) paints above. Verified at 1000×800 with Playwright — the
+thumb is visible on top of the halo when they overlap.
+
 Props: `active: boolean`, `children: ReactNode`.
 
 ### `PhaseBubble.tsx`
@@ -164,6 +185,14 @@ Four touchpoints:
 
 6. The local `ThinkingIndicator` function (previously lines 655-687)
    was removed entirely.
+
+7. **Remove `z-10` from the composer wrapper div.** The `absolute
+   bottom-0 left-0 right-0 …` wrapper previously carried `z-10`, which
+   created its own stacking context and trapped the aurora halo's
+   `z-index: -1` inside — making the halo paint on top of the chat
+   panel's scrollbar. Dropping the `z-10` lets the halo escape to the
+   slider's stacking context, where it paints below the scroll container.
+   See "Scrollbar stacking" under `ComposerAurora.tsx` above.
 
 ## Styles
 

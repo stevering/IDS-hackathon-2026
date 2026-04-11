@@ -3532,8 +3532,14 @@ export default function Home() {
 
           <div ref={messagesEndRef} />
             </div>
-            {/* ── Chat input form (inside the chat panel) ── */}
-            <div className="absolute bottom-0 left-0 right-0 z-10 px-3 sm:px-4 pt-2 pb-[calc(0.75rem+env(safe-area-inset-bottom))]">
+            {/* ── Chat input form (inside the chat panel) ──
+                 Note: no z-index on this container. The composer-aurora halo
+                 inside drops to z-index: -1 so the scroll container (and its
+                 translucent scrollbar) paints above it — exactly like the
+                 app's animated background. The form inside keeps its own
+                 z-10 via its inline className so it stays above everything
+                 else in the slider's stacking context. */}
+            <div className="absolute bottom-0 left-0 right-0 px-3 sm:px-4 pt-2 pb-[calc(0.75rem+env(safe-area-inset-bottom))]">
               <div className="max-w-3xl mx-auto">
               {/* Approval overlay — sticky above the input form */}
               {pendingApproval && (
