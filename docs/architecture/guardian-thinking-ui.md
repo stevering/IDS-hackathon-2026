@@ -1,0 +1,198 @@
+# Guardian "thinking" UI
+
+Replaces the legacy 3-dot `ThinkingIndicator` in the chat with a richer
+set of cues that make it clear the LLM is working, distinguish the
+different phases of a run, and give the character itself some personality.
+
+## Goals
+
+1. **Continuous animation while generating** — a visual signal that keeps
+   moving for the entire duration of a run (not just a per-phase burst).
+2. **Phase distinction** — users should be able to tell at a glance whether
+   the LLM is thinking, running a tool, or writing the final answer.
+3. **Per-phase history** — clickable disclosure of what steps have already
+   completed, with real timings.
+4. **Alive mascot** — the Guardian character animates per-part (eyes,
+   ears, star, body) so it feels like a creature, not a logo.
+5. **No layout shift** — components fit inside the existing composer
+   without pushing other UI around when idle vs generating.
+
+## Components
+
+All four live in `packages/web/src/components/guardian/`.
+
+### `GuardianMascot.tsx`
+
+The animated character rendered as an inline SVG. The actual asset lives
+at `packages/web/public/guardian-logo.svg`; the React component inlines
+the same paths because per-part animation requires CSS access to the
+internal classes (`.eye-left`, `.hear-left`, `.guardian-star`, etc.),
+which is not possible with `<img>` or `<use xlink:href>`.
+
+**Multi-channel animation architecture.** Four independent channels run
+in parallel on the same SVG, each with its own timer and animation pool:
+
+| Channel | Target elements | Pool size | Pause cadence | Example anims |
+|---|---|---|---|---|
+| `body` | `<svg>` root | 20 | 300-1200 ms | bounce, tilt, jelly, twist, stretch, melt, pop, shiver, think, lean |
+| `eyes` | `.eye-left` + `.eye-right` | 7 (blink weighted ×2) | 600-2200 ms | blink, double blink, wink-left/right, look, eyes wide |
+| `ears` | `.hear-left` + `.hear-right` | 2 | 1800-4500 ms | wiggle, perk |
+| `star` | `.guardian-star` | 2 | 1500-3500 ms | rotate sparkle, twinkle |
+
+Because each channel targets **different** elements, their CSS transforms
+compose cleanly rather than overriding each other — the character can
+blink while its body is twisting while its ears wiggle, all independently
+timed. The initial start of each channel is staggered with
+`Math.random() * initialDelayMax` so they don't fire in lockstep at mount.
+
+Every animation keyframe starts and ends at the identity transform so
+removing a class mid-cycle never causes a visual snap when the next one
+is picked.
+
+Props: `size?: number` (default 42), `paused?: boolean` (freezes all
+channels when true), `className?: string`.
+
+### `GuardianSendButton.tsx`
+
+Round composer send button that reuses `<GuardianMascot />`. A radial
+light-violet gradient background gives enough contrast for the dark
+character strokes to read against the dark chat theme. On hover while
+generating, the mascot cross-fades to a red stop square via opacity +
+scale transition, and the button background tints red to signal the
+"cancel" intent.
+
+Props: `isGenerating: boolean` plus all standard
+`ButtonHTMLAttributes<HTMLButtonElement>`, so callers can pass
+`type="submit"`, `disabled`, `onClick`, etc.
+
+**Important:** the actual "stop generation" action is **not** wired up
+yet — `useChatWorkflow` does not currently expose a stop function. The
+hover visual is decorative until that lands. The form-level
+`if (isLoading) return;` guard in `onSubmit` keeps clicks harmless in the
+meantime.
+
+### `ComposerAurora.tsx`
+
+Thin wrapper that adds a rotating multicolor conic-gradient border around
+its children, plus a blurred pulsing halo behind. Active state is
+controlled by the `active` prop. When inactive, the wrapper is invisible
+(transparent background) but still takes the same 2 px padding so
+toggling it on/off causes no layout shift.
+
+Uses the `@property --aurora-angle` CSS custom property (declared in
+`globals.css`) to animate the conic gradient's starting angle, plus a
+secondary `::before` pseudo-element for the blurred pulse halo.
+
+Props: `active: boolean`, `children: ReactNode`.
+
+### `PhaseBubble.tsx`
+
+Mini "thinking" speech bubble that attaches below the last chat message
+(aligned left, assistant-style). Shows the current phase label with a
+stacked-ticker animation (old label slides up & fades out, new label
+slides up from below & fades in) via `PhaseTicker`, the inner subcomponent
+that uses a ref-based imperative update so both items can coexist briefly
+during the CSS transition.
+
+Clicking the bubble toggles an accordion that reveals the history of past
+phases in the current run, with their durations.
+
+Props: `currentPhase: Phase | null`, `history: PhaseHistoryEntry[]`.
+
+### `useGuardianPhase.ts`
+
+Derives the current phase and history from the Temporal chat workflow
+state. Phase mapping:
+
+```
+status === "tool_executing"                           → "tool"    (label: "Running: <toolName>")
+status === "streaming" + last part is reasoning/stream → "reason"  ("Thinking…")
+status === "streaming" + last part is text/streaming   → "write"   ("Writing response…")
+status === "streaming" + anything else                 → "prepare" ("Preparing context…")
+status === "idle" / "error"                            → null      (no phase shown)
+```
+
+The `currentToolName` is looked up by walking messages backward and
+picking the most recent `dynamic-tool` part whose `state === "running"`
+— that matches the chat workflow's convention of creating a new
+`tool-${toolCallId}` message when a tool call starts.
+
+**History lifecycle.** Every time the derived phase type or label
+changes, the previous phase is pushed into the history array with its
+elapsed duration (capped at the 8 most recent entries). History is
+cleared at the start of a new run so it doesn't accumulate across
+messages.
+
+Returns `{ currentPhase, history }`.
+
+## Integration in `page.tsx`
+
+Four touchpoints:
+
+1. **Imports** — `GuardianSendButton`, `ComposerAurora`, `PhaseBubble`,
+   `useGuardianPhase` added after the existing component imports.
+
+2. **Hook call** — right after `const isLoading = status === "streaming"`:
+
+   ```ts
+   const guardianPhase = useGuardianPhase(chatWorkflow.status, messages);
+   ```
+
+3. **Replace the `ThinkingIndicator` render** — the line that was
+   `{isLoading && <ThinkingIndicator />}` now renders `<PhaseBubble>`:
+
+   ```tsx
+   {isLoading && (
+     <PhaseBubble
+       currentPhase={guardianPhase.currentPhase}
+       history={guardianPhase.history}
+     />
+   )}
+   ```
+
+4. **Wrap the chat `<form>` with `<ComposerAurora active={isLoading}>`**.
+   The existing form keeps its own `rounded-2xl border border-white/30`
+   and background; the wrapper adds an outer 2 px aurora ring on top.
+
+5. **Replace both submit buttons** (chat panel + orchestration panel)
+   with `<GuardianSendButton type="submit" isGenerating={isLoading}
+   disabled={!isLoading && !input.trim()} />`. The old button's
+   `disabled={isLoading || !input.trim()}` became
+   `disabled={!isLoading && !input.trim()}` — now the button stays
+   enabled during generation so hover-to-stop can work once the stop
+   action is wired up.
+
+6. The local `ThinkingIndicator` function (previously lines 655-687)
+   was removed entirely.
+
+## Styles
+
+All styles live in `packages/web/src/app/globals.css` under the
+"Guardian 'thinking' UI" section, between the `.markdown-body` rule and
+the legacy `thinkingPulse` keyframe. Classes are prefixed to avoid
+collisions:
+
+- `.composer-aurora`, `.composer-aurora-active` — composer wrapper
+- `.guardian-send-btn`, `.guardian-send-btn-generating` — button
+- `.guardian-mascot`, `.guardian-mascot .*`, `.guardian-mascot.anim-*` — mascot
+- `.phase-bubble`, `.phase-bubble.expanded`, `.phase-history-*` — bubble
+- `.phase-line`, `.phase-item.entering/active/leaving` — ticker
+
+Keyframes are prefixed `gm-*` for mascot animations,
+`guardianAurora*` for the composer, `phaseIconPulse` / `phaseHistoryIn`
+for the bubble.
+
+## Browser requirements
+
+- `@property` CSS custom property registration for the animated conic
+  gradient angle (Chrome 85+, Safari 16.4+, Firefox 128+).
+- `transform-box: fill-box` for per-part SVG animation origin
+  (supported everywhere modern).
+- CSS `conic-gradient`, `filter: blur()`, CSS custom properties.
+
+## Mockup
+
+The original preview is in `tmp/thinking-indicator-mockups.html` — 11
+variants plus a combo, used during design iteration. The implemented
+version corresponds to variant 11 (Aurora pulse + history bubble + real
+Guardian mascot with multi-channel per-part animations).

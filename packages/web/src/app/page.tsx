@@ -38,6 +38,10 @@ import { MCPStatusBar } from "@/components/MCPStatusBar";
 import { AgentMessageBubble } from "@/components/AgentMessageBubble";
 import { MentionAutocomplete, type MentionSuggestion, parseMentions } from "@/components/MentionAutocomplete";
 import { AutoAcceptToggle } from "@/components/AutoAcceptToggle";
+import { GuardianSendButton } from "@/components/guardian/GuardianSendButton";
+import { ComposerAurora } from "@/components/guardian/ComposerAurora";
+import { PhaseBubble } from "@/components/guardian/PhaseBubble";
+import { useGuardianPhase } from "@/components/guardian/useGuardianPhase";
 
 type TextSegment = { type: "text"; content: string };
 type ImageSegment = { type: "image"; src: string; complete: boolean };
@@ -646,40 +650,6 @@ function MCPErrorBlock({ errorText, onAskHelp }: { errorText: string; onAskHelp:
               Ask help for this
             </button>
           </div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function ThinkingIndicator() {
-  const [elapsed, setElapsed] = useState(0);
-
-  useEffect(() => {
-    const start = Date.now();
-    const interval = setInterval(() => {
-      setElapsed(Math.floor((Date.now() - start) / 1000));
-    }, 1000);
-    return () => clearInterval(interval);
-  }, []);
-
-  const minutes = Math.floor(elapsed / 60);
-  const seconds = elapsed % 60;
-  const timeStr = minutes > 0
-    ? `${minutes}m ${seconds.toString().padStart(2, "0")}s`
-    : `${seconds}s`;
-
-  return (
-    <div className="mb-4">
-      <div className="max-w-full sm:max-w-[80%] rounded-lg px-3 sm:px-4 py-3 glass-msg-ai">
-        <div className="flex items-center gap-3 text-sm text-white/50">
-          <div className="flex items-center gap-1.5">
-            <span className="thinking-dot" />
-            <span className="thinking-dot" />
-            <span className="thinking-dot" />
-          </div>
-          <span className="font-medium">Thinking</span>
-          <span className="ml-auto tabular-nums text-white/30 text-xs">{timeStr}</span>
         </div>
       </div>
     </div>
@@ -2589,6 +2559,14 @@ export default function Home() {
 
   const isLoading = status === "streaming";
 
+  // Derive the current "thinking" phase + history for the PhaseBubble.
+  // See packages/web/src/components/guardian/useGuardianPhase.ts for the
+  // mapping from Temporal workflow state to phase types.
+  const guardianPhase = useGuardianPhase(
+    chatWorkflow.status,
+    messages as unknown as Parameters<typeof useGuardianPhase>[1],
+  );
+
   const handleScroll = () => {
     const el = scrollContainerRef.current;
     if (!el) return;
@@ -3484,7 +3462,12 @@ export default function Home() {
           );
           })}
 
-          {isLoading && <ThinkingIndicator />}
+          {isLoading && (
+            <PhaseBubble
+              currentPhase={guardianPhase.currentPhase}
+              history={guardianPhase.history}
+            />
+          )}
 
           {/* Copy debug context button — always visible after all messages */}
           {messages.length > 0 && !isLoading && (
@@ -3624,6 +3607,7 @@ export default function Home() {
                     })()}
                   </PeekBanner>
                 </div>
+              <ComposerAurora active={isLoading}>
               <form
                 onSubmit={onSubmit}
                 className="relative z-10 rounded-2xl border border-white/30 overflow-visible"
@@ -3877,19 +3861,15 @@ export default function Home() {
                       );
                     })()}
                   </div>
-                  <button
+                  <GuardianSendButton
                     type="submit"
-                    disabled={isLoading || !input.trim()}
-                    className="p-1.5 rounded-lg bg-white text-black hover:bg-white/90 disabled:bg-white/10 disabled:text-white/20 disabled:cursor-not-allowed transition-colors shrink-0 cursor-pointer"
-                  >
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                      <path d="M12 19V5" />
-                      <path d="M5 12l7-7 7 7" />
-                    </svg>
-                  </button>
+                    isGenerating={isLoading}
+                    disabled={!isLoading && !input.trim()}
+                  />
                   </div>
                 </div>
               </form>
+              </ComposerAurora>
               </div>{/* end form + peek wrapper */}
             </div>
             </div>{/* end chat panel */}
@@ -4019,16 +3999,11 @@ export default function Home() {
                   rows={2}
                 />
                 <div className="absolute bottom-0 right-0 flex items-center gap-2 px-3 py-2">
-                  <button
+                  <GuardianSendButton
                     type="submit"
-                    disabled={isLoading || !input.trim()}
-                    className="p-1.5 rounded-lg bg-white text-black hover:bg-white/90 disabled:bg-white/10 disabled:text-white/20 disabled:cursor-not-allowed transition-colors shrink-0 cursor-pointer"
-                  >
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                      <path d="M12 19V5" />
-                      <path d="M5 12l7-7 7 7" />
-                    </svg>
-                  </button>
+                    isGenerating={isLoading}
+                    disabled={!isLoading && !input.trim()}
+                  />
                 </div>
               </form>
             </div>

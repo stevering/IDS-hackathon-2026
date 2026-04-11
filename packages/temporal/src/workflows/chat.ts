@@ -34,6 +34,7 @@ import {
   chatNewMessageSignal,
   chatCancelSignal,
   chatStatusQuery,
+  chatConversationIdQuery,
   type ChatNewMessagePayload,
   type ChatWorkflowStatus,
 } from "../signals/definitions.js";
@@ -153,6 +154,12 @@ export async function chatWorkflow(params: ChatWorkflowParams): Promise<void> {
     currentStep,
     errorMessage,
   }));
+
+  // Defense-in-depth: the /api/chat-temporal/[id]/message route queries this
+  // before signalling the workflow to ensure it matches the requested
+  // conversationId. If mismatched, the route starts a fresh workflow for the
+  // correct conversation instead of cross-contaminating.
+  setHandler(chatConversationIdQuery, () => params.conversationId);
 
   // ── Load conversation history ───────────────────────────────────────────
   const history = await loadChatHistory({

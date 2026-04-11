@@ -42,6 +42,464 @@ select {
   line-height: 1.6;
 }
 
+/* ============================================================================
+   Guardian "thinking" UI — aurora composer, animated mascot send button,
+   phase bubble. Used by the components in src/components/guardian/*.
+   ============================================================================ */
+
+@property --aurora-angle {
+  syntax: '<angle>';
+  initial-value: 0deg;
+  inherits: false;
+}
+
+/* --- Composer aurora wrapper --------------------------------------------- */
+
+.composer-aurora {
+  position: relative;
+  border-radius: 18px;
+  padding: 2px;
+  background: transparent;
+  transition: background 0.35s ease;
+}
+
+.composer-aurora-active {
+  /* The wrapper itself has NO background and NO mask — otherwise the
+     mask would clip its children (the form) and make the interior go
+     invisible. Instead the ring is drawn by the ::after pseudo-element
+     below, and the diffuse halo is a multi-layer box-shadow (which is
+     outside-only by definition, so it never bleeds into the form). */
+  box-shadow:
+    0 0 0 1px rgba(167, 139, 250, 0.45),
+    0 0 18px 2px rgba(167, 139, 250, 0.35),
+    0 0 36px 6px rgba(96, 165, 250, 0.2),
+    0 0 56px 12px rgba(244, 114, 182, 0.12);
+  animation: guardianAuroraPulse 2.6s ease-in-out infinite;
+}
+
+.composer-aurora-active::after {
+  /* The 2 px multicolor ring. Lives on a pseudo-element so the mask
+     does not affect the real form children. The mask uses the "two
+     layers XOR" trick: layer 1 clipped to content-box, layer 2 clipped
+     to border-box; XOR leaves only the difference = the 2 px padding
+     ring. pointer-events: none lets clicks pass through to the form. */
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  padding: 2px;
+  background: conic-gradient(
+    from var(--aurora-angle),
+    #a78bfa 0%,
+    #60a5fa 20%,
+    #34d399 40%,
+    #fbbf24 60%,
+    #f472b6 80%,
+    #a78bfa 100%
+  );
+  pointer-events: none;
+  -webkit-mask-image:
+    linear-gradient(#fff 0 0),
+    linear-gradient(#fff 0 0);
+  -webkit-mask-clip: content-box, border-box;
+  -webkit-mask-composite: xor;
+          mask-image:
+    linear-gradient(#fff 0 0),
+    linear-gradient(#fff 0 0);
+          mask-clip: content-box, border-box;
+          mask-composite: exclude;
+  animation: guardianAuroraSpin 3s linear infinite;
+}
+
+@keyframes guardianAuroraSpin {
+  to { --aurora-angle: 360deg; }
+}
+
+@keyframes guardianAuroraPulse {
+  0%, 100% {
+    box-shadow:
+      0 0 0 1px rgba(167, 139, 250, 0.35),
+      0 0 14px 1px rgba(167, 139, 250, 0.22),
+      0 0 26px 4px rgba(96, 165, 250, 0.12),
+      0 0 42px 8px rgba(244, 114, 182, 0.06);
+  }
+  50% {
+    box-shadow:
+      0 0 0 1px rgba(167, 139, 250, 0.6),
+      0 0 22px 4px rgba(167, 139, 250, 0.5),
+      0 0 44px 10px rgba(96, 165, 250, 0.28),
+      0 0 70px 18px rgba(244, 114, 182, 0.18);
+  }
+}
+
+/* --- Guardian send button ------------------------------------------------- */
+
+.guardian-send-btn {
+  position: relative;
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  background: radial-gradient(
+    circle at 50% 45%,
+    rgba(245, 243, 255, 0.98) 0%,
+    rgba(221, 214, 254, 0.95) 70%,
+    rgba(196, 181, 253, 0.9) 100%
+  );
+  border: 1px solid rgba(167, 139, 250, 0.55);
+  box-shadow:
+    0 0 0 1px rgba(167, 139, 250, 0.3),
+    0 0 18px rgba(167, 139, 250, 0.25),
+    inset 0 -2px 6px rgba(124, 58, 237, 0.08);
+  cursor: pointer;
+  padding: 0;
+  flex-shrink: 0;
+  transition:
+    background 0.25s ease,
+    border-color 0.25s ease,
+    box-shadow 0.25s ease,
+    transform 0.15s ease;
+}
+
+.guardian-send-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.guardian-send-btn:not(:disabled):hover {
+  transform: scale(1.03);
+}
+
+/* Hover behaviour while generating → cross-fade to the red "stop" square. */
+.guardian-send-btn-generating:hover {
+  background: radial-gradient(
+    circle at 50% 45%,
+    rgba(254, 242, 242, 0.98) 0%,
+    rgba(254, 202, 202, 0.95) 100%
+  );
+  border-color: rgba(239, 68, 68, 0.7);
+  box-shadow:
+    0 0 0 1px rgba(239, 68, 68, 0.4),
+    0 0 18px rgba(239, 68, 68, 0.4);
+}
+
+.guardian-mascot-wrap,
+.guardian-stop-wrap {
+  position: absolute;
+  inset: 5px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition:
+    opacity 0.22s ease,
+    transform 0.28s cubic-bezier(0.4, 0, 0.2, 1);
+  pointer-events: none;
+}
+
+.guardian-mascot-wrap { opacity: 1; transform: scale(1); }
+
+.guardian-stop-wrap {
+  opacity: 0;
+  transform: scale(0.4);
+  color: #dc2626;
+}
+
+.guardian-stop-wrap svg {
+  width: 100%;
+  height: 100%;
+}
+
+.guardian-send-btn-generating:hover .guardian-mascot-wrap {
+  opacity: 0;
+  transform: scale(0.4);
+}
+
+.guardian-send-btn-generating:hover .guardian-stop-wrap {
+  opacity: 1;
+  transform: scale(1);
+}
+
+/* --- Guardian mascot SVG + multi-channel animations ---------------------- */
+
+.guardian-mascot {
+  transform-box: fill-box;
+  transform-origin: center;
+  will-change: transform;
+  display: block;
+}
+
+.guardian-mascot .eye-left,
+.guardian-mascot .eye-right,
+.guardian-mascot .guardian-star {
+  transform-box: fill-box;
+  transform-origin: center;
+}
+
+.guardian-mascot .hear-left,
+.guardian-mascot .hear-right {
+  transform-box: fill-box;
+  transform-origin: 50% 100%; /* pivot from the base of the ear */
+}
+
+/* Body animations (whole SVG root) */
+.guardian-mascot.anim-bounce   { animation: gm-bounce 1.6s ease-in-out; }
+.guardian-mascot.anim-tilt     { animation: gm-tilt 2.0s ease-in-out; }
+.guardian-mascot.anim-breath   { animation: gm-breath 2.4s ease-in-out; }
+.guardian-mascot.anim-wiggle   { animation: gm-wiggle 2.0s ease-in-out; }
+.guardian-mascot.anim-nod      { animation: gm-nod 1.6s ease-in-out; }
+.guardian-mascot.anim-stretch  { animation: gm-stretch 1.4s ease-in-out; }
+.guardian-mascot.anim-squish   { animation: gm-squish 1.0s ease-in-out; }
+.guardian-mascot.anim-jelly    { animation: gm-jelly 1.8s ease-in-out; }
+.guardian-mascot.anim-twist    { animation: gm-twist 1.6s ease-in-out; }
+.guardian-mascot.anim-twist3d  { animation: gm-twist3d 2.2s ease-in-out; }
+.guardian-mascot.anim-swirl    { animation: gm-swirl 2.0s ease-in-out; }
+.guardian-mascot.anim-surprise { animation: gm-surprise 1.3s ease-in-out; }
+.guardian-mascot.anim-wobble   { animation: gm-wobble 1.6s ease-in-out; }
+.guardian-mascot.anim-stretchy { animation: gm-stretchy 1.5s cubic-bezier(0.34, 1.56, 0.64, 1); }
+.guardian-mascot.anim-shiver   { animation: gm-shiver 0.6s linear; }
+.guardian-mascot.anim-melt     { animation: gm-melt 2.0s ease-in-out; }
+.guardian-mascot.anim-pop      { animation: gm-pop 0.9s cubic-bezier(0.68, -0.55, 0.27, 1.55); }
+.guardian-mascot.anim-excited  { animation: gm-excited 1.0s ease-in-out; }
+.guardian-mascot.anim-think    { animation: gm-think 2.5s ease-in-out; }
+.guardian-mascot.anim-lean     { animation: gm-lean 1.8s ease-in-out; }
+
+/* Eye animations */
+.guardian-mascot.anim-blink .eye-left,
+.guardian-mascot.anim-blink .eye-right {
+  animation: gm-blink 0.45s ease-in-out;
+}
+.guardian-mascot.anim-doubleblink .eye-left,
+.guardian-mascot.anim-doubleblink .eye-right {
+  animation: gm-double-blink 0.9s ease-in-out;
+}
+.guardian-mascot.anim-look .eye-left,
+.guardian-mascot.anim-look .eye-right {
+  animation: gm-look 2.4s ease-in-out;
+}
+.guardian-mascot.anim-winkleft .eye-left {
+  animation: gm-blink 0.6s ease-in-out;
+}
+.guardian-mascot.anim-winkright .eye-right {
+  animation: gm-blink 0.6s ease-in-out;
+}
+.guardian-mascot.anim-eyeswide .eye-left,
+.guardian-mascot.anim-eyeswide .eye-right {
+  animation: gm-eyes-wide 1.2s ease-in-out;
+}
+
+/* Ear animations */
+.guardian-mascot.anim-ears .hear-left {
+  animation: gm-ear-left 1.2s ease-in-out;
+}
+.guardian-mascot.anim-ears .hear-right {
+  animation: gm-ear-right 1.2s ease-in-out;
+}
+.guardian-mascot.anim-earsperk .hear-left,
+.guardian-mascot.anim-earsperk .hear-right {
+  animation: gm-ears-perk 0.8s ease-in-out;
+}
+
+/* Star insignia animations */
+.guardian-mascot.anim-star .guardian-star {
+  animation: gm-star 1.4s ease-in-out;
+}
+.guardian-mascot.anim-startwinkle .guardian-star {
+  animation: gm-star-twinkle 0.9s ease-in-out;
+}
+
+/* Keyframes — body */
+@keyframes gm-bounce   { 0%, 100% { transform: translateY(0); } 30% { transform: translateY(-4px); } 60% { transform: translateY(0); } 80% { transform: translateY(-2px); } }
+@keyframes gm-tilt     { 0%, 100% { transform: rotate(0deg); } 30% { transform: rotate(-10deg); } 70% { transform: rotate(10deg); } }
+@keyframes gm-breath   { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.08); } }
+@keyframes gm-wiggle   { 0%, 100% { transform: rotate(0deg); } 25% { transform: rotate(-6deg); } 75% { transform: rotate(6deg); } }
+@keyframes gm-nod      { 0%, 100% { transform: rotate(0deg) translateY(0); } 25% { transform: rotate(-4deg) translateY(-1px); } 75% { transform: rotate(4deg) translateY(1px); } }
+@keyframes gm-stretch  { 0%, 100% { transform: scaleX(1) scaleY(1); } 35% { transform: scaleX(0.85) scaleY(1.2); } 70% { transform: scaleX(1.05) scaleY(0.92); } }
+@keyframes gm-squish   { 0%, 100% { transform: scaleX(1) scaleY(1); } 50% { transform: scaleX(1.15) scaleY(0.82); } }
+@keyframes gm-jelly    { 0%, 100% { transform: scale(1); } 15% { transform: scaleY(1.12) scaleX(0.9); } 30% { transform: scaleY(0.92) scaleX(1.08); } 45% { transform: scaleY(1.06) scaleX(0.96); } 60% { transform: scaleY(0.98) scaleX(1.02); } 80% { transform: scaleY(1.02) scaleX(0.99); } }
+@keyframes gm-twist    { 0%, 100% { transform: skewX(0deg) rotate(0deg); } 25% { transform: skewX(-10deg) rotate(-3deg); } 75% { transform: skewX(10deg) rotate(3deg); } }
+@keyframes gm-twist3d  { 0%, 100% { transform: perspective(120px) rotateY(0deg); } 50% { transform: perspective(120px) rotateY(180deg); } }
+@keyframes gm-swirl    { 0%, 100% { transform: rotate(0deg) scale(1); } 25% { transform: rotate(-14deg) scale(0.94); } 50% { transform: rotate(0deg) scale(1.1); } 75% { transform: rotate(14deg) scale(0.94); } }
+@keyframes gm-surprise { 0%, 100% { transform: scale(1); } 15% { transform: scale(1.18); } 30% { transform: scale(0.94); } 50% { transform: scale(1.06); } 70% { transform: scale(0.99); } }
+@keyframes gm-wobble   { 0%, 100% { transform: rotate(0deg) scaleX(1) scaleY(1); } 20% { transform: rotate(-5deg) scaleX(1.06) scaleY(0.94); } 40% { transform: rotate(4deg) scaleX(0.95) scaleY(1.05); } 60% { transform: rotate(-3deg) scaleX(1.03) scaleY(0.97); } 80% { transform: rotate(2deg) scaleX(0.98) scaleY(1.02); } }
+@keyframes gm-stretchy { 0%, 100% { transform: scaleX(1) scaleY(1); } 20% { transform: scaleX(1.1) scaleY(0.85); } 45% { transform: scaleX(0.8) scaleY(1.25); } 70% { transform: scaleX(1.05) scaleY(0.95); } }
+@keyframes gm-shiver   { 0%, 100% { transform: translateX(0); } 10% { transform: translateX(-1px); } 20% { transform: translateX(1px); } 30% { transform: translateX(-1px); } 40% { transform: translateX(1px); } 50% { transform: translateX(-1px); } 60% { transform: translateX(1px); } 70% { transform: translateX(-1px); } 80% { transform: translateX(0.5px); } }
+@keyframes gm-melt     { 0%, 100% { transform: scaleY(1) translateY(0); } 50% { transform: scaleY(0.85) translateY(2px); } }
+@keyframes gm-pop      { 0%, 100% { transform: scale(1); } 30% { transform: scale(0.85); } 60% { transform: scale(1.2); } }
+@keyframes gm-excited  { 0%, 100% { transform: translateY(0); } 20% { transform: translateY(-1.5px); } 40% { transform: translateY(0); } 60% { transform: translateY(-2px); } 80% { transform: translateY(0); } }
+@keyframes gm-think    { 0%, 100% { transform: rotate(0deg); } 30%, 60% { transform: rotate(-12deg); } }
+@keyframes gm-lean     { 0%, 100% { transform: translateX(0) rotate(0deg); } 50% { transform: translateX(3px) rotate(5deg); } }
+
+/* Keyframes — eyes */
+@keyframes gm-blink        { 0%, 100% { transform: scaleY(1); } 50% { transform: scaleY(0.05); } }
+@keyframes gm-double-blink { 0%, 30%, 55%, 80%, 100% { transform: scaleY(1); } 15%, 67% { transform: scaleY(0.05); } }
+@keyframes gm-look         { 0%, 100% { transform: translateX(0); } 25% { transform: translateX(-2.5px); } 60% { transform: translateX(2.5px); } }
+@keyframes gm-eyes-wide    { 0%, 100% { transform: scale(1); } 40% { transform: scale(1.25); } 70% { transform: scale(0.95); } }
+
+/* Keyframes — ears */
+@keyframes gm-ear-left  { 0%, 100% { transform: rotate(0deg); } 25% { transform: rotate(-18deg); } 65% { transform: rotate(10deg); } }
+@keyframes gm-ear-right { 0%, 100% { transform: rotate(0deg); } 25% { transform: rotate(18deg); } 65% { transform: rotate(-10deg); } }
+@keyframes gm-ears-perk { 0%, 100% { transform: scaleY(1); } 30% { transform: scaleY(1.3); } 70% { transform: scaleY(0.95); } }
+
+/* Keyframes — star */
+@keyframes gm-star         { 0%, 100% { transform: rotate(0deg) scale(1); } 50% { transform: rotate(90deg) scale(1.5); } }
+@keyframes gm-star-twinkle { 0%, 100% { transform: scale(1); opacity: 0.92; } 50% { transform: scale(1.4); opacity: 1; } }
+
+/* --- Phase bubble (attached under the last chat message) ----------------- */
+
+.phase-bubble {
+  align-self: flex-start;
+  max-width: 88%;
+  background: rgba(167, 139, 250, 0.06);
+  border: 1px solid rgba(167, 139, 250, 0.18);
+  border-radius: 12px 12px 12px 4px;
+  padding: 8px 12px;
+  cursor: pointer;
+  user-select: none;
+  margin-bottom: 16px;
+  transition: background 0.2s ease, border-color 0.2s ease;
+}
+
+.phase-bubble:hover {
+  background: rgba(167, 139, 250, 0.1);
+  border-color: rgba(167, 139, 250, 0.3);
+}
+
+.phase-bubble-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.phase-bubble-header .phase-line {
+  flex: 1;
+}
+
+.phase-chevron {
+  font-size: 10px;
+  color: rgba(255, 255, 255, 0.4);
+  transition: transform 0.3s cubic-bezier(0.22, 0.61, 0.36, 1);
+  flex-shrink: 0;
+}
+
+.phase-bubble.expanded .phase-chevron {
+  transform: rotate(180deg);
+}
+
+.phase-history {
+  max-height: 0;
+  overflow: hidden;
+  margin-top: 0;
+  padding-top: 0;
+  border-top: 1px solid transparent;
+  transition:
+    max-height 0.4s cubic-bezier(0.22, 0.61, 0.36, 1),
+    margin-top 0.4s ease,
+    padding-top 0.4s ease,
+    border-top-color 0.4s ease;
+}
+
+.phase-bubble.expanded .phase-history {
+  max-height: 240px;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top-color: rgba(167, 139, 250, 0.15);
+}
+
+.phase-history-empty {
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.35);
+  font-style: italic;
+  padding: 4px 0;
+}
+
+.phase-history-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  padding: 3px 0;
+  animation: phaseHistoryIn 0.3s ease both;
+}
+
+@keyframes phaseHistoryIn {
+  from { opacity: 0; transform: translateX(-4px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+
+.phase-history-item .phase-history-icon {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: currentColor;
+  flex-shrink: 0;
+  box-shadow: 0 0 6px currentColor;
+}
+
+.phase-history-item.phase-prepare { color: #a78bfa; }
+.phase-history-item.phase-reason  { color: #60a5fa; }
+.phase-history-item.phase-tool    { color: #fbbf24; }
+.phase-history-item.phase-write   { color: #34d399; }
+
+.phase-history-label {
+  color: rgba(255, 255, 255, 0.78);
+}
+
+.phase-history-time {
+  margin-left: auto;
+  font-size: 10px;
+  opacity: 0.55;
+  color: rgba(255, 255, 255, 0.5);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Stacked-ticker phase line (current phase text that slides when it changes) */
+.phase-line {
+  position: relative;
+  height: 16px;
+  padding-left: 2px;
+  overflow: hidden;
+}
+
+.phase-item {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  will-change: transform, opacity;
+  transition:
+    transform 0.55s cubic-bezier(0.22, 0.61, 0.36, 1),
+    opacity 0.5s ease;
+}
+
+.phase-item.entering { transform: translateY(120%); opacity: 0; }
+.phase-item.active   { transform: translateY(0);    opacity: 1; }
+.phase-item.leaving  { transform: translateY(-120%); opacity: 0; }
+
+.phase-item .phase-icon {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: currentColor;
+  animation: phaseIconPulse 1.1s ease-in-out infinite;
+  box-shadow: 0 0 8px currentColor;
+  flex-shrink: 0;
+}
+
+@keyframes phaseIconPulse {
+  0%, 100% { transform: scale(0.7); opacity: 0.4; }
+  50%      { transform: scale(1.1); opacity: 0.95; }
+}
+
+.phase-item.phase-prepare { color: #a78bfa; }
+.phase-item.phase-reason  { color: #60a5fa; }
+.phase-item.phase-tool    { color: #fbbf24; }
+.phase-item.phase-write   { color: #34d399; }
+
+/* === End Guardian "thinking" UI ========================================== */
+
 @keyframes thinkingPulse {
   0%, 100% { opacity: 0.3; transform: scale(1); }
   50% { opacity: 1; transform: scale(1.3); }

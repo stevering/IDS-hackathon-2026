@@ -47,39 +47,72 @@ export async function POST(
 
   const log = createLogger("chat-temporal/message", { u: userId.slice(0, 8), wf: workflowId });
 
-  // Persist user message via authenticated client (save_message RPC uses auth.uid())
-  await supabase.rpc("save_message", {
-    p_conversation_id: conversationId,
-    p_role: "user",
-    p_content: message,
-    p_parts: [{ type: "text", text: message }],
-    p_sender_client_id: null,
-    p_sender_short_id: null,
-    p_metadata: {},
-  });
   const sb = createServiceClient();
 
+  // ── Defense-in-depth: verify the workflow actually belongs to this conversation ──
+  // Prevents the client from signalling a stale workflow from a previous
+  // conversation — which would persist the user message to the wrong conv
+  // and split assistant responses across conversations.
+  let workflowMatchesConv = false;
   try {
     const { getTemporalClient } = await import("@guardian/temporal/client");
     const client = await getTemporalClient();
     const handle = client.workflow.getHandle(workflowId);
 
-    // Check if workflow is still running
     const desc = await handle.describe();
     if (desc.status.name === "RUNNING") {
-      // Signal the running workflow with the new message
-      await handle.signal("chatNewMessage", {
-        content: message,
-        images,
-      });
-      log.info("signalled existing workflow", { conv: conversationId });
-      return NextResponse.json({ workflowId, conversationId, action: "signalled" });
+      // Query the workflow for its bound conversationId (chatConversationIdQuery)
+      let workflowConvId: string | null = null;
+      try {
+        workflowConvId = await handle.query<string>("chatConversationId");
+      } catch {
+        // Query handler not registered (older workflow) → assume mismatch to be safe
+        workflowConvId = null;
+      }
+
+      if (workflowConvId && workflowConvId === conversationId) {
+        workflowMatchesConv = true;
+
+        // Save user message, then signal the workflow
+        await supabase.rpc("save_message", {
+          p_conversation_id: conversationId,
+          p_role: "user",
+          p_content: message,
+          p_parts: [{ type: "text", text: message }],
+          p_sender_client_id: null,
+          p_sender_short_id: null,
+          p_metadata: {},
+        });
+
+        await handle.signal("chatNewMessage", { content: message, images });
+        log.info("signalled existing workflow", { conv: conversationId });
+        return NextResponse.json({ workflowId, conversationId, action: "signalled" });
+      } else if (workflowConvId && workflowConvId !== conversationId) {
+        // Client sent a stale workflowId from a different conversation.
+        // Do NOT signal it (would pollute the other conv). Start a new one instead.
+        log.warn(
+          `Workflow/conversation mismatch — wf=${workflowId.slice(0, 16)} is bound to conv=${workflowConvId.slice(0, 8)} ` +
+            `but client requested conv=${conversationId.slice(0, 8)} — starting new workflow`,
+        );
+      }
     }
   } catch {
-    // Workflow not found or not running — start a new one
+    // Workflow not found or not running — fall through to start a new one
   }
 
-  // Workflow completed/not found — start a new one
+  // Workflow not running OR not matching conversationId → save message + start a new workflow
+  if (!workflowMatchesConv) {
+    await supabase.rpc("save_message", {
+      p_conversation_id: conversationId,
+      p_role: "user",
+      p_content: message,
+      p_parts: [{ type: "text", text: message }],
+      p_sender_client_id: null,
+      p_sender_short_id: null,
+      p_metadata: {},
+    });
+  }
+
   log.info("starting new workflow for follow-up", { conv: conversationId });
 
   try {

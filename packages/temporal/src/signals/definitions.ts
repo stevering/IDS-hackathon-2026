@@ -131,3 +131,12 @@ export const statusQuery = defineQuery<OrchestrationStatusResponse, [number?]>("
 
 /** Query the chat workflow status */
 export const chatStatusQuery = defineQuery<ChatWorkflowStatus>("chatStatus");
+
+/**
+ * Query the chat workflow's bound conversationId.
+ * Used as a defense-in-depth check: the /api/chat-temporal/[id]/message route
+ * queries this before signalling a workflow, and if the client's requested
+ * conversationId doesn't match, the route falls back to starting a new workflow
+ * instead of cross-contaminating conversations with messages from the wrong one.
+ */
+export const chatConversationIdQuery = defineQuery<string>("chatConversationId");

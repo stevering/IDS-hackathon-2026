@@ -143,6 +143,23 @@ export function useChatWorkflow({
   const keyIdRef = useRef(keyId);
   keyIdRef.current = keyId;
 
+  // ── Reset workflow state when conversation changes ──────────────────────
+  // CRITICAL: workflowIdRef persists across renders as a mutable ref. When the
+  // user switches conversations (or creates a new one), the ref must be cleared
+  // so the next sendMessage starts a fresh workflow for the new conversation
+  // instead of signalling the old one — which would route the message to the
+  // wrong conversation and split assistant responses across conversations.
+  useEffect(() => {
+    workflowIdRef.current = null;
+    streamingMsgRef.current = null;
+    setMcpDiscoveryFailures([]);
+    // Unsubscribe from the previous conversation's streaming channel
+    if (channelRef.current) {
+      try { channelRef.current.unsubscribe(); } catch { /* ignore */ }
+      channelRef.current = null;
+    }
+  }, [conversationId]);
+
   // ── Load persisted messages + detect active workflow on mount/F5 ─────────
   useEffect(() => {
     if (!conversationId || !enabled) return;
