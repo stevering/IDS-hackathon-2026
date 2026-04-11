@@ -45,12 +45,14 @@ export async function executeFigmaCode(params: ExecuteCodeParams): Promise<Execu
   return new Promise<ExecuteCodeResult>((resolve) => {
     let settled = false;
     let ackReceived = false;
-    let ackTimer: ReturnType<typeof setTimeout>;
-    let resultTimer: ReturnType<typeof setTimeout>;
+    let ackTimer: ReturnType<typeof setTimeout> | undefined;
+    let resultTimer: ReturnType<typeof setTimeout> | undefined;
+    let subscribeGuardTimer: ReturnType<typeof setTimeout> | undefined;
 
     function cleanup() {
-      clearTimeout(ackTimer);
-      clearTimeout(resultTimer);
+      if (ackTimer) clearTimeout(ackTimer);
+      if (resultTimer) clearTimeout(resultTimer);
+      if (subscribeGuardTimer) clearTimeout(subscribeGuardTimer);
       channel.unsubscribe();
     }
 
@@ -61,25 +63,17 @@ export async function executeFigmaCode(params: ExecuteCodeParams): Promise<Execu
       resolve(result);
     }
 
-    // Phase 1: Wait for ACK (plugin confirms it received the request)
-    ackTimer = setTimeout(() => {
-      if (!ackReceived && !settled) {
-        log.warn(`no ack received within ${ACK_TIMEOUT_MS}ms — plugin offline?`, { req: requestId });
-        settle({
-          success: false,
-          error: `No acknowledgement from plugin within ${ACK_TIMEOUT_MS / 1000}s. Make sure the Figma plugin is open with the Guardian webapp loaded.`,
-        });
-      }
-    }, ACK_TIMEOUT_MS);
-
-    // Phase 2 fallback: default result timeout (used if ack arrives without "awaiting_approval")
-    resultTimer = setTimeout(() => {
-      if (!settled) {
-        log.warn(`execution timed out`, { req: requestId, timeout: defaultTimeoutMs, ackReceived });
-        settle({ success: false, error: "Execution timed out" });
-      }
-    }, defaultTimeoutMs);
-
+    // Register event handlers BEFORE calling subscribe() — the fluent chain
+    // below guarantees .on() runs synchronously before .subscribe() initiates
+    // the WebSocket connection, so no response event can slip past the
+    // handler registration.
+    //
+    // The ACK and result timers are NOT started here. They only start once
+    // we receive a SUBSCRIBED status confirmation — otherwise a subscription
+    // failure (CHANNEL_ERROR / TIMED_OUT / CLOSED) would still let the 10s
+    // ACK timer fire with the misleading "plugin offline" error when the
+    // real problem is that we never had a channel to the plugin in the
+    // first place.
     channel
       // Listen for ACK from plugin
       .on("broadcast", { event: "execute_ack" }, (payload) => {
@@ -87,12 +81,12 @@ export async function executeFigmaCode(params: ExecuteCodeParams): Promise<Execu
         if (data?.requestId !== requestId || settled) return;
 
         ackReceived = true;
-        clearTimeout(ackTimer);
+        if (ackTimer) clearTimeout(ackTimer);
         log.info(`ack received`, { req: requestId, status: data.status, from: data.senderClientId });
 
         // If plugin is awaiting user approval, extend the result timeout
         if (data.status === "awaiting_approval") {
-          clearTimeout(resultTimer);
+          if (resultTimer) clearTimeout(resultTimer);
           resultTimer = setTimeout(() => {
             if (!settled) {
               log.warn(`approval timed out`, { req: requestId, timeout: APPROVAL_TIMEOUT_MS });
@@ -117,8 +111,14 @@ export async function executeFigmaCode(params: ExecuteCodeParams): Promise<Execu
         settle({ success, result: data.result, error: data.error });
       })
       .subscribe((status) => {
+        if (settled) return;
+
         if (status === "SUBSCRIBED") {
           log.info(`channel subscribed, broadcasting`, { req: requestId });
+
+          // Subscription confirmed — NOW start the protocol timers. Broadcast
+          // the execute_request, then arm the ACK timer (plugin offline) and
+          // the result timer (execution timed out).
           channel.send({
             type: "broadcast",
             event: "execute_request",
@@ -129,10 +129,64 @@ export async function executeFigmaCode(params: ExecuteCodeParams): Promise<Execu
               timeout: Math.max(defaultTimeoutMs - 5000, 5000),
               ...(params.workflowId ? { workflowId: params.workflowId } : {}),
             },
+          }).catch((broadcastErr) => {
+            log.error(`execute_request broadcast failed`, { req: requestId, error: String(broadcastErr) });
+            settle({ success: false, error: `Failed to broadcast execute request: ${broadcastErr}` });
           });
-        } else {
-          log.info(`channel status change`, { req: requestId, channelStatus: status });
+
+          ackTimer = setTimeout(() => {
+            if (!ackReceived && !settled) {
+              log.warn(`no ack received within ${ACK_TIMEOUT_MS}ms — plugin offline?`, { req: requestId });
+              settle({
+                success: false,
+                error: `No acknowledgement from plugin within ${ACK_TIMEOUT_MS / 1000}s. Make sure the Figma plugin is open with the Guardian webapp loaded.`,
+              });
+            }
+          }, ACK_TIMEOUT_MS);
+
+          resultTimer = setTimeout(() => {
+            if (!settled) {
+              log.warn(`execution timed out`, { req: requestId, timeout: defaultTimeoutMs, ackReceived });
+              settle({ success: false, error: "Execution timed out" });
+            }
+          }, defaultTimeoutMs);
+
+          // Clear the initial subscribe guard now that we're connected
+          if (subscribeGuardTimer) {
+            clearTimeout(subscribeGuardTimer);
+            subscribeGuardTimer = undefined;
+          }
+          return;
         }
+
+        // Explicit failure statuses — distinct error from "plugin offline"
+        // so operators can tell "we never reached Supabase Realtime" apart
+        // from "the plugin itself never answered".
+        if (status === "CHANNEL_ERROR" || status === "TIMED_OUT" || status === "CLOSED") {
+          log.error(`channel subscribe failed`, { req: requestId, channelStatus: status });
+          settle({
+            success: false,
+            error: `Failed to establish Realtime channel (status=${status}). This is a transport error, not a plugin offline condition — check Supabase Realtime health.`,
+          });
+          return;
+        }
+
+        // Intermediate statuses (e.g. CONNECTING) — just log
+        log.info(`channel status change`, { req: requestId, channelStatus: status });
       });
+
+    // Guard against the case where subscribe() never calls its callback at
+    // all (network blackhole). Without this, the promise would never resolve
+    // and Temporal would only bail at the 3-minute activity startToClose
+    // timeout with no useful error.
+    subscribeGuardTimer = setTimeout(() => {
+      if (!settled) {
+        log.error(`channel subscribe never reported status`, { req: requestId, waited: ACK_TIMEOUT_MS });
+        settle({
+          success: false,
+          error: `Realtime channel subscribe callback never fired within ${ACK_TIMEOUT_MS / 1000}s. Transport layer stalled.`,
+        });
+      }
+    }, ACK_TIMEOUT_MS);
   });
 }

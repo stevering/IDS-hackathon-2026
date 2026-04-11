@@ -42,7 +42,13 @@ POST /api/chat-temporal/start ----> chatWorkflow starts
 - `app/api/chat-temporal/start/route.ts` - Start a chatWorkflow
 - `app/api/chat-temporal/[id]/stream/route.ts` - SSE relay (Realtime -> browser)
 - `app/api/chat-temporal/[id]/message/route.ts` - Send follow-up message (signal or new workflow)
+- `app/api/chat-temporal/[id]/cancel/route.ts` - Stop in-flight generation
 - `app/hooks/useChatWorkflow.ts` - Browser hook replacing useChat
+- `lib/chat-dynamic-context.ts` - Shared `buildDynamicContext()` used by the
+  start route AND the message route so a follow-up that spawns a fresh
+  workflow (previous one expired after 5 min idle) inherits the same Figma
+  selection / plugin context / connected agents / model identity sections as
+  the first message.
 
 ### Shared types (packages/orchestrations/)
 - `types/events.ts` - Streaming event types (text_delta, text_complete, figma_execute_ack, etc.)
@@ -111,7 +117,12 @@ INIT -> LOAD_HISTORY -> [LLM_CALL -> TOOL_EXECUTION]* -> PERSIST -> IDLE
 
 ## Dynamic System Prompt Context
 
-The start route builds the system prompt as `GUARDIAN_SYSTEM_PROMPT + dynamicContext`, matching the legacy `/api/chat` route. The client (`useChatWorkflow`) sends the following context with each request:
+Both the start route and the message route build the system prompt as
+`GUARDIAN_SYSTEM_PROMPT + dynamicContext` via the shared
+`buildDynamicContext()` helper in `packages/web/src/lib/chat-dynamic-context.ts`.
+The client (`useChatWorkflow`) sends the following context with **every**
+request (start and follow-up) so whichever route ends up spawning a workflow
+has the full picture:
 
 | Context | Source | Injected when |
 |---|---|---|
@@ -120,9 +131,20 @@ The start route builds the system prompt as `GUARDIAN_SYSTEM_PROMPT + dynamicCon
 | Connected agents list + orchestration rules | `connectedAgents` from presence | Other clients are online |
 | Model identity (modelId, BYOK/free tier) | `model`, `source`, `keyId` from settings | Always |
 
-The `buildDynamicContext()` function in the start route constructs these sections identically to the legacy chat route (lines 1088-1214 of `/api/chat/route.ts`).
+**Parity rule:** the message route MUST pass the same dynamic context to
+`buildDynamicContext()` when it spins up a new workflow (previous one
+expired after the 5 min idle timeout). Prior to the April 2026 audit pass,
+this code path injected only the raw `GUARDIAN_SYSTEM_PROMPT` and the new
+workflow booted with zero Figma awareness — the assistant could no longer
+act on "this node" / "the current file" references mid-conversation.
 
-Note: Dynamic context is captured at workflow start time. If the Figma selection changes mid-conversation, the system prompt is NOT updated (same behavior as legacy).
+**In-workflow freshness:** dynamic context is only rebuilt on workflow
+start. If the Figma selection changes while a workflow is still in IDLE
+state and the user sends a follow-up within 5 minutes, that follow-up
+still uses the prompt from workflow start. Changing selection mid-workflow
+does NOT update the running prompt (this matches the legacy `/api/chat`
+behaviour). A fresh selection is only picked up once the idle timeout
+expires and the message route has to boot a new workflow.
 
 ## Cancellation (Stop button)
 
@@ -141,13 +163,52 @@ Browser                              Worker
   |                                    | handle.signal("chatCancel")
   |                                    |
   |                                    | setHandler(chatCancelSignal, () => {
-  |                                    |   cancelled = true;
+  |                                    |   currentTurnScope.cancel();
   |                                    | })
   |                                    |
-  |                                    | runLLMLoop() checks `cancelled`
-  |                                    |   on each iteration boundary and bails
-  |<- text_complete / status="cancelled"|
+  |                                    | CancellationScope.cancellable(
+  |                                    |   async () => await callLLMStreaming(...)
+  |                                    | )
+  |                                    |
+  |                                    | Activity side:
+  |                                    |   streamText({ abortSignal: ctx.cancellationSignal })
+  |                                    |   fullStream for-await throws on abort
+  |                                    |   → partial text finalized in DB
+  |                                    |     with finishReason: "cancelled"
+  |                                    |
+  |<- text_complete (finishReason=cancelled) <-
+  |                                    |
+  |                                    | Workflow catches CancelledFailure via
+  |                                    |   isCancellation(err), resets status
+  |                                    |   to "idle", stays alive waiting for
+  |                                    |   the next message signal.
 ```
+
+### Immediate-stop semantics
+
+The cancel signal targets the **current turn's** `CancellationScope`, not
+the whole workflow. That matters because:
+
+- **The partial text is preserved.** Whatever tokens streamed up to the
+  Stop click are persisted to `messages` with `metadata.finishReason =
+  "cancelled"` and `metadata.streaming = false`. The UI renders it as a
+  normal (truncated) assistant turn. Users still see what they stopped.
+- **The workflow stays alive.** After catching the `CancelledFailure`,
+  `runLLMLoop` resets `status = "idle"` and returns to the outer
+  `while (true)` loop. The next `chatNewMessage` signal starts a fresh
+  turn in the SAME workflow (no new systemPrompt rebuild, no history
+  reload) — cheaper and preserves all in-memory state.
+- **Latency is bounded by the heartbeat interval.** The activity's
+  `HEARTBEAT_INTERVAL_MS` is 1 s, so Temporal delivers the cancellation
+  notice to the activity within ~1 s of the signal. The underlying
+  fetch aborts immediately once `ctx.cancellationSignal.aborted` flips.
+  In practice Stop feels instant.
+
+Prior to the April 2026 audit pass, the cancel signal only set a
+`cancelled` boolean flag that was checked at loop iteration boundaries —
+meaning an in-flight LLM call could run for the full 5-minute
+`startToCloseTimeout` before the cancel took effect. With BYOK, that was
+up to 5 minutes of tokens burned after the user thought they had stopped.
 
 ### Client behaviour
 
@@ -224,3 +285,40 @@ conversation instead of cross-contaminating.
 This is layered on top of the client-side reset in
 `useChatWorkflow.ts` that clears `workflowIdRef.current` when the user
 switches conversations — both layers must fail for contamination to recur.
+
+## Conversation ownership checks
+
+All chat-temporal routes authenticate the caller via `supabase.auth.getUser()`,
+but auth alone is not enough — a caller could still pass a `conversationId`
+belonging to another user. Each route therefore scopes its DB writes and
+Realtime subscriptions to the authenticated user:
+
+| Route | Check | Why |
+|---|---|---|
+| `POST /api/chat-temporal/start` | `conversations.update(...).eq("id", convId).eq("user_id", userId)` on the `metadata.chatWorkflowId` write | Prevent hijacking another user's workflow tracking |
+| `POST /api/chat-temporal/[id]/message` | Same `.eq("user_id", userId)` when the route has to persist a new workflowId after spawning a fresh workflow | Same concern, follow-up path |
+| `GET /api/chat-temporal/[id]/stream` | Explicit `SELECT user_id FROM conversations WHERE id = $1` and compare to `auth.uid()` before subscribing to the Realtime channel | RLS does **not** protect Supabase Realtime broadcast channels — the stream relays token-level deltas that would otherwise be readable by any authenticated user that knows the `conversationId` |
+| `POST /api/chat-temporal/[id]/cancel` | Auth check only (workflow IDs are namespaced `chat-<userIdPrefix>-<ts>` and Temporal signals on foreign workflows are no-ops) | Minimal surface — attacker gains nothing by signalling an arbitrary workflow |
+
+The stream check in particular is load-bearing: without it, a hostile
+authenticated user who learned a `conversationId` could subscribe to the
+SSE relay and watch another user's tokens, reasoning, and tool calls
+stream live. Supabase RLS gates table reads but does not gate Realtime
+broadcasts, so the check has to happen in the route itself.
+
+## Figma Execute — subscribe-status handling
+
+The `executeFigmaCode` activity uses a three-phase protocol (request → ack →
+result) over a per-user Supabase Realtime channel. The activity must handle
+the case where the **channel subscription itself** fails (not the plugin):
+
+- The ACK and result timers only start AFTER the subscribe callback returns
+  `SUBSCRIBED`. Prior to April 2026 they started synchronously, which meant
+  a failed subscription still surfaced as "no ack received — plugin offline"
+  at the 10 s mark, misleading operators who were actually dealing with a
+  Realtime transport issue.
+- `CHANNEL_ERROR`, `TIMED_OUT`, and `CLOSED` statuses are now settled with
+  a distinct error that identifies transport failure explicitly.
+- A 10 s `subscribeGuardTimer` covers the case where the subscribe callback
+  never fires at all (silent network blackhole) — without this guard the
+  activity would hang for the full 3-minute `startToCloseTimeout`.

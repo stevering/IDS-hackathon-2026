@@ -17,7 +17,9 @@
  */
 
 import {
+  CancellationScope,
   condition,
+  isCancellation,
   proxyActivities,
   setHandler,
   workflowInfo,
@@ -128,7 +130,6 @@ const IDLE_TIMEOUT_MS = 5 * 60_000; // 5 minutes waiting for next message
 
 export async function chatWorkflow(params: ChatWorkflowParams): Promise<void> {
   const workflowId = workflowInfo().workflowId;
-  let cancelled = false;
   let status: ChatWorkflowStatus["status"] = "idle";
   let streamingRequestId: string | undefined;
   let currentStep = 0;
@@ -144,6 +145,23 @@ export async function chatWorkflow(params: ChatWorkflowParams): Promise<void> {
   // Pending messages from signals
   const pendingMessages: ChatNewMessagePayload[] = [];
 
+  // Cancellation plumbing.
+  //
+  // The chatCancelSignal is a "stop THIS turn" signal, not "destroy the whole
+  // workflow" — the user must still be able to send a follow-up message after
+  // clicking Stop without losing the conversation. We achieve this by wrapping
+  // each LLM-loop turn in its own `CancellationScope.cancellable`: when the
+  // signal fires, we cancel that scope, which cancels the in-flight activity
+  // (callLLMStreaming → streamText is bound to ctx.cancellationSignal and
+  // aborts immediately). The workflow itself catches the CancelledFailure,
+  // resets state to idle, and keeps waiting for the next message.
+  //
+  // Without this, the `cancelled` flag was only checked at loop boundaries,
+  // meaning a single LLM call could run for the full 5 minute startToClose
+  // timeout before the cancel took effect — enough to burn 5 minutes of BYOK
+  // tokens after the user thought they had stopped.
+  let currentTurnScope: CancellationScope | null = null;
+
   // ── Signal handlers ─────────────────────────────────────────────────────
   setHandler(chatNewMessageSignal, (msg) => {
     if (msg.modelOverride) {
@@ -153,7 +171,11 @@ export async function chatWorkflow(params: ChatWorkflowParams): Promise<void> {
   });
 
   setHandler(chatCancelSignal, () => {
-    cancelled = true;
+    // Cancel only the in-flight turn's scope. The workflow stays alive so the
+    // user can send a follow-up message without losing the conversation.
+    if (currentTurnScope) {
+      currentTurnScope.cancel();
+    }
   });
 
   // ── Query handler ───────────────────────────────────────────────────────
@@ -251,13 +273,24 @@ export async function chatWorkflow(params: ChatWorkflowParams): Promise<void> {
     ];
     mcpTools.push(...metaSpecs);
 
-    // Inject the instance manifest into the system prompt
+    // Inject the instance manifest into the system prompt.
+    //
+    // Guard: `messages` may be empty here if the caller passed no systemPrompt
+    // AND history is empty (brand-new conversation started via a path that
+    // doesn't set a system prompt — e.g., a misconfigured integration test).
+    // Spreading `messages[0]` when it's undefined crashes the workflow at
+    // boot. Instead, prepend a fresh system message when empty.
     const manifestBlock = buildManifestPrompt(instanceManifest);
     if (manifestBlock) {
-      messages[0] = {
-        ...messages[0],
-        content: (messages[0].content ?? "") + "\n\n" + manifestBlock,
-      };
+      const first = messages[0];
+      if (first && first.role === "system") {
+        messages[0] = {
+          ...first,
+          content: (first.content ?? "") + "\n\n" + manifestBlock,
+        };
+      } else {
+        messages.unshift({ role: "system", content: manifestBlock });
+      }
     }
 
     // Surface discovery errors to the UI via a dedicated broadcast event.
@@ -288,13 +321,17 @@ export async function chatWorkflow(params: ChatWorkflowParams): Promise<void> {
   await processUserMessage(params.userMessage, params.userImages);
 
   // ── Idle loop: wait for follow-up messages ──────────────────────────────
-  while (!cancelled) {
+  // Note: chatCancelSignal does NOT break this loop — a cancel only stops the
+  // current turn and returns us here. The only exits are:
+  //   - idle timeout (5 min with no new message)
+  //   - pendingMessages drained + idle timeout
+  while (true) {
     status = "idle";
     streamingRequestId = undefined;
     currentStep = 0;
 
-    const hasMessage = await condition(() => pendingMessages.length > 0 || cancelled, IDLE_TIMEOUT_MS);
-    if (!hasMessage || cancelled) break;
+    const hasMessage = await condition(() => pendingMessages.length > 0, IDLE_TIMEOUT_MS);
+    if (!hasMessage) break;
 
     const nextMsg = pendingMessages.shift()!;
 
@@ -310,7 +347,7 @@ export async function chatWorkflow(params: ChatWorkflowParams): Promise<void> {
     await runLLMLoop();
   }
 
-  status = cancelled ? "cancelled" : "completed";
+  status = "completed";
 
   // ── Helper: process user message (first or from signal) ─────────────────
 
@@ -325,7 +362,31 @@ export async function chatWorkflow(params: ChatWorkflowParams): Promise<void> {
     status = "streaming";
     currentStep = 0;
 
-    while (currentStep < MAX_STEPS && !cancelled) {
+    try {
+      await CancellationScope.cancellable(async () => {
+        currentTurnScope = CancellationScope.current();
+        await runTurnBody();
+      });
+    } catch (err) {
+      if (isCancellation(err)) {
+        // User clicked Stop mid-turn. The in-flight activity has already
+        // finalized its partial state (content so far + finishReason =
+        // "cancelled") and the DB row is complete, so we just need to flip
+        // back to idle so the outer loop can wait for the next message.
+        status = "idle";
+        streamingRequestId = undefined;
+        return;
+      }
+      throw err;
+    } finally {
+      currentTurnScope = null;
+    }
+  }
+
+  // Inner body — the same LLM ↔ tool loop as before, minus the cancellation
+  // check (the surrounding CancellationScope handles that).
+  async function runTurnBody() {
+    while (currentStep < MAX_STEPS) {
       currentStep++;
       const requestId = `chat-${workflowId}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
       streamingRequestId = requestId;

@@ -194,6 +194,18 @@ Four touchpoints:
    slider's stacking context, where it paints below the scroll container.
    See "Scrollbar stacking" under `ComposerAurora.tsx` above.
 
+8. **Replace `right-0` with `right-[10px]` on the same composer wrapper.**
+   Fixing the paint order is not enough — the transparent wrapper still
+   captures pointer events over the scrollbar gutter column at the bottom
+   of the panel, making the native scrollbar unclickable at any y inside
+   the composer rect (~y=656-800 at 1000×800). Carving 10 px out of the
+   wrapper's right edge exposes the scrollbar gutter to clicks while
+   leaving the centered `max-w-3xl` form content visually unchanged. The
+   10 px matches `::-webkit-scrollbar { width }` in `globals.css`.
+   Verified with `document.elementFromPoint(995, y)` — the topmost
+   element at the gutter column is now the scroll container at every y,
+   including inside the composer rect.
+
 ## Styles
 
 All styles live in `packages/web/src/app/globals.css` under the

@@ -42,6 +42,34 @@ export async function GET(
     return new Response("Missing conversationId query param", { status: 400 });
   }
 
+  // ── Ownership check ─────────────────────────────────────────────────────
+  // The Supabase Realtime broadcast channel `guardian:chat:<conversationId>`
+  // carries token deltas, tool calls, and reasoning for the in-flight chat.
+  // Without an explicit ownership verification, any authenticated user could
+  // pass another user's conversationId and eavesdrop on their streaming
+  // response. RLS policies do NOT protect Realtime broadcast channels — only
+  // table reads — so we must verify ownership here before subscribing.
+  //
+  // Service role client: the user-authenticated client is also fine under
+  // RLS, but using the service role makes the check explicit and robust to
+  // future conversations.select RLS changes.
+  {
+    const svc = createServiceClient();
+    const { data: conv, error: convErr } = await svc
+      .from("conversations")
+      .select("user_id")
+      .eq("id", conversationId)
+      .maybeSingle();
+    if (convErr || !conv) {
+      log.warn("conversation not found for stream", { conv: conversationId });
+      return new Response("Not found", { status: 404 });
+    }
+    if (conv.user_id !== user.id) {
+      log.warn("cross-user stream subscribe attempt blocked", { conv: conversationId, owner: String(conv.user_id).slice(0, 8) });
+      return new Response("Forbidden", { status: 403 });
+    }
+  }
+
   const encoder = new TextEncoder();
 
   const stream = new ReadableStream({

@@ -10,6 +10,12 @@ import { createClient as createSupabaseUserClient } from "@/lib/supabase/server"
 import { createServiceClient } from "@/lib/supabase/service";
 import { GUARDIAN_SYSTEM_PROMPT } from "@/lib/system-prompt";
 import { createLogger } from "@/lib/log";
+import {
+  buildDynamicContext,
+  type SelectedNode,
+  type FigmaPluginContext,
+  type ConnectedAgent,
+} from "@/lib/chat-dynamic-context";
 
 export const dynamic = "force-dynamic";
 
@@ -32,13 +38,38 @@ export async function POST(
   const userId = user.id;
 
   const body = await request.json();
-  const { conversationId, message, model, mcpServerIds, figmaPluginClientId, images } = body as {
+  const {
+    conversationId,
+    message,
+    model,
+    mcpServerIds,
+    figmaPluginClientId,
+    images,
+    // Dynamic context — forwarded by useChatWorkflow on every send so that if
+    // this route has to spin up a NEW workflow (previous one expired after
+    // 5 min idle), the fresh system prompt captures the user's latest Figma
+    // selection, plugin context, agent presence, and model identity. Without
+    // this, every follow-up after an idle timeout would reboot with an empty
+    // system prompt and the assistant would lose all situational awareness.
+    selectedNode,
+    figmaPluginContext,
+    connectedAgents,
+    isLocalPlugin,
+    source,
+    keyId,
+  } = body as {
     conversationId: string;
     message: string;
     model?: string;
     mcpServerIds?: string[];
     figmaPluginClientId?: string;
     images?: string[];
+    selectedNode?: SelectedNode;
+    figmaPluginContext?: FigmaPluginContext;
+    connectedAgents?: ConnectedAgent[];
+    isLocalPlugin?: boolean;
+    source?: string;
+    keyId?: string;
   };
 
   if (!message) {
@@ -151,6 +182,35 @@ export async function POST(
 
     // `resolvedModel` was already computed at the top of the handler — reuse it.
 
+    // Resolve the BYOK key label for the model-identity section. Same logic as
+    // /api/chat-temporal/start so that the system prompt reports the correct
+    // provider/label when the user is on BYOK.
+    let keyLabel: string | undefined;
+    if (source === "byok" && keyId) {
+      const { data: keyRow } = await supabase
+        .from("user_api_keys")
+        .select("provider, label")
+        .eq("id", keyId)
+        .single();
+      if (keyRow) keyLabel = `provider=${keyRow.provider}, label=${keyRow.label || keyRow.provider}`;
+    }
+
+    // Rebuild the dynamic system prompt with the caller's latest context.
+    // Parity with /api/chat-temporal/start: this is the only code path that
+    // has ever captured Figma selection + plugin context + agents for a
+    // follow-up after an idle timeout — previously the new workflow booted
+    // with just GUARDIAN_SYSTEM_PROMPT and lost all situational awareness.
+    const dynamicCtx = buildDynamicContext({
+      selectedNode,
+      figmaPluginContext,
+      connectedAgents,
+      isLocalPlugin,
+      modelId: resolvedModel,
+      source,
+      keyLabel,
+    });
+    const systemPrompt = GUARDIAN_SYSTEM_PROMPT + dynamicCtx;
+
     const newWorkflowId = `chat-${userId.slice(0, 8)}-${Date.now()}`;
     await client.workflow.start("chatWorkflow", {
       workflowId: newWorkflowId,
@@ -161,13 +221,22 @@ export async function POST(
         userMessage: message,
         userImages: images,
         model: resolvedModel,
-        systemPrompt: GUARDIAN_SYSTEM_PROMPT,
+        systemPrompt,
         mcpServerIds: mcpServerIds ?? [],
         figmaPluginClientId,
       }],
     });
 
-    log.info("new chatWorkflow started", { newWf: newWorkflowId, conv: conversationId });
+    // Persist the new workflowId on the conversation so F5 recovery can find
+    // it. Ownership scoped to the authenticated user (defence-in-depth vs
+    // conversations RLS misconfiguration).
+    await supabase
+      .from("conversations")
+      .update({ metadata: { chatWorkflowId: newWorkflowId } })
+      .eq("id", conversationId)
+      .eq("user_id", userId);
+
+    log.info("new chatWorkflow started", { newWf: newWorkflowId, conv: conversationId, hasDynamicCtx: dynamicCtx.length > 0 });
     return NextResponse.json({ workflowId: newWorkflowId, conversationId, action: "started" });
   } catch (err) {
     log.error("failed to start new chatWorkflow", { error: String(err) });

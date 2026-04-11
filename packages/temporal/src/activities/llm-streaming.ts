@@ -16,11 +16,16 @@
  */
 
 import { createClient } from "@supabase/supabase-js";
-import { heartbeat } from "@temporalio/activity";
+import { Context, heartbeat } from "@temporalio/activity";
 import type { LLMCallParams, LLMCallResult } from "@guardian/orchestrations";
 import { createLogger } from "../lib/log.js";
 
-const HEARTBEAT_INTERVAL_MS = 5_000;
+// Heartbeat frequency matters for cancellation latency: Temporal delivers
+// activity cancellation notices on heartbeat responses, so the smaller this
+// interval the faster `ctx.cancellationSignal` aborts when the user clicks
+// Stop. 1s gives near-instant perceived cancellation without noticeable
+// overhead for typical LLM streams.
+const HEARTBEAT_INTERVAL_MS = 1_000;
 const BROADCAST_BUFFER_MS = 50; // Minimum interval between broadcasts to avoid flooding
 const DB_SNAPSHOT_INTERVAL_MS = parseInt(process.env.CHAT_SNAPSHOT_INTERVAL_MS ?? "2000"); // Persist partial text to DB (default 2s, override via env for testing)
 
@@ -37,6 +42,16 @@ export async function callLLMStreaming(params: LLMStreamingParams): Promise<LLMC
     conv: params.conversationId.slice(0, 8),
     req: params.requestId.slice(0, 12),
   });
+
+  // Temporal activity context. We use this to wire the activity's
+  // cancellation signal into `streamText`'s AbortSignal, so that a
+  // chatCancelSignal on the workflow cancels the scope → Temporal delivers
+  // the cancellation to this activity on its next heartbeat → the AbortSignal
+  // aborts the underlying fetch → the fullStream for-await loop throws →
+  // we catch it and finalize the partial message as "cancelled". Without
+  // this, a cancelled generation ran to the full 5-minute startToClose
+  // timeout and burned tokens the user thought they had stopped.
+  const ctx = Context.current();
 
   // Interceptor check — delegate/synthetic bypass streaming
   const { interceptLLMCall, callLLM } = await import("./llm.js");
@@ -177,13 +192,19 @@ export async function callLLMStreaming(params: LLMStreamingParams): Promise<LLMC
     }
   }
 
-  // Stream the LLM call
+  // Stream the LLM call.
+  //
+  // `abortSignal` is wired to the Temporal activity's cancellationSignal so
+  // that a user Stop click cancels the scope → delivers cancellation to the
+  // activity → aborts the underlying fetch within streamText → the
+  // fullStream iterator throws and we finalize the partial state below.
   const result = streamText({
     model,
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     messages: aiMessages as any,
     maxOutputTokens: params.maxTokens ?? 4096,
     tools: toolSet,
+    abortSignal: ctx.cancellationSignal,
   });
 
   // Collect the full response while broadcasting deltas
@@ -464,6 +485,67 @@ export async function callLLMStreaming(params: LLMStreamingParams): Promise<LLMC
     };
   } catch (streamErr) {
     const errMsg = streamErr instanceof Error ? streamErr.message : String(streamErr);
+
+    // ── Cancellation path ─────────────────────────────────────────────────
+    // If the activity was cancelled mid-stream (user clicked Stop), the
+    // underlying fetch was aborted by ctx.cancellationSignal, which makes
+    // streamText throw. We finalize whatever text had accumulated so far as
+    // the assistant's final message (finishReason = "cancelled") instead of
+    // deleting it — the user still wants to see what they stopped, and the
+    // message must be in the history for the next turn to make sense.
+    if (ctx.cancellationSignal.aborted) {
+      log.info("stream cancelled by user", { textLen: fullText.length, reasoningLen: fullReasoning.length });
+
+      // Finalize the pre-created streaming message with whatever was produced
+      // up to the cancellation point. Mirror the happy-path shape so the UI
+      // renders it as a normal (if truncated) assistant turn.
+      if (snapshotSupabase && snapshotMessageId) {
+        try {
+          await snapshotSupabase
+            .from("messages")
+            .update({
+              content: fullText,
+              parts: [
+                ...(fullReasoning ? [{ type: "reasoning", text: fullReasoning, state: "done" }] : []),
+                { type: "text", text: fullText, state: "done" },
+              ],
+              metadata: {
+                model: params.model,
+                reasoning: fullReasoning || undefined,
+                finishReason: "cancelled",
+                streaming: false,
+              },
+            })
+            .eq("id", snapshotMessageId);
+        } catch { /* non-fatal — message may be incomplete but workflow continues */ }
+      }
+
+      // Broadcast a synthetic text_complete so the client flips out of
+      // streaming state (instead of waiting forever for text_complete that
+      // will never arrive because the activity is dying).
+      if (channel) {
+        try {
+          await channel.send({
+            type: "broadcast",
+            event: "text_complete",
+            payload: {
+              requestId: params.requestId,
+              content: fullText,
+              modelId: params.model,
+              reasoning: fullReasoning || undefined,
+              finishReason: "cancelled",
+              hasToolCalls: false,
+            },
+          });
+        } catch { /* non-fatal */ }
+      }
+
+      // Re-throw so Temporal records the cancellation and the workflow's
+      // CancellationScope catches it via isCancellation(err).
+      throw streamErr;
+    }
+
+    // ── Error path (non-cancel) ───────────────────────────────────────────
     log.error("streaming LLM call failed", { error: errMsg });
 
     // Clean up the pre-created empty message (otherwise it shows as blank in the UI)

@@ -3538,8 +3538,15 @@ export default function Home() {
                  translucent scrollbar) paints above it — exactly like the
                  app's animated background. The form inside keeps its own
                  z-10 via its inline className so it stays above everything
-                 else in the slider's stacking context. */}
-            <div className="absolute bottom-0 left-0 right-0 px-3 sm:px-4 pt-2 pb-[calc(0.75rem+env(safe-area-inset-bottom))]">
+                 else in the slider's stacking context.
+
+                 right-[10px] (instead of right-0) carves the scrollbar
+                 gutter out of the wrapper so native scrollbar clicks at the
+                 same y as the composer still land on the scroll container.
+                 Without this, the transparent wrapper eats pointer events
+                 over the scrollbar area at the bottom of the panel. The
+                 10px matches the ::-webkit-scrollbar width in globals.css. */}
+            <div className="absolute bottom-0 left-0 right-[10px] px-3 sm:px-4 pt-2 pb-[calc(0.75rem+env(safe-area-inset-bottom))]">
               <div className="max-w-3xl mx-auto">
               {/* Approval overlay — sticky above the input form */}
               {pendingApproval && (
