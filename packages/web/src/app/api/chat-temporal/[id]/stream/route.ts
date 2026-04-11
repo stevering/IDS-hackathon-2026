@@ -85,12 +85,25 @@ export async function GET(
         }
       }
 
-      // Subscribe to Realtime channel for streaming events
+      // Subscribe to Realtime channel for streaming events.
+      // `stream_error` is broadcast by `callLLMStreaming` on LLM API errors
+      // (e.g. 401 from provider, rate limit, invalid model). `workflow_error`
+      // is sent by the poller below when the workflow itself fails (worker
+      // crash, activity failure, non-retryable exception) so the client can
+      // distinguish "stream failed" from "workflow crashed" and show the
+      // appropriate error message instead of hanging on workflow_completed.
       const sb = createServiceClient();
       const channelName = `guardian:chat:${conversationId}`;
       const channel = sb.channel(channelName);
 
-      const STREAM_EVENTS = ["text_delta", "reasoning_delta", "tool_call_start", "tool_call_result", "text_complete"];
+      const STREAM_EVENTS = [
+        "text_delta",
+        "reasoning_delta",
+        "tool_call_start",
+        "tool_call_result",
+        "text_complete",
+        "stream_error",
+      ];
 
       for (const eventName of STREAM_EVENTS) {
         channel.on("broadcast", { event: eventName }, (payload) => {
@@ -109,20 +122,50 @@ export async function GET(
         setTimeout(resolve, 3000); // Fallback
       });
 
-      // Periodically check if workflow is still running
+      // Periodically check if workflow is still running.
+      //
+      // Terminal states are split by outcome so the client can route:
+      //   - COMPLETED                    → normal end, wait for text_complete
+      //   - CANCELLED                    → user clicked Stop, text_complete
+      //                                    carries finishReason="cancelled"
+      //   - FAILED / TERMINATED / TIMED_OUT → workflow crashed; emit
+      //                                    `workflow_error` with reason so the
+      //                                    client stops waiting and surfaces
+      //                                    the failure instead of polling
+      //                                    forever on workflow_completed.
       const workflowPoller = setInterval(async () => {
         try {
           const { getTemporalClient } = await import("@guardian/temporal/client");
           const client = await getTemporalClient();
           const handle = client.workflow.getHandle(workflowId);
           const desc = await handle.describe();
-          if (desc.status.name === "COMPLETED" || desc.status.name === "FAILED" || desc.status.name === "CANCELLED") {
-            send("workflow_completed", { status: desc.status.name });
+          const statusName = desc.status.name;
+
+          if (statusName === "FAILED" || statusName === "TERMINATED" || statusName === "TIMED_OUT") {
+            // Try to extract a human-readable failure reason from the
+            // workflow history. handle.result() throws with the root cause
+            // for failed workflows, so we use that to surface a message.
+            let reason: string = statusName;
+            try {
+              await handle.result();
+            } catch (resultErr) {
+              reason = resultErr instanceof Error ? resultErr.message : String(resultErr);
+            }
+            log.warn("workflow ended abnormally", { status: statusName, reason });
+            send("workflow_error", { status: statusName, error: reason });
+            cleanup();
+            return;
+          }
+
+          if (statusName === "COMPLETED" || statusName === "CANCELLED") {
+            send("workflow_completed", { status: statusName });
             cleanup();
           }
-        } catch {
-          // Workflow not found or error — send completion
-          send("workflow_completed", { status: "UNKNOWN" });
+        } catch (pollErr) {
+          // Workflow not found or describe() error — treat as an error we
+          // can't diagnose, but tell the client to stop waiting.
+          log.warn("workflow poll failed", { error: String(pollErr) });
+          send("workflow_error", { status: "UNKNOWN", error: pollErr instanceof Error ? pollErr.message : String(pollErr) });
           cleanup();
         }
       }, WORKFLOW_POLL_MS);

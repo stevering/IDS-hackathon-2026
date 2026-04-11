@@ -136,6 +136,27 @@ export function useChatWorkflow({
   const streamingMsgRef = useRef<{ id: string; text: string; reasoning: string } | null>(null);
   const benchmarkRef = useRef<{ sendAt: number; firstDeltaAt: number; completeAt: number } | null>(null);
 
+  // ── Streaming smoothing buffer ─────────────────────────────────────────────
+  // Raw deltas from Supabase Realtime arrive in unpredictable bursts (one
+  // token, then 50 chars at once, then silence). Rendering each burst
+  // immediately produces a visible jerk. This buffer holds a "displayed
+  // cursor" that advances at an adaptive rate across animation frames so
+  // the text appears like a smooth typewriter.
+  //
+  // Model:
+  //   streamingMsgRef.current.{text,reasoning}  = TARGET (all received chars)
+  //   smoothingRef.current.{textCursor,...}     = DISPLAYED position
+  //
+  // A rAF tick moves the cursors forward; commitDisplayed() pushes the
+  // sliced view into React state. On text_complete, flushSmoothing() jumps
+  // the cursors to target so the final full content is rendered atomically.
+  const smoothingRef = useRef<{
+    textCursor: number;
+    reasoningCursor: number;
+    rafId: number | null;
+    lastTick: number;
+  }>({ textCursor: 0, reasoningCursor: 0, rafId: null, lastTick: 0 });
+
   // Refs for dynamic context (captured at send time, not stale from closure)
   const selectedNodeRef = useRef(selectedNode);
   selectedNodeRef.current = selectedNode;
@@ -160,6 +181,11 @@ export function useChatWorkflow({
     workflowIdRef.current = null;
     streamingMsgRef.current = null;
     setMcpDiscoveryFailures([]);
+    // Kill any in-flight smoothing frame from the previous conversation.
+    if (smoothingRef.current.rafId !== null) {
+      cancelAnimationFrame(smoothingRef.current.rafId);
+      smoothingRef.current.rafId = null;
+    }
     // Unsubscribe from the previous conversation's streaming channel
     if (channelRef.current) {
       try { channelRef.current.unsubscribe(); } catch { /* ignore */ }
@@ -320,6 +346,139 @@ export function useChatWorkflow({
       channelRef.current = null;
     }
 
+    // Cancel any leftover smoothing frame from a previous stream and reset
+    // the cursors so the new stream starts from position 0.
+    if (smoothingRef.current.rafId !== null) {
+      cancelAnimationFrame(smoothingRef.current.rafId);
+    }
+    smoothingRef.current = { textCursor: 0, reasoningCursor: 0, rafId: null, lastTick: 0 };
+
+    // ── Smoothing tuning ─────────────────────────────────────────────────
+    // These three numbers control the typewriter feel. Local constants so
+    // they can be tweaked without changing the hook's public surface.
+    const SMOOTHING_ENABLED = true;
+    const CATCH_UP_MS = 450;        // drain a burst within ~this window
+    const MIN_CHARS_PER_SEC = 60;   // floor — ensures the cursor never stalls
+    const MAX_CHARS_PER_SEC = 500;  // cap — prevents runaway on large backlogs
+
+    // Commit the currently-displayed slice to React state. Reads the target
+    // from streamingMsgRef and the cursors from smoothingRef, then rebuilds
+    // the visible parts. No-op if there's no active streaming message.
+    const commitDisplayed = () => {
+      const snap = streamingMsgRef.current;
+      if (!snap) return;
+      const buf = smoothingRef.current;
+      const displayedText = snap.text.slice(0, buf.textCursor);
+      const displayedReasoning = snap.reasoning.slice(0, buf.reasoningCursor);
+      const msgId = snap.id;
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.id === msgId
+            ? {
+                ...m,
+                content: displayedText,
+                parts: buildParts({ text: displayedText, reasoning: displayedReasoning }),
+              }
+            : m
+        )
+      );
+    };
+
+    // One animation frame of drain. Advances each cursor by a char count
+    // proportional to the elapsed frame time and the current backlog, then
+    // re-schedules itself if anything remains pending.
+    const smoothTick = () => {
+      const buf = smoothingRef.current;
+      buf.rafId = null;
+      const snap = streamingMsgRef.current;
+      if (!snap) return;
+
+      const now = performance.now();
+      const dt = Math.max(1, now - buf.lastTick);
+      buf.lastTick = now;
+
+      const pendingText = snap.text.length - buf.textCursor;
+      const pendingReasoning = snap.reasoning.length - buf.reasoningCursor;
+      if (pendingText <= 0 && pendingReasoning <= 0) return;
+
+      // Adaptive rate: drain the current backlog over CATCH_UP_MS, clamped.
+      // Small backlog → MIN rate (slow typewriter). Large backlog → capped
+      // at MAX so we don't firehose huge chunks in a single frame.
+      const rateFor = (pending: number) => {
+        if (pending <= 0) return 0;
+        const cps = (pending / CATCH_UP_MS) * 1000;
+        return Math.max(MIN_CHARS_PER_SEC, Math.min(MAX_CHARS_PER_SEC, cps));
+      };
+
+      const advanceText = Math.ceil((rateFor(pendingText) * dt) / 1000);
+      const advanceReasoning = Math.ceil((rateFor(pendingReasoning) * dt) / 1000);
+
+      let changed = false;
+      if (pendingText > 0 && advanceText > 0) {
+        buf.textCursor = Math.min(snap.text.length, buf.textCursor + advanceText);
+        changed = true;
+      }
+      if (pendingReasoning > 0 && advanceReasoning > 0) {
+        buf.reasoningCursor = Math.min(snap.reasoning.length, buf.reasoningCursor + advanceReasoning);
+        changed = true;
+      }
+
+      if (changed) commitDisplayed();
+
+      // Keep the animation alive while any cursor is behind its target.
+      if (snap.text.length > buf.textCursor || snap.reasoning.length > buf.reasoningCursor) {
+        buf.rafId = requestAnimationFrame(smoothTick);
+      }
+    };
+
+    // Request a drain frame if one isn't already queued. When smoothing
+    // is disabled (debug flag), falls back to an immediate synchronous
+    // commit so we can compare before/after without code changes.
+    const scheduleSmoothTick = () => {
+      if (!SMOOTHING_ENABLED) {
+        const snap = streamingMsgRef.current;
+        if (snap) {
+          smoothingRef.current.textCursor = snap.text.length;
+          smoothingRef.current.reasoningCursor = snap.reasoning.length;
+        }
+        commitDisplayed();
+        return;
+      }
+      const buf = smoothingRef.current;
+      if (buf.rafId !== null) return; // already scheduled
+      if (buf.lastTick === 0) buf.lastTick = performance.now();
+      buf.rafId = requestAnimationFrame(smoothTick);
+    };
+
+    // Jump the cursors to the end of the target. Used at text_complete and
+    // on errors so the final render has no leftover unshown chars and any
+    // queued rAF is cancelled.
+    const flushSmoothing = () => {
+      const buf = smoothingRef.current;
+      if (buf.rafId !== null) {
+        cancelAnimationFrame(buf.rafId);
+        buf.rafId = null;
+      }
+      const snap = streamingMsgRef.current;
+      if (snap) {
+        buf.textCursor = snap.text.length;
+        buf.reasoningCursor = snap.reasoning.length;
+      }
+    };
+
+    // Reset cursors to 0 when starting a fresh streaming message mid-stream
+    // (e.g., after a tool call returns and the LLM resumes talking).
+    const resetSmoothingCursors = () => {
+      const buf = smoothingRef.current;
+      if (buf.rafId !== null) {
+        cancelAnimationFrame(buf.rafId);
+        buf.rafId = null;
+      }
+      buf.textCursor = 0;
+      buf.reasoningCursor = 0;
+      buf.lastTick = 0;
+    };
+
     const supabase = createClient();
     const channel = supabase.channel(`guardian:chat:${convId}`);
     channelRef.current = channel;
@@ -327,6 +486,7 @@ export function useChatWorkflow({
     // Initialize streaming message
     const streamMsgId = `assistant-${Date.now()}`;
     streamingMsgRef.current = { id: streamMsgId, text: "", reasoning: "" };
+    resetSmoothingCursors();
 
     // Add a placeholder assistant message
     setMessages((prev) => [
@@ -349,6 +509,8 @@ export function useChatWorkflow({
         if (!streamingMsgRef.current) {
           const nextMsgId = `assistant-${Date.now()}`;
           streamingMsgRef.current = { id: nextMsgId, text: "", reasoning: "" };
+          // New streaming message → restart the typewriter from 0.
+          resetSmoothingCursors();
           setMessages((prev) => [
             ...prev,
             {
@@ -368,32 +530,18 @@ export function useChatWorkflow({
           console.log(`[ChatWorkflow] BENCHMARK first_delta: ${ttfd}ms (time from send to first visible token)`);
         }
 
+        // Append to the TARGET. The rAF drain will progressively reveal
+        // the new chars via commitDisplayed().
         streamingMsgRef.current.text += content;
-        const snapshot = { ...streamingMsgRef.current };
-        const msgId = snapshot.id;
-
-        setMessages((prev) =>
-          prev.map((m) =>
-            m.id === msgId
-              ? { ...m, content: snapshot.text, parts: buildParts(snapshot) }
-              : m
-          )
-        );
+        scheduleSmoothTick();
       })
       .on("broadcast", { event: "reasoning_delta" }, (payload) => {
         const { content } = payload.payload as { content: string };
         if (!streamingMsgRef.current) return;
 
+        // Append to the TARGET; let the smoothing drain reveal it.
         streamingMsgRef.current.reasoning += content;
-        const snapshot = { ...streamingMsgRef.current };
-
-        setMessages((prev) =>
-          prev.map((m) =>
-            m.id === snapshot.id
-              ? { ...m, parts: buildParts(snapshot) }
-              : m
-          )
-        );
+        scheduleSmoothTick();
       })
       .on("broadcast", { event: "tool_call_start" }, (payload) => {
         const { toolName, toolCallId, args } = payload.payload as {
@@ -456,13 +604,14 @@ export function useChatWorkflow({
         }
       })
       .on("broadcast", { event: "text_complete" }, (payload) => {
-        const { content, reasoning, hasToolCalls } = payload.payload as {
+        const { content, reasoning, hasToolCalls, finishReason } = payload.payload as {
           content: string;
           modelId?: string;
           reasoning?: string;
           hasToolCalls?: boolean;
+          finishReason?: string;
         };
-        console.log("[ChatWorkflow] text_complete received", { hasToolCalls, contentLen: content?.length, msgId: streamingMsgRef.current?.id });
+        console.log("[ChatWorkflow] text_complete received", { hasToolCalls, contentLen: content?.length, finishReason, msgId: streamingMsgRef.current?.id });
         if (!streamingMsgRef.current) return;
 
         const msgId = streamingMsgRef.current.id;
@@ -472,6 +621,8 @@ export function useChatWorkflow({
           // The LLM often writes tool names in its text output (e.g. "Tool: xxx")
           // alongside the structured tool call. The tool call will be shown
           // as a ToolCallBlock, and the final LLM response will have the real content.
+          // Cancel any in-flight smoothing frame; the message is about to disappear.
+          flushSmoothing();
           setMessages((prev) => prev.filter((m) => m.id !== msgId));
           setStatus("tool_executing");
 
@@ -481,7 +632,28 @@ export function useChatWorkflow({
           return;
         }
 
-        // No tool calls — final response, finalize
+        // ── finishReason handling ─────────────────────────────────────────
+        // Distinct user-visible treatment for "non-normal" stop reasons:
+        //   - "content-filter" → provider blocked some/all of the response.
+        //     Surface via PeekBanner so the user knows their answer may be
+        //     incomplete AND why.
+        //   - "length"         → truncation at max_output_tokens. Same banner
+        //     treatment, different message ("ask me to continue").
+        //   - "cancelled"      → user clicked Stop (emitted by the activity's
+        //     cancellation branch). Silent — the truncated message speaks for
+        //     itself, no banner needed.
+        // "stop", "tool-calls", "error", "other", "unknown" use the default
+        // text rendering path without a banner.
+        if (finishReason === "content-filter") {
+          setError("Response was blocked by the model's content filter. Part of the answer may be missing.");
+        } else if (finishReason === "length") {
+          setError("Response was cut off at the maximum output length. Ask the model to continue if you need more.");
+        }
+
+        // No tool calls — final response. Flush the smoothing buffer so any
+        // pending rAF is cancelled; the setMessages below renders the full
+        // final content atomically (no fight between typewriter and final).
+        flushSmoothing();
         setMessages((prev) =>
           prev.map((m) =>
             m.id === msgId
@@ -516,6 +688,8 @@ export function useChatWorkflow({
         const { error: errMsg } = payload.payload as { requestId: string; error: string };
         console.error("[ChatWorkflow] stream_error received:", errMsg);
 
+        // Cancel any queued typewriter frame — the message is going away.
+        flushSmoothing();
         // Remove the empty streaming placeholder if present
         if (streamingMsgRef.current) {
           const emptyId = streamingMsgRef.current.id;
@@ -526,6 +700,26 @@ export function useChatWorkflow({
         // Error shown via PeekBanner (page.tsx syncs chatWorkflow.error → chatErrorMsg)
         // No chat message added — banner is sufficient.
         setError(errMsg);
+        setStatus("idle");
+      })
+      .on("broadcast", { event: "workflow_error" }, (payload) => {
+        // Broadcast from chat.ts top-level catch for any error NOT already
+        // surfaced as a stream_error (e.g. loadChatHistory crashed, an MCP
+        // tool execution threw, persistChatMessage failed). Previously the
+        // workflow would die silently and the client would hang forever
+        // waiting for text_complete — now we flip to error state immediately.
+        const { error: errMsg } = payload.payload as { error: string; status?: string };
+        console.error("[ChatWorkflow] workflow_error received:", errMsg);
+
+        // Cancel any queued typewriter frame — the message is going away.
+        flushSmoothing();
+        if (streamingMsgRef.current) {
+          const emptyId = streamingMsgRef.current.id;
+          setMessages((prev) => prev.filter((m) => m.id !== emptyId));
+          streamingMsgRef.current = null;
+        }
+
+        setError(errMsg || "Chat workflow failed unexpectedly. Please try again.");
         setStatus("idle");
       })
       .subscribe();
@@ -632,6 +826,12 @@ export function useChatWorkflow({
   // Cleanup on unmount
   useEffect(() => {
     return () => {
+      // Kill any pending typewriter frame before unmount, otherwise it
+      // would fire against a torn-down component.
+      if (smoothingRef.current.rafId !== null) {
+        cancelAnimationFrame(smoothingRef.current.rafId);
+        smoothingRef.current.rafId = null;
+      }
       if (channelRef.current) {
         channelRef.current.unsubscribe();
         channelRef.current = null;

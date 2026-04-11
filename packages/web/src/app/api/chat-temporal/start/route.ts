@@ -16,6 +16,7 @@ import {
   type FigmaPluginContext,
   type ConnectedAgent,
 } from "@/lib/chat-dynamic-context";
+import { enforceFreeTierQuota } from "@/lib/chat-quota";
 
 export const dynamic = "force-dynamic";
 
@@ -74,9 +75,9 @@ export async function POST(request: Request) {
     const taskQueue = getTaskQueue();
 
     // Resolve model from user settings if not specified
+    const sb = createServiceClient();
     let resolvedModel = model;
     if (!resolvedModel) {
-      const sb = createServiceClient();
       const { data: settings } = await sb
         .from("user_settings")
         .select("default_model, usage_source")
@@ -87,6 +88,23 @@ export async function POST(request: Request) {
         resolvedModel = settings.default_model;
       }
       // Otherwise callLLMStreaming will resolve to free tier
+    }
+
+    // ── Free-tier quota + model restriction pre-flight ────────────────────
+    // Enforces the rolling 24h token limit and tier-allowed model list
+    // BEFORE starting the workflow. Legacy parity: the old /api/chat route
+    // rejected over-quota calls with 429 up front; the Temporal migration
+    // dropped this and only incremented usage after the stream, allowing
+    // free-tier users to burn unlimited tokens in a single session.
+    // BYOK users bypass this check (they bring their own key).
+    const quotaResult = await enforceFreeTierQuota({
+      userId,
+      requestedModel: resolvedModel,
+      serviceClient: sb,
+    });
+    if (quotaResult.kind === "error") {
+      log.warn("quota pre-flight rejected", { status: quotaResult.status, error: String(quotaResult.body.error ?? "unknown") });
+      return NextResponse.json(quotaResult.body, { status: quotaResult.status });
     }
 
     // Resolve key label for model identity injection
@@ -195,9 +213,16 @@ export async function POST(request: Request) {
 
     return NextResponse.json({ workflowId, conversationId });
   } catch (err) {
-    log.error("failed to start chatWorkflow", { error: String(err) });
+    // Generate a short error ID that the user can surface in a bug report.
+    // Logged on the server side with the full stack trace and returned to
+    // the client as a grep-able correlation token. Legacy parity: the old
+    // `/api/chat` route did the same with `err-${timestamp}-${random}` so
+    // operators could find the matching server log line instantly.
+    const errId = `err-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+    const errMsg = err instanceof Error ? err.message : String(err);
+    log.error("failed to start chatWorkflow", { errId, error: errMsg });
     return NextResponse.json(
-      { error: `Failed to start chat workflow: ${err instanceof Error ? err.message : String(err)}` },
+      { error: `Failed to start chat workflow: ${errMsg}`, errId },
       { status: 500 }
     );
   }

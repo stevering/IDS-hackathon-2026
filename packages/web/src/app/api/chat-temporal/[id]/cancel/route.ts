@@ -54,9 +54,12 @@ export async function POST(
     log.info("chatCancel signal sent");
     return NextResponse.json({ workflowId, action: "cancelled" });
   } catch (err) {
-    log.error("failed to signal chatCancel", { error: String(err) });
+    // Correlatable error ID — matches the pattern used by start/message routes.
+    const errId = `err-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+    const errMsg = err instanceof Error ? err.message : String(err);
+    log.error("failed to signal chatCancel", { errId, error: errMsg });
     return NextResponse.json(
-      { error: `Failed to cancel chat workflow: ${err instanceof Error ? err.message : String(err)}` },
+      { error: `Failed to cancel chat workflow: ${errMsg}`, errId },
       { status: 500 }
     );
   }

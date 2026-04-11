@@ -193,6 +193,35 @@ export async function chatWorkflow(params: ChatWorkflowParams): Promise<void> {
   // correct conversation instead of cross-contaminating.
   setHandler(chatConversationIdQuery, () => params.conversationId);
 
+  // ── Workflow body, wrapped in a catch-all that broadcasts ──────────────
+  // Any uncaught error below is broadcast to the client as a `workflow_error`
+  // event on the Realtime channel BEFORE being re-thrown. Without this, a
+  // workflow that crashed in an activity outside `callLLMStreaming` (e.g.
+  // `loadChatHistory`, `persistChatMessage`, `executeMCPTool`) would leave
+  // the client spinning forever because `useChatWorkflow` never learned
+  // that the workflow was dead.
+  try {
+    await runChatWorkflowBody();
+  } catch (err) {
+    const errMsg = err instanceof Error ? err.message : String(err);
+    // Skip the broadcast if this was a cancellation — the activity has
+    // already broadcast a synthetic `text_complete` with finishReason=
+    // "cancelled" and the workflow is returning to idle, not failing.
+    if (!isCancellation(err)) {
+      try {
+        await broadcastChatEvent({
+          conversationId: params.conversationId,
+          event: "workflow_error",
+          payload: { error: errMsg, status: "error" },
+        });
+      } catch { /* non-fatal */ }
+      errorMessage = errMsg;
+      status = "error";
+    }
+    throw err;
+  }
+
+  async function runChatWorkflowBody() {
   // ── Load conversation history ───────────────────────────────────────────
   const history = await loadChatHistory({
     conversationId: params.conversationId,
@@ -452,7 +481,7 @@ export async function chatWorkflow(params: ChatWorkflowParams): Promise<void> {
             });
             toolResult = result.success
               ? JSON.stringify(result.result ?? { success: true })
-              : `Error: ${result.error ?? "unknown"}`;
+              : formatToolError(tc.name, result.error, { source: "Figma plugin" });
             isError = !result.success;
           } else if (useV2 && tc.name.startsWith("guardian_") && ["guardian_list_instances", "guardian_get_instance_tools", "guardian_call_instance_tool"].includes(tc.name)) {
             // V2: Guardian meta-tool (instance discovery / proxy)
@@ -464,12 +493,13 @@ export async function chatWorkflow(params: ChatWorkflowParams): Promise<void> {
             });
             toolResult = result.success
               ? JSON.stringify(result.result ?? { success: true })
-              : `Error: ${result.error ?? "unknown"}`;
+              : formatToolError(tc.name, result.error, { source: "Guardian meta-tool" });
             isError = !result.success;
           } else if (useV2) {
             // V2: instance-based MCP tool execution
             const resolved = resolveV2Tool(tc.name, instanceManifest);
             if (resolved) {
+              const manifestEntry = instanceManifest.find((e) => e.instanceId === resolved.instanceId);
               const result = await executeMCPToolV2({
                 userId: params.userId,
                 instanceId: resolved.instanceId,
@@ -478,7 +508,10 @@ export async function chatWorkflow(params: ChatWorkflowParams): Promise<void> {
               });
               toolResult = result.success
                 ? JSON.stringify(result.result ?? { success: true })
-                : `Error: ${result.error ?? "unknown"}`;
+                : formatToolError(tc.name, result.error, {
+                    source: manifestEntry?.displayName ?? manifestEntry?.presetType ?? "MCP instance",
+                    label: manifestEntry?.label,
+                  });
               isError = !result.success;
             } else {
               // Fallback: try V1 resolution (e.g., guardian_ prefix tools)
@@ -491,7 +524,7 @@ export async function chatWorkflow(params: ChatWorkflowParams): Promise<void> {
               });
               toolResult = result.success
                 ? JSON.stringify(result.result ?? { success: true })
-                : `Error: ${result.error ?? "unknown"}`;
+                : formatToolError(tc.name, result.error, { source: resolvedV1.serverId });
               isError = !result.success;
             }
           } else {
@@ -505,11 +538,11 @@ export async function chatWorkflow(params: ChatWorkflowParams): Promise<void> {
             });
             toolResult = result.success
               ? JSON.stringify(result.result ?? { success: true })
-              : `Error: ${result.error ?? "unknown"}`;
+              : formatToolError(tc.name, result.error, { source: resolved.serverId });
             isError = !result.success;
           }
         } catch (err) {
-          toolResult = `Tool execution failed: ${err instanceof Error ? err.message : String(err)}`;
+          toolResult = formatToolError(tc.name, err instanceof Error ? err.message : String(err), { source: "tool execution" });
           isError = true;
         }
 
@@ -564,6 +597,7 @@ export async function chatWorkflow(params: ChatWorkflowParams): Promise<void> {
       });
     }
   }
+  } // end runChatWorkflowBody
 }
 
 // ---------------------------------------------------------------------------
@@ -577,6 +611,55 @@ const TOOL_PREFIX_MAP: Array<[string, string]> = [
   ["figma_", "figma_mcp"],
   ["github_", "github"],
 ];
+
+/**
+ * Format a tool execution error with provider/instance context and an
+ * actionable hint when we can detect a known failure pattern.
+ *
+ * Legacy parity: the old `/api/chat` route hand-crafted error messages with
+ * provider names and auth/rate-limit hints. During the Temporal migration
+ * the activities started returning raw errors, making it hard for users to
+ * tell WHICH connection broke (e.g. "Error: 401 Unauthorized" with no
+ * indication of whether it's the Figma MCP or the GitHub API).
+ *
+ * This helper wraps the raw error with:
+ *   - A "[<source>]" prefix identifying the instance/server
+ *   - The raw error message
+ *   - A pattern-matched hint ("rate limited", "authentication failed", ...)
+ *
+ * Pure function — deterministic string manipulation only, safe to call from
+ * a Temporal workflow.
+ */
+function formatToolError(
+  toolName: string,
+  rawError: string | undefined,
+  ctx: { source: string; label?: string },
+): string {
+  const err = rawError ?? "unknown error";
+  const sourceLabel = ctx.label ? `${ctx.source} (${ctx.label})` : ctx.source;
+
+  // Pattern-match common failure classes so the user sees a one-line
+  // actionable hint alongside the raw error instead of having to decode
+  // "401 Unauthorized" themselves.
+  let hint = "";
+  const lower = err.toLowerCase();
+
+  if (/401|unauthori[sz]ed|invalid.?(api.?)?key|not.?authenticated/.test(lower)) {
+    hint = " — Authentication failed. Re-check your API key or reconnect this instance in Account > Developers.";
+  } else if (/403|forbidden|permission.?denied|access.?denied/.test(lower)) {
+    hint = " — Permission denied. Verify this account has access to the resource, or reconnect with broader scopes.";
+  } else if (/429|rate.?limit|too.?many.?requests|quota.?exceeded/.test(lower)) {
+    hint = " — Rate limit or quota exceeded on the provider side. Wait a moment and retry, or switch to a different instance.";
+  } else if (/timeout|timed.?out|econnreset|econnrefused|network/.test(lower)) {
+    hint = " — Network / timeout error reaching the provider. The instance may be offline — check its status in Account > Developers.";
+  } else if (/not.?found|404/.test(lower)) {
+    hint = " — Resource not found. Double-check the target (file, repo, node) exists and is spelled correctly.";
+  } else if (/plugin.?(is.?not.?|isn.?t.?|not.?)connected|no.?plugin.?connected/.test(lower)) {
+    hint = " — The Figma plugin bridge is not connected. Open the Guardian plugin in Figma and reload it, then retry.";
+  }
+
+  return `[${sourceLabel}] Tool ${toolName} failed: ${err}${hint}`;
+}
 
 function resolveServerForTool(prefixedName: string): { serverId: string; rawName: string } {
   for (const [prefix, serverId] of TOOL_PREFIX_MAP) {

@@ -67,15 +67,25 @@ The `callLLMStreaming` activity broadcasts on Supabase Realtime channel `guardia
 |---|---|---|
 | `text_delta` | `{ requestId, content }` | Each text chunk (~50ms intervals) |
 | `reasoning_delta` | `{ requestId, content }` | Each reasoning chunk |
+| `text_snapshot` | `{ requestId, content }` | Periodic full-text snapshot for F5 recovery (every ~2s during streaming) |
 | `tool_call_start` | `{ requestId, toolName, toolCallId, args }` | LLM emits a tool call |
 | `tool_call_result` | `{ toolCallId, result, isError }` | Tool execution completes |
-| `text_complete` | `{ requestId, content, modelId, reasoning?, usage?, finishReason?, hasToolCalls }` | Streaming finished |
+| `text_complete` | `{ requestId, content, modelId, reasoning?, usage?, finishReason?, hasToolCalls }` | Streaming finished (also sent synthetically on cancellation with `finishReason: "cancelled"`) |
+| `stream_error` | `{ requestId, error }` | Broadcast by `callLLMStreaming` when the LLM API call fails (401, rate limit, invalid model, …) |
+| `workflow_error` | `{ error, status }` | Broadcast by `chat.ts` top-level catch when ANY other workflow step fails (loadChatHistory, MCP tool execution, persistChatMessage, …) — ensures the client never hangs on a dead workflow |
+| `mcp_discovery_error` | `{ failures }` | Non-fatal discovery failures per instance (V2 manifest) |
 
 `finishReason` mirrors the AI SDK enum — `"stop"`, `"length"`, `"tool-calls"`,
-`"content-filter"`, `"error"`, `"other"`, or `"unknown"`. It is also persisted
-in `messages.metadata.finishReason` so the UI can render truncation hints
-(`length` → "Response was cut off") or distinguish intentional stops from
-errors on reload.
+`"content-filter"`, `"error"`, `"other"`, `"unknown"` — plus the synthetic
+`"cancelled"` value produced by the activity when the user clicks Stop.
+
+The `useChatWorkflow` hook renders distinct UI banners for:
+- `"content-filter"` → "Response was blocked by the model's content filter."
+- `"length"` → "Response was cut off at the maximum output length. Ask the model to continue if you need more."
+- `"cancelled"` → silent (truncated message speaks for itself)
+
+`finishReason` is also persisted in `messages.metadata.finishReason` so F5
+recovery can reconstruct the correct banner after a reload.
 
 ## Figma Execute ACK Protocol
 
@@ -247,30 +257,65 @@ worker's `resolveModelForActivity` still re-validates this value against
 current `user_settings` + `user_api_keys` on every LLM call as a final safety
 net (see `packages/temporal/src/activities/llm-resolver.ts`).
 
-## Free Tier Usage Tracking
+## Free-Tier Quota & Model Restrictions
 
-When `resolved.isFreeTier === true` (user is on the platform's included AI
-Gateway key, not BYOK), `callLLMStreaming` fire-and-forgets an
-`increment_usage` RPC after the streaming finishes:
+Three layers of free-tier enforcement, restored in April 2026 after the
+Temporal migration had silently dropped them:
+
+### 1. Pre-flight quota check (routes)
+
+Both `POST /api/chat-temporal/start` and `POST /api/chat-temporal/[id]/message`
+call `enforceFreeTierQuota()` from `lib/chat-quota.ts` BEFORE starting or
+signalling a workflow. The helper does:
+
+1. Read `user_settings.usage_source`. If `"byok"`, return OK (nothing to enforce).
+2. Call `get_usage_for_user(p_user_id)` RPC to get the rolling 24h token
+   total for this user.
+3. If `total >= getUserTier(userId).dailyTokenLimit`, return HTTP 429 with
+   `{ error: "daily_limit_exceeded", limit, used }`.
+4. If the caller requested a specific model that isn't in `tier.allowedModels`,
+   return HTTP 400 with `{ error: "model_not_allowed", model, tier, allowedModels }`.
+
+Without step 1–3, the previous behaviour allowed a free-tier user to burn an
+unlimited number of tokens in a single session — the only gate was the
+post-stream `increment_usage` RPC that RECORDED the overage but never blocked it.
+
+### 2. Post-stream usage tracking (activity)
+
+When `resolved.isFreeTier === true`, `callLLMStreaming` fire-and-forgets an
+`increment_usage` RPC **with cost params** (parity with legacy):
 
 ```ts
-snapshotSupabase.rpc("increment_usage", {
+await snapshotSupabase.rpc("increment_usage", {
   p_user_id: params.userId,
-  p_input_tokens: usage.inputTokens ?? 0,
-  p_output_tokens: usage.outputTokens ?? 0,
+  p_input_tokens: inputTokens,
+  p_output_tokens: outputTokens,
   p_model: resolved.modelId,
+  p_cost_input: inputTokens * pricing.inputPerToken,
+  p_cost_output: outputTokens * pricing.outputPerToken,
 });
 ```
 
-This writes into `user_usage_log` so that:
-- The Account > Usage page (`GET /api/user/usage` → `get_current_usage` RPC)
-  stays in sync with what users actually consumed.
-- Future quota enforcement can rely on the rolling 24h window already
-  aggregated by `increment_usage`.
-- BYOK users are NOT tracked here — their provider bills them directly.
+Pricing comes from the `model_pricing_cache` Supabase table via a minimal
+inline lookup (`lookupModelPricing()` in `llm-streaming.ts`). Zero-cost
+fallback when the model is unknown — tokens still tracked, only the $
+attribution is missing.
 
-This parity with the legacy `/api/chat` route was missing during the initial
-Temporal migration and was restored in April 2026.
+### 3. Activity-side re-validation
+
+`resolveModelForActivity` (in `llm-resolver.ts`) re-reads `user_settings`
+and `user_api_keys` on every LLM call as a final safety net. This matters
+because workflows are long-lived (5 min idle): a user who changes their
+BYOK key or toggles `usage_source` between follow-up messages would
+otherwise keep hitting the model that was baked in at workflow start.
+
+This three-layer defence means:
+- Over-quota free-tier users get rejected BEFORE the workflow starts (layer 1).
+- Running workflows can't silently over-bill because the cost is computed at
+  stream-end (layer 2).
+- Mid-conversation settings changes are honoured on every turn (layer 3).
+
+BYOK users bypass layers 1 and 2 entirely — their provider bills them directly.
 
 ## Defence-in-depth: Conversation/Workflow Binding
 
@@ -305,6 +350,60 @@ authenticated user who learned a `conversationId` could subscribe to the
 SSE relay and watch another user's tokens, reasoning, and tool calls
 stream live. Supabase RLS gates table reads but does not gate Realtime
 broadcasts, so the check has to happen in the route itself.
+
+## Conversation history loading
+
+`loadChatHistory` in `packages/temporal/src/activities/chat-persistence.ts`
+loads up to 500 messages per workflow (raised from 100 in April 2026). The
+query uses `ORDER BY created_at DESC LIMIT N` followed by an in-memory
+reverse to return the **most recent** N messages in chronological order.
+
+Prior to April 2026 the query was `ORDER BY ASC LIMIT 100`, which had a
+subtle off-by-everything bug on long conversations: it returned the OLDEST
+100 messages, silently dropping the recent context the LLM needed most.
+The symptom was "the model forgot what we just discussed" on conversations
+past 100 turns.
+
+500 is still a hard upper bound — conversations beyond that will lose their
+earliest context, but this effectively removes the cap for most users.
+Override per-call via the optional `limit` parameter if a specific workflow
+needs a different window.
+
+## Tool error enrichment
+
+Tool execution errors returned from MCP servers and the Figma plugin bridge
+are wrapped by `formatToolError()` (in `chat.ts`) before being sent back to
+the LLM as tool results. The wrapper adds:
+
+1. A `[<source>]` prefix identifying which instance/server produced the error
+   (e.g. `[Figma Console (figma-main)]`, `[GitHub API]`, `[Figma plugin]`).
+2. The raw provider error message.
+3. An actionable hint when the error text matches a known pattern:
+   - `401` / `unauthorized` → "Authentication failed. Re-check your API key…"
+   - `403` / `forbidden`     → "Permission denied. Verify this account has access…"
+   - `429` / `rate limit`    → "Rate limit or quota exceeded on the provider side…"
+   - `timeout` / `econnreset`→ "Network / timeout error. The instance may be offline…"
+   - `404` / `not found`     → "Resource not found. Double-check the target exists…"
+   - `plugin not connected`  → "The Figma plugin bridge is not connected. Reload the plugin…"
+
+This improves the LLM's ability to recover from tool failures (it can now
+tell which key to refresh) AND gives users a readable error when the LLM
+surfaces the tool result in its response. Legacy parity: the old
+`/api/chat` route had similar pattern-matched hints inline.
+
+## Error IDs
+
+All chat-temporal routes (`start`, `message`, `cancel`) generate a correlatable
+error ID on their 500 error paths:
+
+```
+errId = `err-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
+```
+
+The ID is logged server-side with the full error message AND returned in
+the JSON response body so users can surface it in bug reports. Operators
+then grep the logs by `errId=err-…` to find the matching server log line.
+Legacy parity: the old `/api/chat` route used the same pattern.
 
 ## Figma Execute — subscribe-status handling
 

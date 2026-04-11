@@ -568,7 +568,7 @@ select {
 }
 
 ::-webkit-scrollbar-track {
-  background: rgba(255, 255, 255, 0.05);
+  background: transparent;
 }
 
 ::-webkit-scrollbar-thumb {
@@ -582,7 +582,7 @@ select {
 
 /* Firefox scrollbar */
 * {
-  scrollbar-color: rgba(255, 255, 255, 0.2) rgba(255, 255, 255, 0.05);
+  scrollbar-color: rgba(255, 255, 255, 0.2) transparent;
   scrollbar-width: thin;
 }
 
@@ -1006,7 +1006,7 @@ html.theme-light body {
 }
 
 html.theme-light ::-webkit-scrollbar-track {
-  background: rgba(0, 0, 0, 0.05);
+  background: transparent;
 }
 
 html.theme-light ::-webkit-scrollbar-thumb {
@@ -1018,7 +1018,7 @@ html.theme-light ::-webkit-scrollbar-thumb:hover {
 }
 
 html.theme-light * {
-  scrollbar-color: rgba(0, 0, 0, 0.18) rgba(0, 0, 0, 0.05);
+  scrollbar-color: rgba(0, 0, 0, 0.18) transparent;
 }
 
 html.theme-light .glass {

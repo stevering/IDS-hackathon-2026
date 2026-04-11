@@ -3,7 +3,7 @@
 import { useChat } from "@ai-sdk/react";
 import { DefaultChatTransport, lastAssistantMessageIsCompleteWithToolCalls } from "ai";
 import { useChatWorkflow } from "./hooks/useChatWorkflow";
-import { useState, useRef, useEffect, useMemo, useCallback } from "react";
+import { useState, useRef, useEffect, useLayoutEffect, useMemo, useCallback } from "react";
 import Link from "next/link";
 import type { GatewayModel } from "./api/gateway-models/route";
 import { useFigmaPlugin, pushPluginEvent, type PluginEvent, type FigmaPluginContext, type ExecuteCodeResult } from "./hooks/useFigmaPlugin";
@@ -2579,7 +2579,13 @@ export default function Home() {
 
 
 
-  useEffect(() => {
+  // useLayoutEffect (not useEffect) is intentional: it runs synchronously
+  // AFTER DOM mutations but BEFORE the browser paints the frame. This makes
+  // the scroll catch-up happen in the same paint as the content growth —
+  // otherwise the user sees an intermediate frame where the new line has
+  // pushed the thinking block down, then a second frame where scroll rattrape.
+  // That visible two-step is the "jump" perceived during streaming.
+  useLayoutEffect(() => {
     if (shouldAutoScroll.current) {
       const el = scrollContainerRef.current;
       if (el) {
@@ -2598,7 +2604,9 @@ export default function Home() {
     shouldAutoScrollOrch.current = el.scrollHeight - el.scrollTop - el.clientHeight < threshold;
   };
 
-  useEffect(() => {
+  // Same rationale as the chat panel above: useLayoutEffect synchronises the
+  // auto-scroll with the DOM mutation to eliminate a visible intermediate frame.
+  useLayoutEffect(() => {
     if (shouldAutoScrollOrch.current) {
       const el = orchScrollContainerRef.current;
       if (el) {

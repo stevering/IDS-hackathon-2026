@@ -16,6 +16,7 @@ import {
   type FigmaPluginContext,
   type ConnectedAgent,
 } from "@/lib/chat-dynamic-context";
+import { enforceFreeTierQuota } from "@/lib/chat-quota";
 
 export const dynamic = "force-dynamic";
 
@@ -103,6 +104,22 @@ export async function POST(
     if (settings?.usage_source === "byok" && settings?.default_model) {
       resolvedModel = settings.default_model;
     }
+  }
+
+  // ── Free-tier quota + model restriction pre-flight ──────────────────────
+  // Must run BEFORE either the signal-existing-workflow branch or the
+  // start-new-workflow branch. Legacy parity: the old /api/chat route
+  // rejected over-quota calls with 429 up front. Without this, a follow-up
+  // message on an existing workflow would queue against a user who has
+  // already exhausted their rolling 24h quota. BYOK users bypass.
+  const quotaResult = await enforceFreeTierQuota({
+    userId,
+    requestedModel: resolvedModel,
+    serviceClient: sb,
+  });
+  if (quotaResult.kind === "error") {
+    log.warn("quota pre-flight rejected", { status: quotaResult.status, error: String(quotaResult.body.error ?? "unknown") });
+    return NextResponse.json(quotaResult.body, { status: quotaResult.status });
   }
 
   // ── Defense-in-depth: verify the workflow actually belongs to this conversation ──
@@ -239,9 +256,12 @@ export async function POST(
     log.info("new chatWorkflow started", { newWf: newWorkflowId, conv: conversationId, hasDynamicCtx: dynamicCtx.length > 0 });
     return NextResponse.json({ workflowId: newWorkflowId, conversationId, action: "started" });
   } catch (err) {
-    log.error("failed to start new chatWorkflow", { error: String(err) });
+    // Correlatable error ID — see start/route.ts for rationale.
+    const errId = `err-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+    const errMsg = err instanceof Error ? err.message : String(err);
+    log.error("failed to start new chatWorkflow", { errId, error: errMsg });
     return NextResponse.json(
-      { error: `Failed to start chat workflow: ${err instanceof Error ? err.message : String(err)}` },
+      { error: `Failed to start chat workflow: ${errMsg}`, errId },
       { status: 500 }
     );
   }

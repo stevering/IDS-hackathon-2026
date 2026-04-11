@@ -16,7 +16,7 @@
  */
 
 import { createClient } from "@supabase/supabase-js";
-import { Context, heartbeat } from "@temporalio/activity";
+import { CancelledFailure, Context, heartbeat } from "@temporalio/activity";
 import type { LLMCallParams, LLMCallResult } from "@guardian/orchestrations";
 import { createLogger } from "../lib/log.js";
 
@@ -347,25 +347,38 @@ export async function callLLMStreaming(params: LLMStreamingParams): Promise<LLMC
 
     // ── Free tier usage tracking ──────────────────────────────────────────
     // When the user is on the included free tier (platform AI Gateway key),
-    // log token counts into user_usage_log so quotas can be enforced and the
-    // Account > Usage page stays in sync. Fire-and-forget — never block the
-    // streaming response on billing bookkeeping.
+    // log token counts + computed $ cost into user_usage_log so quotas can
+    // be enforced and the Account > Usage page stays in sync. Fire-and-forget
+    // — never block the streaming response on billing bookkeeping. Cost
+    // computation mirrors the legacy `/api/chat` route: look up the model's
+    // per-token pricing in `model_pricing_cache` and multiply by the actual
+    // token counts returned by the provider.
     if (resolved.isFreeTier && usage && snapshotSupabase) {
       const inputTokens = (usage as { inputTokens?: number }).inputTokens ?? 0;
       const outputTokens = (usage as { outputTokens?: number }).outputTokens ?? 0;
       if (inputTokens > 0 || outputTokens > 0) {
-        snapshotSupabase
-          .rpc("increment_usage", {
-            p_user_id: params.userId,
-            p_input_tokens: inputTokens,
-            p_output_tokens: outputTokens,
-            p_model: resolved.modelId,
-          })
-          .then((res: { error: { message: string } | null }) => {
-            if (res.error) {
-              log.warn("increment_usage failed", { error: res.error.message });
+        // Fire-and-forget pricing lookup + RPC — any error is logged but
+        // never bubbles up to the user.
+        void (async () => {
+          try {
+            const pricing = await lookupModelPricing(snapshotSupabase, resolved.modelId);
+            const costInput = inputTokens * pricing.inputPerToken;
+            const costOutput = outputTokens * pricing.outputPerToken;
+            const { error: rpcError } = await snapshotSupabase.rpc("increment_usage", {
+              p_user_id: params.userId,
+              p_input_tokens: inputTokens,
+              p_output_tokens: outputTokens,
+              p_model: resolved.modelId,
+              p_cost_input: costInput,
+              p_cost_output: costOutput,
+            });
+            if (rpcError) {
+              log.warn("increment_usage failed", { error: rpcError.message });
             }
-          });
+          } catch (trackErr) {
+            log.warn("usage tracking failed", { error: String(trackErr) });
+          }
+        })();
       }
     }
 
@@ -496,6 +509,15 @@ export async function callLLMStreaming(params: LLMStreamingParams): Promise<LLMC
     if (ctx.cancellationSignal.aborted) {
       log.info("stream cancelled by user", { textLen: fullText.length, reasoningLen: fullReasoning.length });
 
+      // Use the actual resolved modelId if available. `params.model` may be
+      // undefined for free-tier users since the model is resolved inside the
+      // activity (resolveModelForActivity); in that case fall back to
+      // whatever we have. If cancellation fires BEFORE resolution completes,
+      // `resolved` is undefined — that's OK, we just persist without a
+      // modelId in metadata.
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const resolvedModelId = (typeof resolved !== "undefined" ? (resolved as any)?.modelId : undefined) ?? params.model;
+
       // Finalize the pre-created streaming message with whatever was produced
       // up to the cancellation point. Mirror the happy-path shape so the UI
       // renders it as a normal (if truncated) assistant turn.
@@ -510,7 +532,7 @@ export async function callLLMStreaming(params: LLMStreamingParams): Promise<LLMC
                 { type: "text", text: fullText, state: "done" },
               ],
               metadata: {
-                model: params.model,
+                model: resolvedModelId,
                 reasoning: fullReasoning || undefined,
                 finishReason: "cancelled",
                 streaming: false,
@@ -531,7 +553,7 @@ export async function callLLMStreaming(params: LLMStreamingParams): Promise<LLMC
             payload: {
               requestId: params.requestId,
               content: fullText,
-              modelId: params.model,
+              modelId: resolvedModelId,
               reasoning: fullReasoning || undefined,
               finishReason: "cancelled",
               hasToolCalls: false,
@@ -540,9 +562,14 @@ export async function callLLMStreaming(params: LLMStreamingParams): Promise<LLMC
         } catch { /* non-fatal */ }
       }
 
-      // Re-throw so Temporal records the cancellation and the workflow's
-      // CancellationScope catches it via isCancellation(err).
-      throw streamErr;
+      // Throw a CancelledFailure (NOT the underlying stream abort error)
+      // so that the workflow's `isCancellation(err)` helper recognizes this
+      // as a cancellation and routes the catch into the clean-idle branch.
+      // If we re-threw `streamErr` (a regular AbortError from fetch), it
+      // would be wrapped as an ActivityFailure by Temporal and
+      // `isCancellation()` would return false, causing the workflow to mark
+      // itself as errored instead of returning to idle for a follow-up.
+      throw new CancelledFailure("Chat generation cancelled by user");
     }
 
     // ── Error path (non-cancel) ───────────────────────────────────────────
@@ -588,4 +615,48 @@ export async function callLLMStreaming(params: LLMStreamingParams): Promise<LLMC
 /** Try to parse a string as JSON; return the original string if it fails. */
 function tryParseJSON(value: string): unknown {
   try { return JSON.parse(value); } catch { return value; }
+}
+
+// ---------------------------------------------------------------------------
+// Model pricing lookup (inline, activity-scope)
+// ---------------------------------------------------------------------------
+//
+// The web package has a richer `getModelPricing` in `lib/model-pricing.ts`
+// with in-memory cache + Supabase fallback + hardcoded defaults. Duplicating
+// that module here would require a cross-package refactor (move to
+// @guardian/orchestrations), which was out of scope for the April 2026 audit
+// pass. Instead we keep a minimal lookup that hits the same
+// `model_pricing_cache` table and falls back to zero cost when the model
+// isn't priced — tokens are still tracked, only the $ attribution is missing.
+
+type ActivityPricing = { inputPerToken: number; outputPerToken: number };
+
+/**
+ * Minimal activity-side pricing lookup against the `model_pricing_cache`
+ * Supabase table. No caching — called at most once per free-tier LLM call,
+ * and the RPC that follows it is already fire-and-forget, so the extra
+ * round-trip is acceptable for cost tracking accuracy.
+ */
+async function lookupModelPricing(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  supabase: any,
+  modelId: string,
+): Promise<ActivityPricing> {
+  try {
+    const { data, error } = await supabase
+      .from("model_pricing_cache")
+      .select("input_per_token, output_per_token")
+      .eq("model_id", modelId)
+      .maybeSingle();
+
+    if (!error && data) {
+      return {
+        inputPerToken: Number(data.input_per_token) || 0,
+        outputPerToken: Number(data.output_per_token) || 0,
+      };
+    }
+  } catch {
+    /* fall through to zero-cost */
+  }
+  return { inputPerToken: 0, outputPerToken: 0 };
 }

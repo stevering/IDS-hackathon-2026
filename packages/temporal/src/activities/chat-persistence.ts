@@ -69,13 +69,26 @@ export async function loadChatHistory(params: {
   });
 
   const supabase = getServiceClient();
-  const limit = params.limit ?? 100;
+  // Raised from 100 → 500 after the April 2026 audit flagged that the
+  // previous cap silently truncated long conversations without any UI
+  // warning. 500 messages is still a hard upper bound — conversations
+  // beyond that will lose their earliest context, but for most users
+  // this effectively removes the cap.
+  const limit = params.limit ?? 500;
 
+  // ORDER BY DESC + LIMIT N + reverse in memory.
+  //
+  // Previous query used `ORDER BY created_at ASC LIMIT 100` which had a
+  // subtle off-by-everything bug for long conversations: it returned the
+  // OLDEST 100 messages, dropping the most recent context the LLM
+  // actually needs. Using DESC + reverse gives the N MOST RECENT
+  // messages in chronological order, which is what every downstream
+  // consumer expects.
   const { data, error } = await supabase
     .from("messages")
-    .select("role, content, parts, metadata")
+    .select("role, content, parts, metadata, created_at")
     .eq("conversation_id", params.conversationId)
-    .order("created_at", { ascending: true })
+    .order("created_at", { ascending: false })
     .limit(limit);
 
   if (error) {
@@ -83,8 +96,9 @@ export async function loadChatHistory(params: {
     throw new Error(`Failed to load chat history: ${error.message}`);
   }
 
-  log.info("history loaded", { count: data?.length ?? 0 });
-  return (data ?? []).map((row) => ({
+  const rows = (data ?? []).slice().reverse();
+  log.info("history loaded", { count: rows.length, limit });
+  return rows.map((row) => ({
     role: row.role,
     content: row.content ?? "",
     parts: row.parts as unknown[] | undefined,
