@@ -312,6 +312,42 @@ export async function callLLMStreaming(params: LLMStreamingParams): Promise<LLMC
       ]);
     } catch { /* non-fatal */ }
 
+    // Collect finishReason from the streamText result. Same race pattern as usage
+    // since it's settled when the finish event fires. Enables downstream UI to
+    // distinguish "stop" (normal), "length" (truncation), "tool-calls", etc.
+    let finishReason: string | undefined;
+    try {
+      const fr = await Promise.race([
+        result.finishReason,
+        new Promise<undefined>((r) => setTimeout(() => r(undefined), 3000)),
+      ]);
+      if (typeof fr === "string") finishReason = fr;
+    } catch { /* non-fatal */ }
+
+    // ── Free tier usage tracking ──────────────────────────────────────────
+    // When the user is on the included free tier (platform AI Gateway key),
+    // log token counts into user_usage_log so quotas can be enforced and the
+    // Account > Usage page stays in sync. Fire-and-forget — never block the
+    // streaming response on billing bookkeeping.
+    if (resolved.isFreeTier && usage && snapshotSupabase) {
+      const inputTokens = (usage as { inputTokens?: number }).inputTokens ?? 0;
+      const outputTokens = (usage as { outputTokens?: number }).outputTokens ?? 0;
+      if (inputTokens > 0 || outputTokens > 0) {
+        snapshotSupabase
+          .rpc("increment_usage", {
+            p_user_id: params.userId,
+            p_input_tokens: inputTokens,
+            p_output_tokens: outputTokens,
+            p_model: resolved.modelId,
+          })
+          .then((res: { error: { message: string } | null }) => {
+            if (res.error) {
+              log.warn("increment_usage failed", { error: res.error.message });
+            }
+          });
+      }
+    }
+
     // fullReasoning already collected from the fullStream loop (reasoning events)
 
     // Broadcast tool calls if any
@@ -361,11 +397,12 @@ export async function callLLMStreaming(params: LLMStreamingParams): Promise<LLMC
               model: resolved.modelId,
               reasoning: fullReasoning || undefined,
               usage: usage ?? undefined,
+              finishReason: finishReason ?? undefined,
               streaming: false,
             },
           })
           .eq("id", snapshotMessageId);
-        log.info("finalized streaming message", { msgId: snapshotMessageId });
+        log.info("finalized streaming message", { msgId: snapshotMessageId, finishReason });
       }
     }
 
@@ -380,6 +417,7 @@ export async function callLLMStreaming(params: LLMStreamingParams): Promise<LLMC
           modelId: resolved.modelId,
           reasoning: fullReasoning || undefined,
           usage: usage ?? undefined,
+          finishReason: finishReason ?? undefined,
           hasToolCalls: !!(toolCalls?.length),
         },
       }).catch(() => {});
@@ -409,6 +447,7 @@ export async function callLLMStreaming(params: LLMStreamingParams): Promise<LLMC
       reasoningSimulated: !hasNativeReasoning && !!fullReasoning,
       modelId: resolved.modelId,
       metadataFormat,
+      finishReason,
       toolCalls: toolCalls?.map((tc: Record<string, unknown>) => {
         const args = (tc.args ?? tc.input ?? {}) as Record<string, unknown>;
         return { id: tc.toolCallId as string, name: tc.toolName as string, arguments: args };

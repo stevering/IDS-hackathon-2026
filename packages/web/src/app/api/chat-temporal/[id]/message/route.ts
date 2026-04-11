@@ -49,6 +49,31 @@ export async function POST(
 
   const sb = createServiceClient();
 
+  // ── Resolve the user's current preferred model ─────────────────────────
+  // Re-read user_settings on every follow-up so changes to `usage_source` or
+  // `default_model` between turns take effect. Without this, a workflow
+  // started in BYOK mode would keep using the old BYOK model even after the
+  // user switched back to the included free tier in Account > Settings.
+  //
+  // The resolved model is sent to the workflow in two places:
+  //   - in the signal payload (`modelOverride`) for an existing workflow
+  //   - in the workflow start args (`model`) when a new workflow is started
+  //
+  // The Temporal worker's `resolveModelForActivity` will still re-validate
+  // this value against `user_settings` + `user_api_keys` for every LLM call,
+  // so this is a "best-effort hint" rather than an authoritative override.
+  let resolvedModel = model;
+  if (!resolvedModel) {
+    const { data: settings } = await sb
+      .from("user_settings")
+      .select("default_model, usage_source")
+      .eq("user_id", userId)
+      .single();
+    if (settings?.usage_source === "byok" && settings?.default_model) {
+      resolvedModel = settings.default_model;
+    }
+  }
+
   // ── Defense-in-depth: verify the workflow actually belongs to this conversation ──
   // Prevents the client from signalling a stale workflow from a previous
   // conversation — which would persist the user message to the wrong conv
@@ -84,8 +109,12 @@ export async function POST(
           p_metadata: {},
         });
 
-        await handle.signal("chatNewMessage", { content: message, images });
-        log.info("signalled existing workflow", { conv: conversationId });
+        await handle.signal("chatNewMessage", {
+          content: message,
+          images,
+          modelOverride: resolvedModel,
+        });
+        log.info("signalled existing workflow", { conv: conversationId, model: resolvedModel });
         return NextResponse.json({ workflowId, conversationId, action: "signalled" });
       } else if (workflowConvId && workflowConvId !== conversationId) {
         // Client sent a stale workflowId from a different conversation.
@@ -120,18 +149,7 @@ export async function POST(
     const client = await getTemporalClient();
     const taskQueue = getTaskQueue();
 
-    // Resolve model
-    let resolvedModel = model;
-    if (!resolvedModel) {
-      const { data: settings } = await sb
-        .from("user_settings")
-        .select("default_model, usage_source")
-        .eq("user_id", userId)
-        .single();
-      if (settings?.usage_source === "byok" && settings?.default_model) {
-        resolvedModel = settings.default_model;
-      }
-    }
+    // `resolvedModel` was already computed at the top of the handler — reuse it.
 
     const newWorkflowId = `chat-${userId.slice(0, 8)}-${Date.now()}`;
     await client.workflow.start("chatWorkflow", {

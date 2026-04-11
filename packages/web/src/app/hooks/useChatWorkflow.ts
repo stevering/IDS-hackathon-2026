@@ -48,6 +48,13 @@ export type MCPDiscoveryFailure = {
 export type UseChatWorkflowReturn = {
   messages: ChatMessage[];
   sendMessage: (msg: { text: string }) => void;
+  /**
+   * Abort the current generation by signalling `chatCancel` to the running
+   * Temporal workflow. No-op if no workflow is attached (status === "idle" or
+   * no workflow id known). Because Temporal runs in the cloud, this is the
+   * ONLY way to stop generation — closing the tab doesn't help.
+   */
+  cancelMessage: () => void;
   status: ChatWorkflowStatus;
   error: string | undefined;
   setMessages: (msgs: ChatMessage[]) => void;
@@ -178,6 +185,26 @@ export function useChatWorkflow({
             parts: m.parts ?? [{ type: "text", text: m.content ?? "" }],
           }));
           setMessages(loaded);
+
+          // Recover the running workflow id from conversation.metadata.chatWorkflowId.
+          // This is set by /api/chat-temporal/start so that — after an F5 or tab revisit —
+          // the client can send a cancel signal to the workflow it no longer holds a
+          // handle to in memory. Without this, the Stop button would be dead on F5.
+          try {
+            const supabase = createClient();
+            const { data: convRow } = await supabase
+              .from("conversations")
+              .select("metadata")
+              .eq("id", conversationId!)
+              .single();
+            const wfId = (convRow?.metadata as { chatWorkflowId?: string } | null)?.chatWorkflowId;
+            if (wfId) {
+              workflowIdRef.current = wfId;
+              console.log("[ChatWorkflow] F5 recovered workflowId from conversation.metadata", { wfId });
+            }
+          } catch {
+            // Non-fatal — cancel will simply be a no-op if the id can't be recovered
+          }
 
           // Check if the last message is still streaming (metadata.streaming === true)
           const lastAssistant = [...loaded].reverse().find(m => m.role === "assistant");
@@ -581,6 +608,27 @@ export function useChatWorkflow({
     }
   }, [conversationId, enabled, model, mcpServerIds, figmaPluginClientId, subscribeToStream]);
 
+  // ── Cancel in-flight generation ─────────────────────────────────────────
+  // Sends POST /api/chat-temporal/{wf}/cancel which in turn signals the
+  // `chatCancel` signal on the workflow. Temporal runs in the cloud, so
+  // closing the tab does NOT stop generation — this is the only way to
+  // actually halt the current LLM call.
+  const cancelMessage = useCallback(() => {
+    const wfId = workflowIdRef.current;
+    if (!wfId) {
+      console.warn("[ChatWorkflow] cancelMessage called but no workflowId — ignoring");
+      return;
+    }
+    // Fire-and-forget — we don't wait for the signal to round-trip before
+    // updating the UI. The user gets immediate feedback that the stop happened.
+    fetch(`/api/chat-temporal/${wfId}/cancel`, { method: "POST" }).catch((err) => {
+      console.warn("[ChatWorkflow] cancel request failed", err);
+    });
+    // Optimistically flip status — the actual state will re-sync when the
+    // workflow completes (via text_complete) or errors (via stream_error).
+    setStatus("idle");
+  }, []);
+
   // Cleanup on unmount
   useEffect(() => {
     return () => {
@@ -591,7 +639,7 @@ export function useChatWorkflow({
     };
   }, []);
 
-  return { messages, sendMessage, status, error, setMessages, mcpDiscoveryFailures, clearMCPDiscoveryFailures };
+  return { messages, sendMessage, cancelMessage, status, error, setMessages, mcpDiscoveryFailures, clearMCPDiscoveryFailures };
 }
 
 // ---------------------------------------------------------------------------

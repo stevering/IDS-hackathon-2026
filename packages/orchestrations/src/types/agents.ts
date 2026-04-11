@@ -147,6 +147,13 @@ export type LLMCallResult = {
   /** Message metadata format resolved from guardian_model_config (default: "xml") */
   metadataFormat?: "xml" | "bracket";
   toolCalls?: LLMToolCall[];
+  /**
+   * Why the model stopped generating. Mirrors the AI SDK finishReason enum
+   * (e.g. "stop", "length", "tool-calls", "content-filter", "error", "other",
+   * "unknown"). Surfaced in the UI so truncation vs. normal completion can be
+   * distinguished — "length" usually indicates maxOutputTokens was hit.
+   */
+  finishReason?: string;
   /** Token usage */
   usage?: {
     promptTokens: number;

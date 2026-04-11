@@ -63,26 +63,56 @@ select {
   transition: background 0.35s ease;
 }
 
-.composer-aurora-active {
-  /* The wrapper itself has NO background and NO mask — otherwise the
-     mask would clip its children (the form) and make the interior go
-     invisible. Instead the ring is drawn by the ::after pseudo-element
-     below, and the diffuse halo is a multi-layer box-shadow (which is
-     outside-only by definition, so it never bleeds into the form). */
-  box-shadow:
-    0 0 0 1px rgba(167, 139, 250, 0.45),
-    0 0 18px 2px rgba(167, 139, 250, 0.35),
-    0 0 36px 6px rgba(96, 165, 250, 0.2),
-    0 0 56px 12px rgba(244, 114, 182, 0.12);
-  animation: guardianAuroraPulse 2.6s ease-in-out infinite;
+/* When the aurora is active we need the form's background to become
+   opaque enough to hide the blurred ::before halo bleed, but not so
+   opaque that it reads as pure black. Dark violet tint + ~82 % alpha
+   gives a visibly "glass with depth" feel — a little of the halo
+   still shows through as a soft wash, and the hue is clearly violet
+   instead of pitch black.
+
+   NOTE: no transition on background-color — we WANT this to snap
+   instantly when .composer-aurora-active is added. A 0.4 s fade was
+   making the halo bleed visible during the transition window (see
+   2026-04-11 screen recording), because during the fade the form is
+   still partly translucent and the halo shows through. Snapping the
+   form to its opaque state is imperceptible to the eye because the
+   aurora ring + halo animations appear at the same time and pull
+   focus elsewhere. */
+.composer-aurora-active form {
+  background-color: rgba(32, 22, 58, 0.82) !important;
+}
+
+.composer-aurora-active::before {
+  /* Blurred multicolor halo that rotates in sync with the sharp ring
+     below. No mask — the blur is allowed to spread freely in every
+     direction. The inward bleed is covered by the form's opaque
+     background (see above rule), so only the outward halo is visible.
+
+     Kept close to the variant 11 mockup's geometry: inset -6px, blur
+     14px, pulse from opacity 0.5 to 0.95 + scale 0.98 to 1.05. */
+  content: '';
+  position: absolute;
+  inset: -6px;
+  border-radius: 24px; /* wrapper radius (18) + inset (6) */
+  background: conic-gradient(
+    from var(--aurora-angle),
+    #a78bfa 0%,
+    #60a5fa 20%,
+    #34d399 40%,
+    #fbbf24 60%,
+    #f472b6 80%,
+    #a78bfa 100%
+  );
+  filter: blur(14px);
+  pointer-events: none;
+  animation:
+    guardianAuroraSpin 3s linear infinite,
+    guardianAuroraPulse 2.6s ease-in-out infinite;
 }
 
 .composer-aurora-active::after {
-  /* The 2 px multicolor ring. Lives on a pseudo-element so the mask
-     does not affect the real form children. The mask uses the "two
-     layers XOR" trick: layer 1 clipped to content-box, layer 2 clipped
-     to border-box; XOR leaves only the difference = the 2 px padding
-     ring. pointer-events: none lets clicks pass through to the form. */
+  /* The sharp 2 px multicolor ring that hugs the wrapper's edge.
+     Same mask-XOR trick to clip the conic gradient to a ring only. */
   content: '';
   position: absolute;
   inset: 0;
@@ -116,20 +146,10 @@ select {
 }
 
 @keyframes guardianAuroraPulse {
-  0%, 100% {
-    box-shadow:
-      0 0 0 1px rgba(167, 139, 250, 0.35),
-      0 0 14px 1px rgba(167, 139, 250, 0.22),
-      0 0 26px 4px rgba(96, 165, 250, 0.12),
-      0 0 42px 8px rgba(244, 114, 182, 0.06);
-  }
-  50% {
-    box-shadow:
-      0 0 0 1px rgba(167, 139, 250, 0.6),
-      0 0 22px 4px rgba(167, 139, 250, 0.5),
-      0 0 44px 10px rgba(96, 165, 250, 0.28),
-      0 0 70px 18px rgba(244, 114, 182, 0.18);
-  }
+  /* Animates the blurred ::before halo: opacity + gentle scale.
+     Matches the variant 8 / 11 mockup feel. */
+  0%, 100% { opacity: 0.45; transform: scale(0.98); }
+  50%      { opacity: 0.95; transform: scale(1.05); }
 }
 
 /* --- Guardian send button ------------------------------------------------- */

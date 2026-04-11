@@ -63,7 +63,13 @@ The `callLLMStreaming` activity broadcasts on Supabase Realtime channel `guardia
 | `reasoning_delta` | `{ requestId, content }` | Each reasoning chunk |
 | `tool_call_start` | `{ requestId, toolName, toolCallId, args }` | LLM emits a tool call |
 | `tool_call_result` | `{ toolCallId, result, isError }` | Tool execution completes |
-| `text_complete` | `{ requestId, content, modelId, usage }` | Streaming finished |
+| `text_complete` | `{ requestId, content, modelId, reasoning?, usage?, finishReason?, hasToolCalls }` | Streaming finished |
+
+`finishReason` mirrors the AI SDK enum — `"stop"`, `"length"`, `"tool-calls"`,
+`"content-filter"`, `"error"`, `"other"`, or `"unknown"`. It is also persisted
+in `messages.metadata.finishReason` so the UI can render truncation hints
+(`length` → "Response was cut off") or distinguish intentional stops from
+errors on reload.
 
 ## Figma Execute ACK Protocol
 
@@ -117,3 +123,104 @@ The start route builds the system prompt as `GUARDIAN_SYSTEM_PROMPT + dynamicCon
 The `buildDynamicContext()` function in the start route constructs these sections identically to the legacy chat route (lines 1088-1214 of `/api/chat/route.ts`).
 
 Note: Dynamic context is captured at workflow start time. If the Figma selection changes mid-conversation, the system prompt is NOT updated (same behavior as legacy).
+
+## Cancellation (Stop button)
+
+Because Temporal workflows run in the cloud, **closing the browser tab does
+not stop the generation** — the worker keeps streaming tokens to the Realtime
+channel and persisting the assistant message. The only way to actually stop
+an in-flight generation is the explicit **Stop button**.
+
+### Flow
+
+```
+Browser                              Worker
+  |                                    |
+  |-- [Stop button click]              |
+  |-- POST /api/chat-temporal/{wf}/cancel ->
+  |                                    | handle.signal("chatCancel")
+  |                                    |
+  |                                    | setHandler(chatCancelSignal, () => {
+  |                                    |   cancelled = true;
+  |                                    | })
+  |                                    |
+  |                                    | runLLMLoop() checks `cancelled`
+  |                                    |   on each iteration boundary and bails
+  |<- text_complete / status="cancelled"|
+```
+
+### Client behaviour
+
+- **Input stays active at all times** — the composer textarea is NOT set to
+  `readOnly` during `isLoading`. This lets the user draft the next message
+  while the current one is still generating, then hit Stop and submit.
+- **GuardianSendButton morphs into Stop** when `isGenerating === true`:
+  the mascot animates, on hover it cross-fades to a red square icon. Clicking
+  in generating mode uses `type="button" onClick={cancelMessage}` so the form
+  is NOT submitted — it only signals the workflow.
+- **F5 recovery** — when the user closes the tab and comes back (possibly
+  after logging in on another device), `useChatWorkflow.loadAndRecover()`
+  pulls `conversation.metadata.chatWorkflowId` (stored by the start route)
+  and rehydrates `workflowIdRef.current`. This is what makes Stop work after
+  a reload — without it the hook has no workflowId to POST to.
+
+### Routes
+
+- `POST /api/chat-temporal/[id]/cancel` — authenticates, fetches the workflow
+  handle, verifies `status === "RUNNING"`, signals `chatCancel`. No-op if
+  the workflow is already `COMPLETED` / `FAILED` / `CANCELLED`.
+
+## Follow-up Model Resolution
+
+Every call to `POST /api/chat-temporal/[id]/message` re-reads
+`user_settings.usage_source` + `user_settings.default_model` and passes the
+resolved model to the workflow via `modelOverride` on the `chatNewMessage`
+signal payload. This is necessary because workflows are long-lived (5 min
+idle), and a user who changes their BYOK key or toggles `usage_source` in
+Account > Settings between two messages would otherwise keep hitting the
+model that was baked in at workflow start.
+
+The workflow tracks a mutable `currentModel` variable that is updated by each
+signal handler and passed to `callLLMStreaming` on every turn. The Temporal
+worker's `resolveModelForActivity` still re-validates this value against
+current `user_settings` + `user_api_keys` on every LLM call as a final safety
+net (see `packages/temporal/src/activities/llm-resolver.ts`).
+
+## Free Tier Usage Tracking
+
+When `resolved.isFreeTier === true` (user is on the platform's included AI
+Gateway key, not BYOK), `callLLMStreaming` fire-and-forgets an
+`increment_usage` RPC after the streaming finishes:
+
+```ts
+snapshotSupabase.rpc("increment_usage", {
+  p_user_id: params.userId,
+  p_input_tokens: usage.inputTokens ?? 0,
+  p_output_tokens: usage.outputTokens ?? 0,
+  p_model: resolved.modelId,
+});
+```
+
+This writes into `user_usage_log` so that:
+- The Account > Usage page (`GET /api/user/usage` → `get_current_usage` RPC)
+  stays in sync with what users actually consumed.
+- Future quota enforcement can rely on the rolling 24h window already
+  aggregated by `increment_usage`.
+- BYOK users are NOT tracked here — their provider bills them directly.
+
+This parity with the legacy `/api/chat` route was missing during the initial
+Temporal migration and was restored in April 2026.
+
+## Defence-in-depth: Conversation/Workflow Binding
+
+To prevent cross-conversation message contamination (an earlier bug where
+signalling a stale workflow would persist user messages to the wrong
+conversation), the `POST /api/chat-temporal/[id]/message` route queries
+`chatConversationIdQuery` on the target workflow before signalling. If the
+workflow is bound to a different `conversationId` than what the client
+claims, the route falls through to start a fresh workflow for the correct
+conversation instead of cross-contaminating.
+
+This is layered on top of the client-side reset in
+`useChatWorkflow.ts` that clears `workflowIdRef.current` when the user
+switches conversations — both layers must fail for contamination to recur.

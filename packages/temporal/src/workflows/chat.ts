@@ -134,11 +134,21 @@ export async function chatWorkflow(params: ChatWorkflowParams): Promise<void> {
   let currentStep = 0;
   let errorMessage: string | undefined;
 
+  // Current effective model — starts as the one passed at workflow start, but
+  // updated from every chatNewMessage signal's `modelOverride` so follow-up
+  // messages honour the user's latest `user_settings.usage_source` / default
+  // model choice. Without this, a workflow started in BYOK mode kept using the
+  // old BYOK model even after the user switched to the included free tier.
+  let currentModel: string | undefined = params.model;
+
   // Pending messages from signals
   const pendingMessages: ChatNewMessagePayload[] = [];
 
   // ── Signal handlers ─────────────────────────────────────────────────────
   setHandler(chatNewMessageSignal, (msg) => {
+    if (msg.modelOverride) {
+      currentModel = msg.modelOverride;
+    }
     pendingMessages.push(msg);
   });
 
@@ -327,7 +337,7 @@ export async function chatWorkflow(params: ChatWorkflowParams): Promise<void> {
           requestId,
           messages,
           tools: mcpTools.length > 0 ? mcpTools : undefined,
-          model: params.model,
+          model: currentModel,
           userId: params.userId,
         });
       } catch (err) {

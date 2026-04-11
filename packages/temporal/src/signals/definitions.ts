@@ -108,6 +108,14 @@ export type ChatNewMessagePayload = {
   messageId?: string;
   /** Optional images attached to the message */
   images?: string[];
+  /**
+   * Optional model override for this turn. The /api/chat-temporal/[id]/message
+   * route re-reads `user_settings` on every follow-up and passes the currently
+   * preferred model here — so the workflow uses the freshest user preference
+   * instead of the model that was baked in at workflow start. If omitted, the
+   * workflow keeps using its previous model.
+   */
+  modelOverride?: string;
 };
 
 /** Chat workflow status returned by chatStatusQuery */

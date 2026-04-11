@@ -2187,6 +2187,7 @@ export default function Home() {
   // Unified chat variables — always Temporal (legacy useChat path is dead code).
   const messages = chatWorkflow.messages as typeof legacyMessages;
   const sendMessage = chatWorkflow.sendMessage;
+  const cancelMessage = chatWorkflow.cancelMessage;
   const status = chatWorkflow.status === "idle" ? "ready" as const : "streaming" as const;
   const error = chatWorkflow.error ? new Error(chatWorkflow.error) : undefined;
   const setMessages = chatWorkflow.setMessages as typeof legacySetMessages;
@@ -2614,6 +2615,9 @@ export default function Home() {
 
   const onSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    // While a workflow is running, `Enter` / submit is a no-op — the user
+    // must press the dedicated Stop button (GuardianSendButton in generating
+    // mode) to cancel first. Empty inputs are also ignored.
     if (!input.trim() || isLoading) return;
     shouldAutoScroll.current = true;
     shouldAutoScrollOrch.current = true;
@@ -2702,7 +2706,7 @@ export default function Home() {
         sidebarOpen
           ? "fixed top-0 left-0 z-50 w-full sm:w-72 h-full translate-x-0"
           : "fixed top-0 left-0 z-50 w-full sm:w-72 h-full -translate-x-full"
-      } ${sidebarCollapsed ? "md:w-12" : "md:w-72"} md:relative md:top-auto md:left-auto md:z-auto md:h-full md:translate-x-0 transition-all duration-200 glass-sidebar`}>
+      } ${sidebarCollapsed ? "md:w-12" : "md:w-72"} md:relative md:top-auto md:left-auto md:z-10 md:h-full md:translate-x-0 transition-all duration-200 glass-sidebar`}>
         <ConversationSidebar
           conversations={conversations}
           activeId={activeConversationId}
@@ -2834,8 +2838,12 @@ export default function Home() {
         </header>
 
 
-        {/* Slide container — overflow hidden wrapper with two scrollable panels */}
-        <div className="relative flex-1 overflow-hidden">
+        {/* Slide container — holds the two sliding panels (chat + orchestration).
+            overflow-hidden used to live here, but it was clipping the composer's
+            aurora halo at the slide container's left/right edges. The slider's
+            off-screen panel is still clipped by the root's h-screen overflow-hidden
+            at the viewport boundary, so removing it here is safe visually. */}
+        <div className="relative flex-1">
           <div
             className="flex h-full transition-transform duration-150 ease-in-out"
             style={{ transform: showOrchPanel ? "translateX(-100%)" : "translateX(0)" }}
@@ -3629,8 +3637,7 @@ export default function Home() {
                     }
                   }}
                   placeholder="Ask Guardian to check a component..."
-                  className={`w-full bg-transparent px-4 pt-3 pb-12 text-sm text-white placeholder:text-white/45 focus:outline-none resize-none overflow-y-auto ${isLoading ? "opacity-50" : ""}`}
-                  readOnly={isLoading}
+                  className="w-full bg-transparent px-4 pt-3 pb-12 text-sm text-white placeholder:text-white/45 focus:outline-none resize-none overflow-y-auto"
                   rows={3}
                 />
                 {/* Bottom bar inside the form */}
@@ -3862,7 +3869,12 @@ export default function Home() {
                     })()}
                   </div>
                   <GuardianSendButton
-                    type="submit"
+                    // During generation the button becomes a dedicated Stop
+                    // control — we set type="button" so pressing it doesn't
+                    // also submit the form, and wire onClick to cancelMessage
+                    // which signals `chatCancel` to the running workflow.
+                    type={isLoading ? "button" : "submit"}
+                    onClick={isLoading ? cancelMessage : undefined}
                     isGenerating={isLoading}
                     disabled={!isLoading && !input.trim()}
                   />
