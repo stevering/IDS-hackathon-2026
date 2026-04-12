@@ -140,35 +140,31 @@ export function PhaseBubble({ currentPhase, history, onDismiss }: PhaseBubblePro
         }
       }}
     >
-      {!isRunning && (
-        <button
-          className="phase-dismiss-btn"
-          title="Dismiss"
-          onClick={(e) => {
-            e.stopPropagation();
-            setDismissed(true);
-            onDismiss?.();
-          }}
-        >
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-            <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
-          </svg>
-        </button>
-      )}
-      {history.length > 0 && (
-        <button
-          className="phase-chevron-btn"
-          title={expanded ? "Collapse" : "Show details"}
-          onClick={(e) => {
-            e.stopPropagation();
-            setExpanded((v) => !v);
-          }}
-        >
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-            {expanded ? <path d="M6 9l6 6 6-6" /> : <path d="M18 15l-6-6-6 6" />}
-          </svg>
-        </button>
-      )}
+      <button
+        className="phase-dismiss-btn"
+        title="Dismiss"
+        onClick={(e) => {
+          e.stopPropagation();
+          setDismissed(true);
+          onDismiss?.();
+        }}
+      >
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+          <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
+        </svg>
+      </button>
+      <button
+        className="phase-chevron-btn"
+        title={expanded ? "Collapse" : "Show details"}
+        onClick={(e) => {
+          e.stopPropagation();
+          setExpanded((v) => !v);
+        }}
+      >
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+          {expanded ? <path d="M6 9l6 6 6-6" /> : <path d="M18 15l-6-6-6 6" />}
+        </svg>
+      </button>
       <div className="phase-bubble-header">
         {isRunning ? (
           <PhaseTicker phase={currentPhase} />

@@ -574,11 +574,6 @@ select {
   background: rgba(255, 255, 255, 0.08);
 }
 
-/* When there's no dismiss btn (running state), chevron sits at far right */
-.phase-bubble:not(.phase-bubble-done) .phase-chevron-btn {
-  right: 6px;
-}
-
 .phase-dismiss-btn {
   position: absolute;
   top: 6px;
