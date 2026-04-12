@@ -108,15 +108,26 @@ Props: `active: boolean`, `children: ReactNode`.
 
 ### `PhaseBubble.tsx`
 
-Mini "thinking" speech bubble that attaches below the last chat message
-(aligned left, assistant-style). Shows the current phase label with a
-stacked-ticker animation (old label slides up & fades out, new label
-slides up from below & fades in) via `PhaseTicker`, the inner subcomponent
-that uses a ref-based imperative update so both items can coexist briefly
-during the CSS transition.
+Banner positioned above the composer (in the stacked PeekBanner area)
+showing the current LLM phase. During generation, the phase label
+animates with a stacked-ticker (old label slides up & fades out, new
+label slides up from below & fades in) via `PhaseTicker`, the inner
+subcomponent that uses a ref-based imperative update so both items can
+coexist briefly during the CSS transition.
+
+When generation completes (`currentPhase` is null but `history` exists),
+the bubble stays visible with a static summary line showing total
+duration and step count (e.g. "Done — 4 steps in 3.2s"), so the user
+can review what happened. The bubble auto-hides when both `currentPhase`
+is null AND `history` is empty (before the first run or after a new
+message resets the history).
 
 Clicking the bubble toggles an accordion that reveals the history of past
 phases in the current run, with their durations.
+
+The PhaseBubble is rendered as the last element in the stacked banner
+`flex-col` container above the composer, so it sits closest to the
+input. Error PeekBanners (MCP failures, chat errors) stack above it.
 
 Props: `currentPhase: Phase | null`, `history: PhaseHistoryEntry[]`.
 
@@ -159,16 +170,16 @@ Four touchpoints:
    const guardianPhase = useGuardianPhase(chatWorkflow.status, messages);
    ```
 
-3. **Replace the `ThinkingIndicator` render** — the line that was
-   `{isLoading && <ThinkingIndicator />}` now renders `<PhaseBubble>`:
+3. **PhaseBubble in the banner stack** — rendered as the last element
+   in the stacked PeekBanner `flex-col` container (above the composer),
+   so it sits closest to the input area. Not gated on `isLoading` —
+   the component self-hides when there is no phase and no history:
 
    ```tsx
-   {isLoading && (
-     <PhaseBubble
-       currentPhase={guardianPhase.currentPhase}
-       history={guardianPhase.history}
-     />
-   )}
+   <PhaseBubble
+     currentPhase={guardianPhase.currentPhase}
+     history={guardianPhase.history}
+   />
    ```
 
 4. **Wrap the chat `<form>` with `<ComposerAurora active={isLoading}>`**.

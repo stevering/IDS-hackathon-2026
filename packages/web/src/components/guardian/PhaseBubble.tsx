@@ -1,14 +1,16 @@
 "use client";
 
 /**
- * PhaseBubble — small "thinking" bubble attached below the last chat
- * message while the LLM is working. Shows the current phase with a
- * stacked-ticker animation (the previous label slides up & fades out,
- * the new one slides in from below). Click to expand an accordion with
- * the history of all past phases in the current run and their timings.
+ * PhaseBubble — banner positioned above the composer showing the current
+ * LLM phase with a stacked-ticker animation. Click to expand an accordion
+ * with the history of all past phases in the current run and their timings.
  *
- * Designed to replace the legacy 3-dot ThinkingIndicator. See
- * useGuardianPhase.ts for how the current phase + history are derived
+ * When the generation is complete (currentPhase is null but history exists),
+ * the bubble stays visible with a static summary showing total duration and
+ * step count, so the user can review what happened. It auto-hides when both
+ * currentPhase is null AND history is empty (before any run or after reset).
+ *
+ * See useGuardianPhase.ts for how the current phase + history are derived
  * from the Temporal chat workflow state.
  */
 
@@ -109,9 +111,12 @@ export function PhaseBubble({ currentPhase, history }: PhaseBubbleProps) {
 
   if (!currentPhase && history.length === 0) return null;
 
+  const isRunning = currentPhase !== null;
+  const totalDuration = history.reduce((sum, h) => sum + h.duration, 0);
+
   return (
     <div
-      className={`phase-bubble ${expanded ? "expanded" : ""}`.trim()}
+      className={`phase-bubble ${expanded ? "expanded" : ""} ${isRunning ? "" : "phase-bubble-done"}`.trim()}
       onClick={() => setExpanded((v) => !v)}
       role="button"
       tabIndex={0}
@@ -123,10 +128,21 @@ export function PhaseBubble({ currentPhase, history }: PhaseBubbleProps) {
       }}
     >
       <div className="phase-bubble-header">
-        <PhaseTicker phase={currentPhase} />
-        <span className="phase-chevron" aria-hidden="true">
-          ▾
-        </span>
+        {isRunning ? (
+          <PhaseTicker phase={currentPhase} />
+        ) : (
+          <div className="phase-summary">
+            <span className="phase-summary-icon" aria-hidden="true" />
+            <span className="phase-summary-label">
+              Done — {history.length} {history.length === 1 ? "step" : "steps"} in {formatDuration(totalDuration)}
+            </span>
+          </div>
+        )}
+        {history.length > 0 && (
+          <span className="phase-chevron" aria-hidden="true">
+            ▾
+          </span>
+        )}
       </div>
       <div className="phase-history">
         {history.length === 0 ? (

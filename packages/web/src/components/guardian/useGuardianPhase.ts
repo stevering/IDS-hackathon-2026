@@ -60,6 +60,7 @@ export function useGuardianPhase(
   status: ChatWorkflowStatus,
   messages: ChatMessageLike[],
   workflowPhase?: string | null,
+  conversationId?: string | null,
 ): { currentPhase: Phase | null; history: PhaseHistoryEntry[] } {
   // Extract the signals from the messages array. useMemo keeps this cheap
   // to recompute — the object is re-created on every render but the
@@ -103,6 +104,14 @@ export function useGuardianPhase(
     startedAt: number;
   } | null>(null);
   const wasRunningRef = useRef(false);
+
+  // Reset all phase state when switching conversations.
+  useEffect(() => {
+    setCurrentPhase(null);
+    setHistory([]);
+    phaseStartRef.current = null;
+    wasRunningRef.current = false;
+  }, [conversationId]);
 
   useEffect(() => {
     // Map the current workflow state to a phase type.

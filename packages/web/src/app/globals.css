@@ -475,24 +475,58 @@ select {
 @keyframes gm-star         { 0%, 100% { transform: rotate(0deg) scale(1); } 50% { transform: rotate(90deg) scale(1.5); } }
 @keyframes gm-star-twinkle { 0%, 100% { transform: scale(1); opacity: 0.92; } 50% { transform: scale(1.4); opacity: 1; } }
 
-/* --- Phase bubble (attached under the last chat message) ----------------- */
+/* --- Phase bubble (banner above the composer) ----------------------------- */
 
 .phase-bubble {
-  align-self: flex-start;
-  max-width: 88%;
+  width: 100%;
   background: rgba(167, 139, 250, 0.06);
   border: 1px solid rgba(167, 139, 250, 0.18);
-  border-radius: 12px 12px 12px 4px;
+  border-radius: 12px;
   padding: 8px 12px;
+  margin-bottom: 8px;
   cursor: pointer;
   user-select: none;
-  margin-bottom: 16px;
-  transition: background 0.2s ease, border-color 0.2s ease;
+  backdrop-filter: blur(16px) saturate(1.3);
+  transition: background 0.2s ease, border-color 0.2s ease, opacity 0.3s ease;
 }
 
 .phase-bubble:hover {
   background: rgba(167, 139, 250, 0.1);
   border-color: rgba(167, 139, 250, 0.3);
+}
+
+/* Completed run — subtler appearance */
+.phase-bubble-done {
+  background: rgba(167, 139, 250, 0.03);
+  border-color: rgba(167, 139, 250, 0.10);
+}
+
+.phase-bubble-done:hover {
+  background: rgba(167, 139, 250, 0.06);
+  border-color: rgba(167, 139, 250, 0.2);
+}
+
+/* Summary line (shown when generation is complete) */
+.phase-summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.5);
+}
+
+.phase-summary-icon {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #34d399;
+  flex-shrink: 0;
+  opacity: 0.7;
+}
+
+.phase-summary-label {
+  white-space: nowrap;
 }
 
 .phase-bubble-header {

@@ -2154,6 +2154,11 @@ export default function Home() {
   const error = chatWorkflow.error ? new Error(chatWorkflow.error) : undefined;
   const setMessages = chatWorkflow.setMessages as unknown as (msgs: UIMessage[]) => void;
 
+  // Clear error banner when switching conversations.
+  useEffect(() => {
+    setChatErrorMsg(null);
+  }, [activeConversationId]);
+
   // Sync temporal chat errors to the PeekBanner error UI
   useEffect(() => {
     if (chatWorkflow.error) {
@@ -2507,6 +2512,7 @@ export default function Home() {
     chatWorkflow.status,
     messages as unknown as Parameters<typeof useGuardianPhase>[1],
     chatWorkflow.workflowPhase,
+    activeConversationId,
   );
 
   const handleScroll = () => {
@@ -3432,12 +3438,7 @@ export default function Home() {
           );
           })}
 
-          {isLoading && (
-            <PhaseBubble
-              currentPhase={guardianPhase.currentPhase}
-              history={guardianPhase.history}
-            />
-          )}
+          {/* PhaseBubble moved to the stacked banner area above the composer */}
 
           {/* Copy debug context button — always visible after all messages */}
           {messages.length > 0 && !isLoading && (
@@ -3589,7 +3590,13 @@ export default function Home() {
                       );
                     })()}
                   </PeekBanner>
+
                 </div>
+                {/* Phase bubble — sits between the PeekBanner stack and the composer */}
+                <PhaseBubble
+                  currentPhase={guardianPhase.currentPhase}
+                  history={guardianPhase.history}
+                />
               <ComposerAurora active={isLoading}>
               <form
                 onSubmit={onSubmit}
