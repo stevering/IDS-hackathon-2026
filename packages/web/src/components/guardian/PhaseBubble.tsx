@@ -150,8 +150,22 @@ export function PhaseBubble({ currentPhase, history, onDismiss }: PhaseBubblePro
             onDismiss?.();
           }}
         >
-          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
             <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
+          </svg>
+        </button>
+      )}
+      {history.length > 0 && (
+        <button
+          className="phase-chevron-btn"
+          title={expanded ? "Collapse" : "Show details"}
+          onClick={(e) => {
+            e.stopPropagation();
+            setExpanded((v) => !v);
+          }}
+        >
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+            {expanded ? <path d="M6 9l6 6 6-6" /> : <path d="M18 15l-6-6-6 6" />}
           </svg>
         </button>
       )}
@@ -165,11 +179,6 @@ export function PhaseBubble({ currentPhase, history, onDismiss }: PhaseBubblePro
               Done — {history.length} {history.length === 1 ? "step" : "steps"} in {formatDuration(totalDuration)}
             </span>
           </div>
-        )}
-        {history.length > 0 && (
-          <span className="phase-chevron" aria-hidden="true">
-            ▾
-          </span>
         )}
       </div>
       <div className="phase-history">

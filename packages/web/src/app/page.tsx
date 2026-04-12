@@ -3537,7 +3537,7 @@ export default function Home() {
               </div>
               <div className="relative mx-auto max-w-3xl">
                 {/* Stacked PeekBanners — anchored above the form, flex-col to stack vertically */}
-                <div className="absolute bottom-full left-0 right-0 mb-0 z-0 flex flex-col gap-0">
+                <div className="absolute bottom-full left-[2px] right-[2px] mb-0 z-0 flex flex-col gap-0">
                   {/* MCP Discovery Warning PeekBanner — amber, shows failed MCP connections */}
                   <PeekBanner
                     open={chatWorkflow.mcpDiscoveryFailures.length > 0}
