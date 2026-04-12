@@ -1,7 +1,10 @@
 "use client";
 
-import { useChat } from "@ai-sdk/react";
-import { DefaultChatTransport, lastAssistantMessageIsCompleteWithToolCalls } from "ai";
+// `UIMessage` is the structural type from the AI SDK that the rest of
+// page.tsx was originally written against (from the `useChat` era).
+// Imported from the `ai` core package — NOT `@ai-sdk/react`, which
+// was decommissioned in April 2026 and only re-exported this type.
+import type { UIMessage } from "ai";
 import { useChatWorkflow } from "./hooks/useChatWorkflow";
 import { useState, useRef, useEffect, useLayoutEffect, useMemo, useCallback, Children, type ReactNode } from "react";
 import Link from "next/link";
@@ -19,7 +22,6 @@ import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import remarkBreaks from "remark-breaks";
 import { useConversations } from "./hooks/useConversations";
-import { useMessagePersistence } from "./hooks/useMessagePersistence";
 import { matchesShortId, type CollaboratorInfo } from "./hooks/useOrchestration";
 import { useTemporalOrchestration } from "./hooks/useTemporalOrchestration";
 import type { AgentRole, Orchestration } from "@/types/orchestration";
@@ -2043,95 +2045,14 @@ export default function Home() {
     }
   }, [selectedNode]);
 
-  const transport = useMemo(
-    () =>
-      new DefaultChatTransport({
-        api: "/api/chat",
-        headers: () => {
-          const headers: Record<string, string> = {};
-          if (tunnelSecretRef.current) {
-            headers['X-Auth-Token'] = tunnelSecretRef.current;
-          }
-          if (localFigmaMcpUrlRef.current) {
-            headers['X-MCP-Figma-URL'] = localFigmaMcpUrlRef.current;
-          }
-          if (localCodeMcpUrlRef.current) {
-            headers['X-MCP-Code-URL'] = localCodeMcpUrlRef.current;
-          }
-          // Add Bearer token from localStorage if available (Southleft)
-          if (typeof window !== 'undefined') {
-            const southleftToken = localStorage.getItem('southleft_access_token');
-            if (southleftToken) {
-              headers['Authorization'] = `Bearer ${southleftToken}`;
-            }
-            // GitHub MCP tokens — sent as header for Figma plugin context
-            // where cookies from the OAuth popup may not be accessible
-            const githubTokens = localStorage.getItem('github_mcp_tokens');
-            if (githubTokens) {
-              headers['X-GitHub-MCP-Tokens'] = githubTokens;
-            }
-            // Figma MCP tokens — same pattern for Figma plugin context
-            const figmaMcpTokens = localStorage.getItem('figma_mcp_tokens');
-            if (figmaMcpTokens) {
-              headers['X-Figma-MCP-Tokens'] = figmaMcpTokens;
-            }
-          }
-          return headers;
-        },
-        body: () => {
-          // Derive figmaPluginContext and targetClientId from the selected design target
-          let pluginContext = figmaPluginContextRef.current;
-          const selectedDesign = designTargetsRef.current.find(t => t.id === selectedDesignTargetRef.current);
-          // If a plugin is selected (not a server-side MCP), extract its context from presence
-          const targetPluginClientId = selectedDesign?.kind === "plugin" ? selectedDesign.clientId : undefined;
-          if (!pluginContext && targetPluginClientId) {
-            const sel = clientsRef.current.find(c => c.clientId === targetPluginClientId && c.type === "figma-plugin");
-            if (sel?.figmaContext) {
-              pluginContext = {
-                fileKey: sel.fileKey ?? "",
-                fileName: sel.figmaContext.fileName ?? "",
-                fileUrl: sel.figmaContext.fileUrl ?? (sel.fileKey ? `https://www.figma.com/file/${sel.fileKey}` : ""),
-                currentPage: sel.figmaContext.currentPage,
-                pages: sel.figmaContext.pages,
-                currentUser: sel.figmaContext.currentUser,
-              };
-            }
-          }
-          // Orchestration runs on Temporal — useChat always runs in idle mode.
-          const targetClientId = targetPluginClientId ?? (isFigmaPluginRef.current ? myClientIdRef.current : undefined);
-          // Build list of other connected agents for AI awareness
-          const otherAgents = clientsRef.current
-            .filter(c => c.clientId !== myClientIdRef.current && c.type !== "overlay")
-            .map(c => ({ shortId: c.shortId, label: c.label, type: c.type, fileName: c.figmaContext?.fileName }));
-          const effectiveMcps = enabledMcpsRef.current;
-          // Is the plugin context from our own plugin (local) or from a remote target?
-          const isLocalPlugin = !!figmaPluginContextRef.current;
-          // Check if model supports native reasoning — via enriched native tags or gateway tags
-          const curModel = selectedModelRef.current;
-          const selectedGw = gatewayModelsRef.current.find((m: { id: string }) => m.id === curModel);
-          const gwReasoning = selectedGw ? (selectedGw as { tags?: string[] }).tags?.includes("reasoning") ?? false : false;
-          const curKeyId = selectedKeyIdRef.current;
-          const nativeList = curKeyId ? nativeModels[curKeyId] : undefined;
-          const nativeMatch = nativeList?.find((m) => m.id === curModel || `${m.owned_by}/${m.id}` === curModel);
-          const nativeReasoning = nativeMatch?.tags?.includes("reasoning") ?? false;
-          const modelSupportsReasoning = gwReasoning || nativeReasoning;
-          return { figmaMcpUrl: figmaMcpUrlRef.current || (figmaOAuthRef.current ? "https://mcp.figma.com/mcp" : ""), figmaAccessToken: figmaAccessTokenRef.current, codeProjectPath: codeProjectPathRef.current, figmaOAuth: figmaOAuthRef.current, model: selectedModelRef.current, source: selectedSourceRef.current, keyId: selectedKeyIdRef.current, selectedNode: selectedNodeRef.current, tunnelSecret: tunnelSecretRef.current, enabledMcps: effectiveMcps, figmaPluginContext: pluginContext, isLocalPlugin, targetClientId, agentRole: 'idle' as const, connectedAgents: otherAgents, supportsReasoning: modelSupportsReasoning };
-        },
-      }),
-    [],
-  );
-
-  // Ref to break the retry loop on errors (declared before useChat so callbacks can access it)
-  const chatErrorRecoveryRef = useRef(false);
+  // Error banner state — fed by the Temporal chat workflow error sync below.
+  // Preserved through the legacy chat cleanup because the PeekBanner UI still
+  // renders from these and the Temporal hook forwards its `error` into them.
   const [chatErrorMsg, setChatErrorMsg] = useState<string | null>(null);
   const [errorCount, setErrorCount] = useState(0);
 
   // (temporal error sync is below, after chatWorkflow declaration)
 
-  // Serialize figma_plugin_execute calls — the AI can issue multiple in the same turn,
-  // but concurrent addToolResult calls corrupt the SDK's internal state, causing
-  // "Tool result is missing for tool call figma_plugin_execute:N" errors.
-  const figmaExecQueueRef = useRef<Promise<void>>(Promise.resolve());
   // ── Auto-push debug trace on orchestration completion ─────────────
   const orchCompletedStatus = isFigmaPlugin ? pluginOrch.completedStatus : temporal.completedStatus;
   const autoPushFired = useRef(false);
@@ -2165,87 +2086,10 @@ export default function Home() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [orchCompletedStatus]);
 
-  // Cooldown flag: true while a figma_plugin_execute is executing or within 300ms
-  // after addToolResult. Prevents message injection during the brief "ready" gap
-  // between addToolResult and the SDK starting the next maxSteps stream.
-  const figmaExecInFlightRef = useRef(false);
-
-  const { messages: legacyMessages, sendMessage: legacySendMessage, status: legacyStatus, error: legacyError, setMessages: legacySetMessages, addToolResult: rawAddToolResult } = useChat({
-    transport,
-    // When the webapp runs inside a Figma plugin, handle figma_plugin_execute
-    // directly via postMessage (bypasses MCP + Supabase RT — instant execution).
-    onToolCall: async ({ toolCall }) => {
-      if (toolCall.toolName === "figma_plugin_execute") {
-        const input = toolCall.input as { code: string; timeout?: number };
-        const code = input.code;
-
-        // Detect truncated code (AI hit max_tokens mid-generation)
-        // Check for unbalanced brackets/parens/quotes — strong signal of truncation
-        let depth = 0;
-        let inString: string | null = null;
-        for (let i = 0; i < code.length; i++) {
-          const ch = code[i];
-          if (inString) {
-            if (ch === '\\') { i++; continue; }
-            if (ch === inString) inString = null;
-          } else {
-            if (ch === '"' || ch === "'" || ch === '`') inString = ch;
-            else if (ch === '(' || ch === '{' || ch === '[') depth++;
-            else if (ch === ')' || ch === '}' || ch === ']') depth--;
-          }
-        }
-        const isTruncated = depth > 1 || inString !== null;
-
-        if (isTruncated) {
-          console.warn(`[FigmaPluginTool] Code appears truncated — depth=${depth}, inString=${inString}, codeLength=${code.length}, lastChars="${code.slice(-30)}"`);
-          safeAddToolResult(toolCall.toolCallId, `Error: The code was truncated (incomplete — depth=${depth}, unclosed string=${inString}, length=${code.length}). The AI likely hit max output tokens. Please split into smaller steps — do ONE thing per call (max ~30 lines). Return node IDs and use them in the next call.`);
-          return;
-        }
-
-        // Serialize: wait for any previous figma_plugin_execute to complete
-        // before executing this one. Concurrent addToolResult calls crash the SDK.
-        const prevQueue = figmaExecQueueRef.current;
-        let resolveQueue!: () => void;
-        figmaExecQueueRef.current = new Promise(r => { resolveQueue = r; });
-        await prevQueue;
-
-        // Block orchProcessQueue from injecting messages while we execute + cooldown
-        figmaExecInFlightRef.current = true;
-
-        console.log("[FigmaPluginTool] Executing directly via postMessage:", code.substring(0, 80));
-        try {
-          const result = await executeCodeRef.current(code, input.timeout ?? 10000);
-          safeAddToolResult(toolCall.toolCallId, result);
-        } catch (err) {
-          safeAddToolResult(toolCall.toolCallId, `Error: ${err instanceof Error ? err.message : String(err)}`);
-        } finally {
-          resolveQueue();
-          // Keep the in-flight flag for 300ms after addToolResult — the SDK needs
-          // time to transition from "ready" to "streaming" for the next maxSteps
-          // round. Without this cooldown, orchProcessQueue can inject a message
-          // during the gap, causing "Tool result is missing" errors.
-          setTimeout(() => {
-            figmaExecInFlightRef.current = false;
-          }, 300);
-        }
-      }
-
-    },
-    // Auto-send tool results back to the server when all tool calls are resolved
-    sendAutomaticallyWhen: lastAssistantMessageIsCompleteWithToolCalls,
-    onError: (err) => {
-      console.warn("[Chat] useChat error — breaking retry loop:", err.message);
-      chatErrorRecoveryRef.current = true;
-      setChatErrorMsg(err.message);
-      setErrorCount((c) => c + 1);
-    },
-  });
-
-  // ── Temporal chat workflow (feature-flagged alternative to useChat) ───
-  // Phase -1: legacy /api/chat deleted — temporal is now the only chat runtime.
-  // The legacy useChat path below is dead code (temporalChatEnabled always true).
-  // TODO: remove useChat + DefaultChatTransport + transport in Phase -1b cleanup.
-  const temporalChatEnabled = true;
+  // ── Temporal chat workflow ──────────────────────────────────────────────
+  // The legacy `@ai-sdk/react` `useChat` path was removed in April 2026 — the
+  // Temporal-backed `useChatWorkflow` hook below is now the only chat runtime.
+  // See `docs/architecture/chat-temporal.md` for the full protocol.
 
   // Map enabledMcps UI keys to Temporal MCP server IDs
   const temporalMcpServerIds = useMemo(() => {
@@ -2285,7 +2129,7 @@ export default function Home() {
     //           (2) webapp running inside Figma plugin iframe → own clientId
     //           (3) no plugin available → undefined (skips pairing + plugin execute)
     figmaPluginClientId: targetPluginClientId ?? (isFigmaPlugin ? myClientId : undefined),
-    enabled: temporalChatEnabled,
+    enabled: true,
     selectedNode,
     figmaPluginContext,
     connectedAgents: temporalConnectedAgents,
@@ -2296,13 +2140,19 @@ export default function Home() {
     codeInstanceId: focusCodeInstanceId ?? undefined,
   });
 
-  // Unified chat variables — always Temporal (legacy useChat path is dead code).
-  const messages = chatWorkflow.messages as typeof legacyMessages;
+  // Chat variables — Temporal-only since the April 2026 cleanup.
+  //
+  // Casts to `UIMessage` / `UIMessage[]` preserve the shape the rest of
+  // page.tsx was originally written against (back when the chat came from
+  // `useChat`). `ChatMessage` from `useChatWorkflow` is structurally
+  // compatible for the read paths used downstream (`.role`, `.parts`,
+  // `.length`), and the cast is a compile-time no-op.
+  const messages = chatWorkflow.messages as unknown as UIMessage[];
   const sendMessage = chatWorkflow.sendMessage;
   const cancelMessage = chatWorkflow.cancelMessage;
   const status = chatWorkflow.status === "idle" ? "ready" as const : "streaming" as const;
   const error = chatWorkflow.error ? new Error(chatWorkflow.error) : undefined;
-  const setMessages = chatWorkflow.setMessages as typeof legacySetMessages;
+  const setMessages = chatWorkflow.setMessages as unknown as (msgs: UIMessage[]) => void;
 
   // Sync temporal chat errors to the PeekBanner error UI
   useEffect(() => {
@@ -2311,23 +2161,6 @@ export default function Home() {
       setErrorCount((c) => c + 1);
     }
   }, [chatWorkflow.error]);
-
-  // Safe wrapper around addToolResult — catches SDK internal errors
-  // (e.g. "Cannot read properties of undefined (reading 'state')" when
-  // activeResponse is undefined due to concurrent makeRequest calls).
-  const safeAddToolResult = useCallback((toolCallId: string, output: unknown) => {
-    if (chatErrorRecoveryRef.current) {
-      console.warn("[Chat] Skipping addToolResult — in error recovery mode");
-      return;
-    }
-    try {
-      rawAddToolResult({ tool: "figma_plugin_execute" as never, toolCallId, output: output as never });
-    } catch (err) {
-      console.error("[Chat] addToolResult crashed (SDK internal error) — suppressing:", err instanceof Error ? err.message : err);
-      chatErrorRecoveryRef.current = true;
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [rawAddToolResult]);
 
   // ── Message persistence ─────────────────────────────────────────────
   const getAssistantMetadata = useCallback(() => {
@@ -2342,17 +2175,12 @@ export default function Home() {
     };
   }, []);
 
-  // Temporal chat: persistence is server-side — pass legacy (idle) values
-  // so useMessagePersistence doesn't double-save assistant messages.
-  const { loaded: messagesLoaded } = useMessagePersistence(
-    activeConversationId,
-    legacyMessages,
-    legacySetMessages,
-    legacyStatus,
-    myClientId,
-    myDisplayShortId,
-    getAssistantMetadata,
-  );
+  // Temporal chat persists messages server-side via `save_message` RPC and
+  // `persistChatMessage` activity, so we no longer need the client-side
+  // `useMessagePersistence` hook. `useChatWorkflow.loaded` replaces the old
+  // `messagesLoaded` flag — it flips true after the hook's internal
+  // `loadAndRecover` pass completes for the current conversation.
+  const messagesLoaded = chatWorkflow.loaded;
 
   // ── Conversation switching handler ──────────────────────────────────
   // When switching away from the orchestration conversation, auto-release the role

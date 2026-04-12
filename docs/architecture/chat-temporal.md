@@ -55,9 +55,49 @@ POST /api/chat-temporal/start ----> chatWorkflow starts
 
 ## Feature Flag
 
-Controlled by `NEXT_PUBLIC_TEMPORAL_CHAT_ENABLED=true` (env var).
+**Temporal chat is the only chat runtime** since April 2026. The legacy
+`@ai-sdk/react` `useChat` path was fully removed — there is no fallback.
 
-When enabled, `page.tsx` uses `useChatWorkflow` instead of `useChat` from `@ai-sdk/react`.
+If you need to emergency-disable chat in production:
+
+1. **Server side** — all chat-temporal routes check
+   `process.env.TEMPORAL_ENABLED === "true"`. Setting `TEMPORAL_ENABLED=false`
+   on the Vercel environment flips every route to `503 Temporal chat is not
+   enabled`. This is the fastest kill-switch.
+2. **Worker side** — stop the Temporal worker process. Existing workflows
+   will time out after their activity `startToCloseTimeout` (LLM activity
+   defaults to 5 min). New messages won't be processed.
+
+### Decommissioned legacy pieces
+
+The April 2026 cleanup removed the following from the web package:
+
+- `import { useChat } from "@ai-sdk/react"` — replaced by `useChatWorkflow`
+- `DefaultChatTransport` + `/api/chat` route — removed in commit `94bd1f4`
+  earlier; the transport setup and `onToolCall` / `onError` handlers were
+  removed in this pass
+- `figmaExecQueueRef`, `figmaExecInFlightRef` — serialization state for
+  the legacy client-side `figma_plugin_execute` tool dispatch. The tool is
+  now executed server-side by the `executeFigmaCode` activity and needs no
+  client-side queueing
+- `chatErrorRecoveryRef` + `safeAddToolResult` + `rawAddToolResult` —
+  wrappers around the AI SDK's `addToolResult` that caught SDK internal
+  races. Dead with the SDK gone
+- `packages/web/src/app/hooks/useMessagePersistence.ts` — the entire file
+  was deleted. Its load logic was duplicated by
+  `useChatWorkflow.loadAndRecover`, and its save logic was always a no-op
+  in Temporal mode (server-side persistence handles it)
+- `packages/web/src/tools/figma-plugin-execute.ts` — client-side tool
+  definition for the legacy dispatch pattern. Orphan since the executeFigmaCode
+  activity took over
+- The `temporalChatEnabled = true` hardcode — replaced by a plain `true`
+  passed to `useChatWorkflow({ enabled })`
+
+The only remnant of `@ai-sdk/react` in the web package is a **type-only**
+import of `UIMessage` in `page.tsx`, used for a compile-time cast so the
+rest of the UI code (originally written against the AI SDK shape) can
+consume `chatWorkflow.messages` without a full refactor. This import is
+elided at compile time — zero runtime cost.
 
 ## Streaming Protocol
 

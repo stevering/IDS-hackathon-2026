@@ -57,6 +57,13 @@ export type UseChatWorkflowReturn = {
   cancelMessage: () => void;
   status: ChatWorkflowStatus;
   error: string | undefined;
+  /**
+   * `true` once the initial `loadAndRecover` pass for the current
+   * `conversationId` has completed (success or failure). UI code gates the
+   * empty-state splash on this so it doesn't flash before persisted
+   * messages arrive. Resets to `false` on every conversation switch.
+   */
+  loaded: boolean;
   setMessages: (msgs: ChatMessage[]) => void;
   /** Discovery failures surfaced from the Temporal worker (MCP instances that couldn't be reached). */
   mcpDiscoveryFailures: MCPDiscoveryFailure[];
@@ -129,6 +136,13 @@ export function useChatWorkflow({
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [status, setStatus] = useState<ChatWorkflowStatus>("idle");
   const [error, setError] = useState<string | undefined>();
+  // `loaded` flips true once `loadAndRecover` has completed its first pass
+  // (success or failure) for the current conversation. UI code gates the
+  // empty-state "New conversation" splash on this so it doesn't flash
+  // before persisted messages arrive. Replaces the old `messagesLoaded`
+  // flag from `useMessagePersistence` which was decommissioned along with
+  // the legacy `useChat` path.
+  const [loaded, setLoaded] = useState(false);
   const [mcpDiscoveryFailures, setMcpDiscoveryFailures] = useState<MCPDiscoveryFailure[]>([]);
   const clearMCPDiscoveryFailures = useCallback(() => setMcpDiscoveryFailures([]), []);
   const workflowIdRef = useRef<string | null>(null);
@@ -197,6 +211,11 @@ export function useChatWorkflow({
   useEffect(() => {
     if (!conversationId || !enabled) return;
 
+    // Reset `loaded` on every conversation switch so consumers know the old
+    // messages list is stale and the empty-state splash should stay hidden
+    // until loadAndRecover finishes.
+    setLoaded(false);
+
     async function loadAndRecover() {
       try {
         // Load persisted messages
@@ -204,13 +223,13 @@ export function useChatWorkflow({
         if (!res.ok) return;
         const data = await res.json();
         if (data.messages) {
-          const loaded: ChatMessage[] = data.messages.map((m: { id: string; role: string; content: string; parts?: unknown[]; metadata?: Record<string, unknown> }) => ({
+          const loadedMessages: ChatMessage[] = data.messages.map((m: { id: string; role: string; content: string; parts?: unknown[]; metadata?: Record<string, unknown> }) => ({
             id: m.id,
             role: m.role as ChatMessage["role"],
             content: m.content ?? "",
             parts: m.parts ?? [{ type: "text", text: m.content ?? "" }],
           }));
-          setMessages(loaded);
+          setMessages(loadedMessages);
 
           // Recover the running workflow id from conversation.metadata.chatWorkflowId.
           // This is set by /api/chat-temporal/start so that — after an F5 or tab revisit —
@@ -233,7 +252,7 @@ export function useChatWorkflow({
           }
 
           // Check if the last message is still streaming (metadata.streaming === true)
-          const lastAssistant = [...loaded].reverse().find(m => m.role === "assistant");
+          const lastAssistant = [...loadedMessages].reverse().find(m => m.role === "assistant");
           const rawLastAssistant = data.messages.find((m: { id: string }) => m.id === lastAssistant?.id);
           const lastMeta = rawLastAssistant?.metadata as Record<string, unknown> | undefined;
           console.log("[ChatWorkflow] F5 recovery check:", {
@@ -332,6 +351,12 @@ export function useChatWorkflow({
         }
       } catch {
         // Non-fatal
+      } finally {
+        // Flip regardless of outcome — consumers just need to know that the
+        // first load attempt is done so they can render (or not render) the
+        // empty-state splash. A failed load leaves `messages` as whatever it
+        // was before, which is the right UX fallback.
+        setLoaded(true);
       }
     }
 
@@ -864,7 +889,7 @@ export function useChatWorkflow({
     };
   }, []);
 
-  return { messages, sendMessage, cancelMessage, status, error, setMessages, mcpDiscoveryFailures, clearMCPDiscoveryFailures };
+  return { messages, sendMessage, cancelMessage, status, error, loaded, setMessages, mcpDiscoveryFailures, clearMCPDiscoveryFailures };
 }
 
 // ---------------------------------------------------------------------------
