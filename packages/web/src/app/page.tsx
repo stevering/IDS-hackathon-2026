@@ -2805,7 +2805,7 @@ export default function Home() {
           >
             {/* ── Left panel: Normal chat conversation ── */}
             <div className="min-w-full h-full relative">
-            <div ref={scrollContainerRef} onScroll={handleScroll} className={`absolute inset-0 overflow-y-auto px-3 sm:px-4 pb-40 ${headerPaddingClass}`}>
+            <div ref={scrollContainerRef} onScroll={handleScroll} className={`absolute inset-0 overflow-y-auto px-3 sm:px-4 pb-56 ${headerPaddingClass}`}>
               {/* Chat panel content starts here */}
           {messages.length === 0 && messagesLoaded && (
             <div className="flex flex-col items-center justify-center h-full text-center px-4">
@@ -3542,7 +3542,7 @@ export default function Home() {
                   <PeekBanner
                     open={chatWorkflow.mcpDiscoveryFailures.length > 0}
                     onClose={() => chatWorkflow.clearMCPDiscoveryFailures()}
-                    peekHeight={14}
+                    peekHeight={24}
                   >
                     {chatWorkflow.mcpDiscoveryFailures.length > 0 && (
                       <div className="px-4 py-2.5 pr-16 rounded-xl bg-amber-500/10 border border-amber-500/25 backdrop-blur-lg text-xs text-amber-200/90">
