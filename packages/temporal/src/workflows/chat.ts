@@ -361,7 +361,10 @@ export async function chatWorkflow(params: ChatWorkflowParams): Promise<void> {
   }
 
   // ── Process first message ───────────────────────────────────────────────
-  await processUserMessage(params.userMessage, params.userImages);
+  // The user message was already persisted to DB by the HTTP route (via
+  // save_message RPC) and loaded into `messages` by `loadChatHistory` above.
+  // We only need to kick off the LLM loop — no need to add it again.
+  await runLLMLoop();
 
   // ── Idle loop: wait for follow-up messages ──────────────────────────────
   // Note: chatCancelSignal does NOT break this loop — a cancel only stops the
@@ -378,26 +381,15 @@ export async function chatWorkflow(params: ChatWorkflowParams): Promise<void> {
 
     const nextMsg = pendingMessages.shift()!;
 
-    // Persist user message
-    await persistChatMessage({
-      conversationId: params.conversationId,
-      role: "user",
-      content: nextMsg.content,
-      userId: params.userId,
-    });
+    // User message was already persisted to DB by the /message route (via
+    // save_message RPC) before the signal was sent. We only add it to the
+    // in-memory array for the LLM call.
     messages.push({ role: "user", content: nextMsg.content, images: nextMsg.images });
 
     await runLLMLoop();
   }
 
   status = "completed";
-
-  // ── Helper: process user message (first or from signal) ─────────────────
-
-  async function processUserMessage(content: string, images?: string[]) {
-    messages.push({ role: "user", content, images });
-    await runLLMLoop();
-  }
 
   // ── Helper: LLM ↔ tool execution loop ──────────────────────────────────
 
