@@ -7,6 +7,8 @@ type PeekBannerProps = {
   open: boolean;
   onClose: () => void;
   peekDelay?: number;
+  /** Height in px visible when the banner is in peek (collapsed) mode. */
+  peekHeight?: number;
   className?: string;
 };
 
@@ -15,26 +17,17 @@ export function PeekBanner({
   open,
   onClose,
   peekDelay = 3000,
+  peekHeight = 36,
   className = "",
 }: PeekBannerProps) {
   const [visible, setVisible] = useState(false);
   const [peeking, setPeeking] = useState(false);
   const [userExpanded, setUserExpanded] = useState(false); // true when user manually expanded
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const peekLineRef = useRef<HTMLDivElement>(null);
-  const [peekHeight, setPeekHeight] = useState(36);
 
   const clearTimer = useCallback(() => {
     if (timerRef.current) { clearTimeout(timerRef.current); timerRef.current = null; }
   }, []);
-
-  // Measure peek height — enough for first line of text + buttons + padding
-  useEffect(() => {
-    if (peekLineRef.current) {
-      const h = peekLineRef.current.offsetHeight + 28;
-      setPeekHeight((prev) => prev !== h ? h : prev);
-    }
-  }, [open, visible]);
 
   // Open/close
   useEffect(() => {
@@ -78,7 +71,8 @@ export function PeekBanner({
     onClose();
   }, [clearTimer, onClose]);
 
-  // Compute transform
+  // Compute transform — peek mode slides the content down so only
+  // the first peekHeight pixels are visible above the bottom edge.
   let translateY: string;
   if (!visible) {
     translateY = "calc(100% + 8px)";
@@ -99,45 +93,44 @@ export function PeekBanner({
         }}
         className="will-change-transform"
       >
-        {/* First line ref (for peek height measurement) */}
-        <div ref={peekLineRef} className="relative">
-          {/* Close button */}
+      <div className="relative">
+        {/* Close button */}
+        <button
+          onClick={handleClose}
+          className="absolute top-1.5 right-1.5 p-1 rounded-md text-white/30 hover:text-white/70 hover:bg-white/[0.08] transition-colors cursor-pointer z-10"
+          title="Dismiss"
+        >
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+            <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
+          </svg>
+        </button>
+
+        {/* Expand button (peek mode) or Collapse button (user-expanded mode) */}
+        {peeking && (
           <button
-            onClick={handleClose}
-            className="absolute top-1.5 right-1.5 p-1 rounded-md text-white/30 hover:text-white/70 hover:bg-white/[0.08] transition-colors cursor-pointer z-10"
-            title="Dismiss"
+            onClick={handleExpand}
+            className="absolute top-1.5 right-8 p-1 rounded-md text-white/30 hover:text-white/70 hover:bg-white/[0.08] transition-colors cursor-pointer z-10"
+            title="Show details"
           >
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-              <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
+              <path d="M18 15l-6-6-6 6" />
             </svg>
           </button>
-
-          {/* Expand button (peek mode) or Collapse button (user-expanded mode) */}
-          {peeking && (
-            <button
-              onClick={handleExpand}
-              className="absolute top-1.5 right-8 p-1 rounded-md text-white/30 hover:text-white/70 hover:bg-white/[0.08] transition-colors cursor-pointer z-10"
-              title="Show details"
-            >
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M18 15l-6-6-6 6" />
-              </svg>
-            </button>
-          )}
-          {userExpanded && (
-            <button
-              onClick={handleCollapse}
-              className="absolute top-1.5 right-8 p-1 rounded-md text-white/30 hover:text-white/70 hover:bg-white/[0.08] transition-colors cursor-pointer z-10"
-              title="Collapse"
-            >
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M6 9l6 6 6-6" />
-              </svg>
-            </button>
-          )}
-        </div>
+        )}
+        {userExpanded && (
+          <button
+            onClick={handleCollapse}
+            className="absolute top-1.5 right-8 p-1 rounded-md text-white/30 hover:text-white/70 hover:bg-white/[0.08] transition-colors cursor-pointer z-10"
+            title="Collapse"
+          >
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M6 9l6 6 6-6" />
+            </svg>
+          </button>
+        )}
 
         {children}
+      </div>
       </div>
     </div>
   );

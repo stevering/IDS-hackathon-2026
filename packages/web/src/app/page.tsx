@@ -3537,11 +3537,12 @@ export default function Home() {
               </div>
               <div className="relative mx-auto max-w-3xl">
                 {/* Stacked PeekBanners — anchored above the form, flex-col to stack vertically */}
-                <div className="absolute bottom-full left-0 right-0 mb-2 z-0 flex flex-col gap-2">
+                <div className="absolute bottom-full left-0 right-0 mb-0 z-0 flex flex-col gap-0">
                   {/* MCP Discovery Warning PeekBanner — amber, shows failed MCP connections */}
                   <PeekBanner
                     open={chatWorkflow.mcpDiscoveryFailures.length > 0}
                     onClose={() => chatWorkflow.clearMCPDiscoveryFailures()}
+                    peekHeight={14}
                   >
                     {chatWorkflow.mcpDiscoveryFailures.length > 0 && (
                       <div className="px-4 py-2.5 pr-16 rounded-xl bg-amber-500/10 border border-amber-500/25 backdrop-blur-lg text-xs text-amber-200/90">
@@ -3565,7 +3566,7 @@ export default function Home() {
                   </PeekBanner>
 
                   {/* Chat Error PeekBanner — red, for fatal chat errors */}
-                  <PeekBanner key={errorCount} open={!!chatErrorMsg} onClose={() => setChatErrorMsg(null)}>
+                  <PeekBanner key={errorCount} open={!!chatErrorMsg} onClose={() => setChatErrorMsg(null)} peekHeight={24}>
                     {(() => {
                       if (!chatErrorMsg) return null;
                       let msg = chatErrorMsg;
