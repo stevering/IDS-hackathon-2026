@@ -1,18 +1,12 @@
 "use client";
 
 /**
- * GuardianSendButton — round send/stop button with the animated Guardian
- * mascot inside. Reuses <GuardianMascot /> for the character.
+ * GuardianSendButton — dual-mode send/stop button.
  *
  * Behaviour:
- *   - Not generating: static mascot (paused), works as a submit button.
- *   - Generating: mascot is animated; on hover the mascot cross-fades to a
- *     red square "stop" icon to indicate the button would cancel generation.
- *
- * Note: the actual "stop generation" action is NOT wired up here — the
- * workflow hook does not yet expose a stop function. Parent can handle
- * onClick during generation once that's available. For now the form-level
- * onSubmit guard (`if (isLoading) return;`) keeps clicks harmless.
+ *   - Not generating: classic arrow-up send button (standard AI chat style).
+ *   - Generating: round button with animated Guardian mascot; on hover the
+ *     mascot cross-fades to a red square "stop" icon.
  */
 
 import type { ButtonHTMLAttributes } from "react";
@@ -29,22 +23,35 @@ export function GuardianSendButton({
   "aria-label": ariaLabel,
   ...rest
 }: GuardianSendButtonProps) {
+  if (!isGenerating) {
+    return (
+      <button
+        {...rest}
+        className={`guardian-send-btn-idle ${className}`.trim()}
+        aria-label={ariaLabel ?? "Send message"}
+      >
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M12 19V5" />
+          <path d="M5 12l7-7 7 7" />
+        </svg>
+      </button>
+    );
+  }
+
   return (
     <button
       {...rest}
-      className={`guardian-send-btn ${isGenerating ? "guardian-send-btn-generating" : ""} ${className}`.trim()}
-      aria-label={ariaLabel ?? (isGenerating ? "Generating — hover to cancel" : "Send message")}
+      className={`guardian-send-btn guardian-send-btn-generating ${className}`.trim()}
+      aria-label={ariaLabel ?? "Generating — hover to cancel"}
     >
       <span className="guardian-mascot-wrap">
-        <GuardianMascot size={34} paused={!isGenerating} />
+        <GuardianMascot size={34} paused={false} />
       </span>
-      {isGenerating && (
-        <span className="guardian-stop-wrap" aria-hidden="true">
-          <svg viewBox="0 0 24 24" fill="none">
-            <rect x="7" y="7" width="10" height="10" rx="2" fill="currentColor" />
-          </svg>
-        </span>
-      )}
+      <span className="guardian-stop-wrap" aria-hidden="true">
+        <svg viewBox="0 0 24 24" fill="none">
+          <rect x="7" y="7" width="10" height="10" rx="2" fill="currentColor" />
+        </svg>
+      </span>
     </button>
   );
 }

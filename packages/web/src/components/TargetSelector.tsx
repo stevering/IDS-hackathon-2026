@@ -71,10 +71,22 @@ export function TargetSelector({ items, label, tooltip, emptyDescription, select
 
   const handleClose = useCallback(() => setOpen(false), []);
 
+  // Chevron icon shared across button variants
+  const Chevron = () => (
+    <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className="shrink-0">
+      <path d="M6 9l6 6 6-6" />
+    </svg>
+  );
+
+  // Inline display: "Label · SelectedName" or just "Label" (dimmed)
+  const inlineLabel = selectedItem
+    ? <><span className="text-white/40">{label}</span><span className="text-white/20 mx-0.5">·</span><span className="truncate">{selectedItem.label}</span></>
+    : <span className="text-white/30">{label}</span>;
+
   // No items at all (all MCPs disabled) — static label with info icon
   if (items.length === 0) {
     return (
-      <div className="flex items-center gap-1.5 text-xs text-white/30">
+      <div className="flex items-center gap-1.5 text-xs text-white/30 px-2 py-1 rounded-lg">
         <StatusDot status="not-configured" />
         <span className="hidden sm:inline">{label}</span>
         {emptyDescription && <InfoIcon title={emptyDescription} />}
@@ -88,15 +100,14 @@ export function TargetSelector({ items, label, tooltip, emptyDescription, select
       <div className="relative">
         <button
           ref={btnRef}
+          type="button"
           onClick={() => setOpen(!open)}
           title={tooltip}
-          className="flex items-center gap-1.5 text-xs text-white/30 hover:text-white/50 transition-colors cursor-pointer"
+          className="flex items-center gap-1.5 text-xs text-white/30 hover:text-white/50 hover:bg-white/[0.08] px-2 py-1 rounded-lg border border-transparent hover:border-white/10 transition-all cursor-pointer"
         >
           <StatusDot status="not-configured" />
           <span className="hidden sm:inline">{label}</span>
-          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-            <path d="M6 9l6 6 6-6" />
-          </svg>
+          <Chevron />
         </button>
         <GlassDropdown open={open} onClose={handleClose} anchorRef={btnRef} side="top" align="left" width={240}>
           {items.map((item) => (
@@ -104,7 +115,7 @@ export function TargetSelector({ items, label, tooltip, emptyDescription, select
               key={item.id}
               className="w-full flex items-center gap-2 px-3 py-2 text-xs text-white/30 cursor-default"
             >
-              <StatusDot status={item.status} className={item.subtitle ? "mt-0.5" : ""} />
+              <StatusDot status={item.status} />
               <div className="flex-1 text-left min-w-0">
                 <span className="truncate block">{item.label}</span>
                 {item.subtitle && <span className="truncate block text-[10px] text-white/25">{item.subtitle}</span>}
@@ -117,36 +128,19 @@ export function TargetSelector({ items, label, tooltip, emptyDescription, select
     );
   }
 
-  // Exactly one active item and no inactive items — show directly, no dropdown
-  if (activeItems.length === 1 && items.length === 1) {
-    return (
-      <div className="flex items-center gap-1.5 text-xs text-white/70" title={tooltip}>
-        <StatusDot status="active" className={activeItems[0].subtitle ? "mt-0.5" : ""} />
-        <div className="hidden sm:block min-w-0">
-          <span className="truncate block">{activeItems[0].label}</span>
-          {activeItems[0].subtitle && <span className="truncate block text-[10px] text-white/40">{activeItems[0].subtitle}</span>}
-        </div>
-      </div>
-    );
-  }
-
-  // Multiple items (or 1 active + inactive) — dropdown
+  // Items with at least one active — dropdown (even if single item)
   return (
     <div className="relative">
       <button
         ref={btnRef}
+        type="button"
         onClick={() => setOpen(!open)}
         title={tooltip}
-        className="flex items-center gap-1.5 text-xs text-white/70 hover:text-white/90 transition-colors cursor-pointer"
+        className="flex items-center gap-1.5 text-xs text-white/70 hover:text-white/90 hover:bg-white/[0.08] px-2 py-1 rounded-lg border border-transparent hover:border-white/10 transition-all cursor-pointer"
       >
         <StatusDot status={selectedItem?.status ?? "not-configured"} />
-        <div className="hidden sm:block min-w-0 text-left">
-          <span className="truncate block">{selectedItem ? selectedItem.label : label}</span>
-          {selectedItem?.subtitle && <span className="truncate block text-[10px] text-white/40">{selectedItem.subtitle}</span>}
-        </div>
-        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-          <path d="M6 9l6 6 6-6" />
-        </svg>
+        <span className="hidden sm:inline truncate">{inlineLabel}</span>
+        <Chevron />
       </button>
 
       <GlassDropdown open={open} onClose={handleClose} anchorRef={btnRef} side="top" align="left" width={240}>
@@ -155,6 +149,7 @@ export function TargetSelector({ items, label, tooltip, emptyDescription, select
           return (
             <button
               key={item.id}
+              type="button"
               disabled={!isActive}
               onClick={() => {
                 if (isActive) {
@@ -168,7 +163,7 @@ export function TargetSelector({ items, label, tooltip, emptyDescription, select
                   : "text-white/25 cursor-default"
               }`}
             >
-              <StatusDot status={item.status} className={item.subtitle ? "mt-0.5" : ""} />
+              <StatusDot status={item.status} />
               <div className="flex-1 text-left min-w-0">
                 <span className="truncate block">{item.label}</span>
                 {item.subtitle && <span className="truncate block text-[10px] text-white/30">{item.subtitle}</span>}

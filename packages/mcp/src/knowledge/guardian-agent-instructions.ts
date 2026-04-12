@@ -2,7 +2,7 @@
  * Guardian Agent Instructions — System prompt for the webapp AI agent
  *
  * WHO USES THIS:
- *   The Guardian webapp (/api/chat route) injects this as the LLM system prompt.
+r *   The Guardian webapp (Temporal chat workflow) injects this as the LLM system prompt.
  *   Combined with response-templates.ts → GUARDIAN_SYSTEM_PROMPT.
  *   This makes the LLM *become* the Guardian agent with enforced behavior.
  *

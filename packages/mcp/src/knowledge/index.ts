@@ -21,7 +21,7 @@
  *    other MCP servers, FR triggers)  for external MCP client context)
  *        ↓                               ↓
  *   GUARDIAN_SYSTEM_PROMPT           MCP_INSTRUCTIONS
- *   (webapp /api/chat)              (ServerOptions.instructions)
+ *   (Temporal chat workflow)        (ServerOptions.instructions)
  */
 
 export { GUARDIAN_INSTRUCTIONS } from "./guardian-agent-instructions.js"
@@ -35,6 +35,6 @@ import { GUARDIAN_RESPONSE_TEMPLATES } from "./response-templates.js"
 
 /**
  * Full Guardian system prompt = agent instructions + response templates.
- * Used by the webapp /api/chat route as the AI system prompt.
+ * Used by the Temporal chat workflow as the AI system prompt.
  */
 export const GUARDIAN_SYSTEM_PROMPT = GUARDIAN_INSTRUCTIONS + "\n\n" + GUARDIAN_RESPONSE_TEMPLATES

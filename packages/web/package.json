@@ -18,7 +18,6 @@
     "@ai-sdk/google": "^3.0.34",
     "@ai-sdk/mcp": "^1.0.19",
     "@ai-sdk/openai": "^3.0.37",
-    "@ai-sdk/react": "^3.0.79",
     "@ai-sdk/xai": "^3.0.54",
     "@guardian/mcp-server": "workspace:*",
     "@guardian/orchestrations": "workspace:*",

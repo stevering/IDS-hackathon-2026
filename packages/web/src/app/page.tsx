@@ -3611,13 +3611,13 @@ export default function Home() {
                     }
                   }}
                   placeholder="Ask Guardian to check a component..."
-                  className="w-full bg-transparent px-4 pt-3 pb-12 text-sm text-white placeholder:text-white/45 focus:outline-none resize-none overflow-y-auto"
+                  className="w-full bg-transparent px-4 pt-3 pb-16 text-sm text-white placeholder:text-white/45 focus:outline-none resize-none overflow-y-auto"
                   rows={3}
                 />
                 {/* Bottom bar inside the form */}
-                <div className="absolute bottom-0 left-0 right-0 flex items-center justify-between gap-2 px-3 py-2">
+                <div className="absolute bottom-0 left-0 right-0 flex items-end justify-between gap-2 px-3 py-2">
                   {/* Left: target selectors */}
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-end gap-2">
                     <TargetSelector
                       items={designTargets}
                       label="Design"
@@ -3636,7 +3636,7 @@ export default function Home() {
                     />
                   </div>
                   {/* Right: model picker + send */}
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-end gap-2">
                   {/* Model selector — segmented: Included + My Keys */}
                   <div className="relative">
                     {!modelReady ? (
@@ -3687,7 +3687,7 @@ export default function Home() {
                             ref={modelBtnRef}
                             type="button"
                             onClick={() => { setModelDropdownOpen(!modelDropdownOpen); setModelSearch(""); }}
-                            className="flex items-center gap-1.5 px-2 py-1 rounded-lg text-xs text-white/50 hover:text-white/80 transition-colors cursor-pointer max-w-[220px]"
+                            className="flex items-center gap-1.5 px-2 py-1 rounded-lg text-xs text-white/50 hover:text-white/80 hover:bg-white/[0.08] border border-transparent hover:border-white/10 transition-all cursor-pointer max-w-[220px]"
                           >
                             <span className={`shrink-0 text-[9px] px-1 py-0.5 rounded font-medium ${selectedSource === "included" ? "bg-violet-600/30 text-violet-300" : "bg-emerald-600/30 text-emerald-300"}`}>
                               {activeKey?.is_default && <span className="mr-0.5">★</span>}{sourceTag}

@@ -160,7 +160,41 @@ select {
   50%      { opacity: 0.95; transform: scale(1.05); }
 }
 
-/* --- Guardian send button ------------------------------------------------- */
+/* --- Guardian send button — idle (classic arrow-up) ----------------------- */
+
+.guardian-send-btn-idle {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.12);
+  color: rgba(255, 255, 255, 0.7);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  cursor: pointer;
+  padding: 0;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition:
+    background 0.2s ease,
+    border-color 0.2s ease,
+    color 0.2s ease,
+    transform 0.15s ease;
+}
+
+.guardian-send-btn-idle:disabled {
+  opacity: 0.25;
+  cursor: not-allowed;
+}
+
+.guardian-send-btn-idle:not(:disabled):hover {
+  background: rgba(255, 255, 255, 0.22);
+  border-color: rgba(255, 255, 255, 0.3);
+  color: white;
+  transform: scale(1.05);
+}
+
+/* --- Guardian send button — generating (mascot + stop) -------------------- */
 
 .guardian-send-btn {
   position: relative;
