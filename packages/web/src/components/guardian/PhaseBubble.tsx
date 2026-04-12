@@ -32,6 +32,7 @@ export type PhaseHistoryEntry = {
 type PhaseBubbleProps = {
   currentPhase: Phase | null;
   history: PhaseHistoryEntry[];
+  onDismiss?: () => void;
 };
 
 function formatDuration(ms: number): string {
@@ -106,12 +107,24 @@ function PhaseTicker({ phase }: { phase: Phase | null }) {
   return <div ref={containerRef} className="phase-line" />;
 }
 
-export function PhaseBubble({ currentPhase, history }: PhaseBubbleProps) {
+export function PhaseBubble({ currentPhase, history, onDismiss }: PhaseBubbleProps) {
   const [expanded, setExpanded] = useState(false);
-
-  if (!currentPhase && history.length === 0) return null;
+  const [dismissed, setDismissed] = useState(false);
+  const prevRunningRef = useRef(false);
 
   const isRunning = currentPhase !== null;
+
+  // Reset dismissed state when a new run starts.
+  useEffect(() => {
+    if (isRunning && !prevRunningRef.current) {
+      setDismissed(false);
+    }
+    prevRunningRef.current = isRunning;
+  }, [isRunning]);
+
+  if (dismissed) return null;
+  if (!currentPhase && history.length === 0) return null;
+
   const totalDuration = history.reduce((sum, h) => sum + h.duration, 0);
 
   return (
@@ -138,11 +151,28 @@ export function PhaseBubble({ currentPhase, history }: PhaseBubbleProps) {
             </span>
           </div>
         )}
-        {history.length > 0 && (
-          <span className="phase-chevron" aria-hidden="true">
-            ▾
-          </span>
-        )}
+        <div className="phase-header-actions">
+          {history.length > 0 && (
+            <span className="phase-chevron" aria-hidden="true">
+              ▾
+            </span>
+          )}
+          {!isRunning && (
+            <button
+              className="phase-dismiss-btn"
+              title="Dismiss"
+              onClick={(e) => {
+                e.stopPropagation();
+                setDismissed(true);
+                onDismiss?.();
+              }}
+            >
+              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
+              </svg>
+            </button>
+          )}
+        </div>
       </div>
       <div className="phase-history">
         {history.length === 0 ? (

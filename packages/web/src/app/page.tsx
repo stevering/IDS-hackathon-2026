@@ -3600,7 +3600,7 @@ export default function Home() {
               <ComposerAurora active={isLoading}>
               <form
                 onSubmit={onSubmit}
-                className="relative z-10 rounded-2xl border border-white/30 overflow-visible"
+                className="composer-aurora-form relative z-10 rounded-2xl border border-white/30 overflow-visible"
                 style={{ background: "rgba(10,10,10,0.25)", backdropFilter: "blur(6px) saturate(1.3)", boxShadow: "0 8px 40px rgba(0,0,0,0.6), 0 2px 8px rgba(0,0,0,0.4), 0 1px 0 rgba(255,255,255,0.05) inset" }}
               >
                 <textarea

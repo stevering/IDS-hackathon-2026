@@ -475,35 +475,39 @@ select {
 @keyframes gm-star         { 0%, 100% { transform: rotate(0deg) scale(1); } 50% { transform: rotate(90deg) scale(1.5); } }
 @keyframes gm-star-twinkle { 0%, 100% { transform: scale(1); opacity: 0.92; } 50% { transform: scale(1.4); opacity: 1; } }
 
-/* --- Phase bubble (banner above the composer) ----------------------------- */
+/* --- Phase bubble (extension above the composer) -------------------------- */
 
 .phase-bubble {
   width: 100%;
-  background: rgba(167, 139, 250, 0.06);
-  border: 1px solid rgba(167, 139, 250, 0.18);
-  border-radius: 12px;
-  padding: 8px 12px;
-  margin-bottom: 8px;
+  background: rgba(10, 10, 10, 0.25);
+  border: 1px solid rgba(255, 255, 255, 0.30);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.10);
+  border-radius: 16px 16px 0 0;
+  padding: 6px 12px;
   cursor: pointer;
   user-select: none;
-  backdrop-filter: blur(16px) saturate(1.3);
+  backdrop-filter: blur(6px) saturate(1.3);
   transition: background 0.2s ease, border-color 0.2s ease, opacity 0.3s ease;
 }
 
 .phase-bubble:hover {
-  background: rgba(167, 139, 250, 0.1);
-  border-color: rgba(167, 139, 250, 0.3);
+  background: rgba(10, 10, 10, 0.35);
+}
+
+/* When PhaseBubble is visible, flatten the top corners of the composer form */
+.phase-bubble + .composer-aurora .composer-aurora-form {
+  border-top-left-radius: 0;
+  border-top-right-radius: 0;
+  border-top-color: rgba(255, 255, 255, 0.10);
 }
 
 /* Completed run — subtler appearance */
 .phase-bubble-done {
-  background: rgba(167, 139, 250, 0.03);
-  border-color: rgba(167, 139, 250, 0.10);
+  background: rgba(10, 10, 10, 0.15);
 }
 
 .phase-bubble-done:hover {
-  background: rgba(167, 139, 250, 0.06);
-  border-color: rgba(167, 139, 250, 0.2);
+  background: rgba(10, 10, 10, 0.25);
 }
 
 /* Summary line (shown when generation is complete) */
@@ -539,6 +543,13 @@ select {
   flex: 1;
 }
 
+.phase-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
 .phase-chevron {
   font-size: 10px;
   color: rgba(255, 255, 255, 0.4);
@@ -548,6 +559,26 @@ select {
 
 .phase-bubble.expanded .phase-chevron {
   transform: rotate(180deg);
+}
+
+.phase-dismiss-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 4px;
+  border: none;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.3);
+  cursor: pointer;
+  transition: color 0.15s ease, background 0.15s ease;
+  padding: 0;
+}
+
+.phase-dismiss-btn:hover {
+  color: rgba(255, 255, 255, 0.7);
+  background: rgba(255, 255, 255, 0.08);
 }
 
 .phase-history {
