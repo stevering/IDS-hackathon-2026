@@ -3592,12 +3592,12 @@ export default function Home() {
                   </PeekBanner>
 
                 </div>
-                {/* Phase bubble — sits between the PeekBanner stack and the composer */}
+              <ComposerAurora active={isLoading}>
+                {/* Phase bubble — inside the aurora wrapper, before the form */}
                 <PhaseBubble
                   currentPhase={guardianPhase.currentPhase}
                   history={guardianPhase.history}
                 />
-              <ComposerAurora active={isLoading}>
               <form
                 onSubmit={onSubmit}
                 className="composer-aurora-form relative z-10 rounded-2xl border border-white/30 overflow-visible"

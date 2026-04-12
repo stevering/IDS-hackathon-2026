@@ -82,6 +82,10 @@ select {
   background-color: rgba(32, 22, 58, 0.82) !important;
 }
 
+.composer-aurora-active .phase-bubble {
+  background-color: rgba(32, 22, 58, 0.82);
+}
+
 .composer-aurora-active::before {
   /* Blurred multicolor halo that rotates in sync with the sharp ring
      below. No mask — the blur is allowed to spread freely in every
@@ -478,6 +482,8 @@ select {
 /* --- Phase bubble (extension above the composer) -------------------------- */
 
 .phase-bubble {
+  position: relative;
+  z-index: 10;
   width: 100%;
   background: rgba(10, 10, 10, 0.25);
   border: 1px solid rgba(255, 255, 255, 0.30);
@@ -495,7 +501,8 @@ select {
 }
 
 /* When PhaseBubble is visible, flatten the top corners of the composer form */
-.phase-bubble + .composer-aurora .composer-aurora-form {
+/* When PhaseBubble is visible inside the aurora, flatten the form top */
+.phase-bubble + .composer-aurora-form {
   border-top-left-radius: 0;
   border-top-right-radius: 0;
   border-top-color: rgba(255, 255, 255, 0.10);
@@ -543,13 +550,6 @@ select {
   flex: 1;
 }
 
-.phase-header-actions {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  flex-shrink: 0;
-}
-
 .phase-chevron {
   font-size: 10px;
   color: rgba(255, 255, 255, 0.4);
@@ -562,6 +562,9 @@ select {
 }
 
 .phase-dismiss-btn {
+  position: absolute;
+  top: 6px;
+  right: 6px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -574,6 +577,7 @@ select {
   cursor: pointer;
   transition: color 0.15s ease, background 0.15s ease;
   padding: 0;
+  z-index: 1;
 }
 
 .phase-dismiss-btn:hover {
