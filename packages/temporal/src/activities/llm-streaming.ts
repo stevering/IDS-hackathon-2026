@@ -27,6 +27,7 @@ import { createLogger } from "../lib/log.js";
 // overhead for typical LLM streams.
 const HEARTBEAT_INTERVAL_MS = 1_000;
 const BROADCAST_BUFFER_MS = 50; // Minimum interval between broadcasts to avoid flooding
+const FIRST_TOKEN_TIMEOUT_MS = 120_000; // Abort if no token arrives within 120s
 const DB_SNAPSHOT_INTERVAL_MS = parseInt(process.env.CHAT_SNAPSHOT_INTERVAL_MS ?? "2000"); // Persist partial text to DB (default 2s, override via env for testing)
 
 export type LLMStreamingParams = LLMCallParams & {
@@ -194,17 +195,24 @@ export async function callLLMStreaming(params: LLMStreamingParams): Promise<LLMC
 
   // Stream the LLM call.
   //
-  // `abortSignal` is wired to the Temporal activity's cancellationSignal so
-  // that a user Stop click cancels the scope → delivers cancellation to the
-  // activity → aborts the underlying fetch within streamText → the
-  // fullStream iterator throws and we finalize the partial state below.
+  // `abortSignal` is wired to a combined controller that aborts when EITHER:
+  //   1. Temporal cancellation (user Stop click) fires ctx.cancellationSignal
+  //   2. First-token timeout fires (no token received within 60s)
+  // This ensures the stream doesn't hang forever on unresponsive providers.
+  // Combine three abort sources into one signal:
+  //   1. Temporal cancellation (user Stop)
+  //   2. First-token timeout (model unresponsive)
+  // AbortSignal.any() merges them — whichever fires first aborts the fetch.
+  const timeoutSignal = AbortSignal.timeout(FIRST_TOKEN_TIMEOUT_MS);
+  const combinedSignal = AbortSignal.any([ctx.cancellationSignal, timeoutSignal]);
+
   const result = streamText({
     model,
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     messages: aiMessages as any,
     maxOutputTokens: params.maxTokens ?? 4096,
     tools: toolSet,
-    abortSignal: ctx.cancellationSignal,
+    abortSignal: combinedSignal,
   });
 
   // Collect the full response while broadcasting deltas

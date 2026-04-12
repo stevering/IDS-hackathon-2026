@@ -183,8 +183,8 @@ select {
 }
 
 .guardian-send-btn-idle:disabled {
-  opacity: 0.25;
-  cursor: not-allowed;
+  opacity: 0.15;
+  pointer-events: none;
 }
 
 .guardian-send-btn-idle:not(:disabled):hover {
@@ -207,19 +207,69 @@ select {
     rgba(221, 214, 254, 0.95) 70%,
     rgba(196, 181, 253, 0.9) 100%
   );
-  border: 1px solid rgba(167, 139, 250, 0.55);
-  box-shadow:
-    0 0 0 1px rgba(167, 139, 250, 0.3),
-    0 0 18px rgba(167, 139, 250, 0.25),
-    inset 0 -2px 6px rgba(124, 58, 237, 0.08);
+  border: 2px solid transparent;
   cursor: pointer;
   padding: 0;
   flex-shrink: 0;
   transition:
     background 0.25s ease,
-    border-color 0.25s ease,
-    box-shadow 0.25s ease,
     transform 0.15s ease;
+}
+
+/* Rotating aurora ring around the mascot button during generation */
+.guardian-send-btn-generating::before {
+  content: '';
+  position: absolute;
+  inset: -3px;
+  border-radius: 50%;
+  background: conic-gradient(
+    from var(--aurora-angle),
+    #a78bfa 0%,
+    #60a5fa 20%,
+    #34d399 40%,
+    #fbbf24 60%,
+    #f472b6 80%,
+    #a78bfa 100%
+  );
+  z-index: -1;
+  animation:
+    guardianAuroraSpin 3s linear infinite,
+    guardianBtnRingPulse 2.6s ease-in-out infinite;
+  pointer-events: none;
+}
+
+/* Soft outer glow that pulses with the ring */
+.guardian-send-btn-generating::after {
+  content: '';
+  position: absolute;
+  inset: -6px;
+  border-radius: 50%;
+  background: conic-gradient(
+    from var(--aurora-angle),
+    #a78bfa 0%,
+    #60a5fa 20%,
+    #34d399 40%,
+    #fbbf24 60%,
+    #f472b6 80%,
+    #a78bfa 100%
+  );
+  filter: blur(8px);
+  opacity: 0.4;
+  z-index: -2;
+  animation:
+    guardianAuroraSpin 3s linear infinite,
+    guardianBtnGlowPulse 2.6s ease-in-out infinite;
+  pointer-events: none;
+}
+
+@keyframes guardianBtnRingPulse {
+  0%, 100% { opacity: 0.7; }
+  50%      { opacity: 1; }
+}
+
+@keyframes guardianBtnGlowPulse {
+  0%, 100% { opacity: 0.25; transform: scale(0.95); }
+  50%      { opacity: 0.5; transform: scale(1.05); }
 }
 
 .guardian-send-btn:disabled {
@@ -238,10 +288,30 @@ select {
     rgba(254, 242, 242, 0.98) 0%,
     rgba(254, 202, 202, 0.95) 100%
   );
-  border-color: rgba(239, 68, 68, 0.7);
-  box-shadow:
-    0 0 0 1px rgba(239, 68, 68, 0.4),
-    0 0 18px rgba(239, 68, 68, 0.4);
+}
+
+.guardian-send-btn-generating:hover::before {
+  background: conic-gradient(
+    from var(--aurora-angle),
+    #ef4444 0%,
+    #f87171 25%,
+    #dc2626 50%,
+    #f87171 75%,
+    #ef4444 100%
+  );
+  opacity: 1;
+}
+
+.guardian-send-btn-generating:hover::after {
+  background: conic-gradient(
+    from var(--aurora-angle),
+    #ef4444 0%,
+    #f87171 25%,
+    #dc2626 50%,
+    #f87171 75%,
+    #ef4444 100%
+  );
+  opacity: 0.5;
 }
 
 .guardian-mascot-wrap,

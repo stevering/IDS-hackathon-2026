@@ -32,6 +32,17 @@ type ChatMessageLike = {
   }>;
 };
 
+/** Map workflow phase broadcast to a human-readable label. */
+function labelForWorkflowPhase(phase: string): string {
+  switch (phase) {
+    case "loading_history": return "Loading conversation…";
+    case "discovering_tools": return "Discovering tools…";
+    case "connecting_figma": return "Connecting to Figma…";
+    case "waiting_for_model": return "Waiting for model…";
+    default: return "Preparing context…";
+  }
+}
+
 function labelFor(type: PhaseType, toolName: string | null | undefined): string {
   switch (type) {
     case "prepare":
@@ -48,6 +59,7 @@ function labelFor(type: PhaseType, toolName: string | null | undefined): string 
 export function useGuardianPhase(
   status: ChatWorkflowStatus,
   messages: ChatMessageLike[],
+  workflowPhase?: string | null,
 ): { currentPhase: Phase | null; history: PhaseHistoryEntry[] } {
   // Extract the signals from the messages array. useMemo keeps this cheap
   // to recompute — the object is re-created on every render but the
@@ -59,6 +71,8 @@ export function useGuardianPhase(
 
     const lastPartType = lastPart?.type;
     const lastPartState = lastPart?.state;
+    // Check if the last text part has actual content (not just a placeholder)
+    const lastPartHasContent = lastPart?.type === "text" && typeof lastPart.text === "string" && lastPart.text.length > 0;
 
     let currentToolName: string | null = null;
     if (status === "tool_executing") {
@@ -76,10 +90,10 @@ export function useGuardianPhase(
       }
     }
 
-    return { lastPartType, lastPartState, currentToolName };
+    return { lastPartType, lastPartState, lastPartHasContent, currentToolName };
   }, [messages, status]);
 
-  const { lastPartType, lastPartState, currentToolName } = signals;
+  const { lastPartType, lastPartState, lastPartHasContent, currentToolName } = signals;
 
   const [currentPhase, setCurrentPhase] = useState<Phase | null>(null);
   const [history, setHistory] = useState<PhaseHistoryEntry[]>([]);
@@ -98,7 +112,9 @@ export function useGuardianPhase(
     } else if (status === "streaming") {
       if (lastPartType === "reasoning" && lastPartState === "streaming") {
         nextType = "reason";
-      } else if (lastPartType === "text" && lastPartState === "streaming") {
+      } else if (lastPartType === "text" && lastPartState === "streaming" && lastPartHasContent) {
+        // Only show "Writing response" when actual text has arrived,
+        // not for the empty placeholder added at stream start.
         nextType = "write";
       } else {
         nextType = "prepare";
@@ -136,7 +152,10 @@ export function useGuardianPhase(
       return;
     }
 
-    const nextLabel = labelFor(nextType, currentToolName);
+    // When in "prepare" phase and we have a specific workflow phase, use its label
+    const nextLabel = nextType === "prepare" && workflowPhase
+      ? labelForWorkflowPhase(workflowPhase)
+      : labelFor(nextType, currentToolName);
 
     if (!prev || prev.type !== nextType || prev.label !== nextLabel) {
       // Phase changed — push the previous one into history (unless we
@@ -160,7 +179,7 @@ export function useGuardianPhase(
       };
       setCurrentPhase({ type: nextType, label: nextLabel });
     }
-  }, [status, lastPartType, lastPartState, currentToolName]);
+  }, [status, lastPartType, lastPartState, lastPartHasContent, currentToolName, workflowPhase]);
 
   return { currentPhase, history };
 }

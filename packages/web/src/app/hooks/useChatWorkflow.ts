@@ -68,6 +68,8 @@ export type UseChatWorkflowReturn = {
   /** Discovery failures surfaced from the Temporal worker (MCP instances that couldn't be reached). */
   mcpDiscoveryFailures: MCPDiscoveryFailure[];
   clearMCPDiscoveryFailures: () => void;
+  /** Current workflow phase broadcast by the Temporal workflow (e.g. "discovering_tools", "waiting_for_model"). */
+  workflowPhase: string | null;
 };
 
 // ---------------------------------------------------------------------------
@@ -136,6 +138,7 @@ export function useChatWorkflow({
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [status, setStatus] = useState<ChatWorkflowStatus>("idle");
   const [error, setError] = useState<string | undefined>();
+  const [workflowPhase, setWorkflowPhase] = useState<string | null>(null);
   // `loaded` flips true once `loadAndRecover` has completed its first pass
   // (success or failure) for the current conversation. UI code gates the
   // empty-state "New conversation" splash on this so it doesn't flash
@@ -752,6 +755,10 @@ export function useChatWorkflow({
         setError(errMsg);
         setStatus("idle");
       })
+      .on("broadcast", { event: "phase_update" }, (payload) => {
+        const { phase } = payload.payload as { phase: string };
+        setWorkflowPhase(phase);
+      })
       .on("broadcast", { event: "workflow_error" }, (payload) => {
         // Broadcast from chat.ts top-level catch for any error NOT already
         // surfaced as a stream_error (e.g. loadChatHistory crashed, an MCP
@@ -780,6 +787,7 @@ export function useChatWorkflow({
     if (!conversationId || !enabled) return;
 
     setError(undefined);
+    setWorkflowPhase(null);
     benchmarkRef.current = { sendAt: Date.now(), firstDeltaAt: 0, completeAt: 0 };
 
     // Add user message to UI immediately
@@ -889,7 +897,7 @@ export function useChatWorkflow({
     };
   }, []);
 
-  return { messages, sendMessage, cancelMessage, status, error, loaded, setMessages, mcpDiscoveryFailures, clearMCPDiscoveryFailures };
+  return { messages, sendMessage, cancelMessage, status, error, loaded, setMessages, mcpDiscoveryFailures, clearMCPDiscoveryFailures, workflowPhase };
 }
 
 // ---------------------------------------------------------------------------

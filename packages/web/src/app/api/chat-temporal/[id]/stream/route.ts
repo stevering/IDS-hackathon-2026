@@ -152,12 +152,37 @@ export async function GET(
               reason = resultErr instanceof Error ? resultErr.message : String(resultErr);
             }
             log.warn("workflow ended abnormally", { status: statusName, reason });
-            send("workflow_error", { status: statusName, error: reason });
+            // Broadcast on Supabase Realtime so the frontend hook picks it up
+            const errChannel = sb.channel(channelName);
+            await errChannel.subscribe();
+            await errChannel.send({
+              type: "broadcast",
+              event: "workflow_error",
+              payload: { status: statusName, error: reason },
+            });
+            errChannel.unsubscribe();
             cleanup();
             return;
           }
 
-          if (statusName === "COMPLETED" || statusName === "CANCELLED") {
+          if (statusName === "CANCELLED") {
+            // Workflow was cancelled (user Stop, Temporal CLI, or external).
+            // Broadcast workflow_error on the Supabase Realtime channel so the
+            // frontend hook picks it up (it doesn't listen to SSE-only events).
+            log.warn("workflow cancelled", { status: statusName });
+            const broadcastChannel = sb.channel(channelName);
+            await broadcastChannel.subscribe();
+            await broadcastChannel.send({
+              type: "broadcast",
+              event: "workflow_error",
+              payload: { status: statusName, error: "Generation was cancelled." },
+            });
+            broadcastChannel.unsubscribe();
+            cleanup();
+            return;
+          }
+
+          if (statusName === "COMPLETED") {
             send("workflow_completed", { status: statusName });
             cleanup();
           }
@@ -165,7 +190,16 @@ export async function GET(
           // Workflow not found or describe() error — treat as an error we
           // can't diagnose, but tell the client to stop waiting.
           log.warn("workflow poll failed", { error: String(pollErr) });
-          send("workflow_error", { status: "UNKNOWN", error: pollErr instanceof Error ? pollErr.message : String(pollErr) });
+          const errMsg = pollErr instanceof Error ? pollErr.message : String(pollErr);
+          // Broadcast on Supabase Realtime so the frontend hook picks it up
+          const pollErrChannel = sb.channel(channelName);
+          await pollErrChannel.subscribe();
+          await pollErrChannel.send({
+            type: "broadcast",
+            event: "workflow_error",
+            payload: { status: "UNKNOWN", error: errMsg },
+          });
+          pollErrChannel.unsubscribe();
           cleanup();
         }
       }, WORKFLOW_POLL_MS);

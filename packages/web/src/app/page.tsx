@@ -2506,6 +2506,7 @@ export default function Home() {
   const guardianPhase = useGuardianPhase(
     chatWorkflow.status,
     messages as unknown as Parameters<typeof useGuardianPhase>[1],
+    chatWorkflow.workflowPhase,
   );
 
   const handleScroll = () => {
@@ -3605,7 +3606,7 @@ export default function Home() {
                     e.target.style.height = Math.min(e.target.scrollHeight, maxH) + "px";
                   }}
                   onKeyDown={(e) => {
-                    if (e.key === "Enter" && !e.shiftKey) {
+                    if (e.key === "Enter" && !e.shiftKey && !isLoading) {
                       e.preventDefault();
                       onSubmit(e);
                     }

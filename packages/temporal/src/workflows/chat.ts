@@ -222,7 +222,19 @@ export async function chatWorkflow(params: ChatWorkflowParams): Promise<void> {
   }
 
   async function runChatWorkflowBody() {
+  // ── Broadcast phase updates so the frontend shows accurate status ──────
+  const broadcastPhase = async (phase: string) => {
+    try {
+      await broadcastChatEvent({
+        conversationId: params.conversationId,
+        event: "phase_update",
+        payload: { phase },
+      });
+    } catch { /* non-fatal */ }
+  };
+
   // ── Load conversation history ───────────────────────────────────────────
+  await broadcastPhase("loading_history");
   const history = await loadChatHistory({
     conversationId: params.conversationId,
     userId: params.userId,
@@ -240,6 +252,7 @@ export async function chatWorkflow(params: ChatWorkflowParams): Promise<void> {
   }
 
   // ── Discover MCP tools ──────────────────────────────────────────────────
+  await broadcastPhase("discovering_tools");
   // V2 path: instance-based, when focus IDs are provided by the TargetSelector.
   // V1 fallback: legacy mcpServerIds-based (during transition).
   let mcpTools: LLMToolDefinition[] = [];
@@ -281,6 +294,7 @@ export async function chatWorkflow(params: ChatWorkflowParams): Promise<void> {
     ? instanceManifest.some((e) => e.presetType === "figma_console")
     : (params.mcpServerIds ?? []).includes("figma_console");
   if (hasFigmaConsoleCloud && params.figmaPluginClientId) {
+    await broadcastPhase("connecting_figma");
     try {
       await pairFCCloudRelay({
         userId: params.userId,
@@ -420,6 +434,7 @@ export async function chatWorkflow(params: ChatWorkflowParams): Promise<void> {
       const requestId = `chat-${workflowId}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
       streamingRequestId = requestId;
 
+      await broadcastPhase("waiting_for_model");
       let llmResult: LLMCallResult;
       try {
         llmResult = await callLLMStreaming({
