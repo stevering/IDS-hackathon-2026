@@ -8,6 +8,7 @@ import {
   scopeOf,
 } from "@guardian/orchestrations/mcp";
 import { ensureMCPInstance } from "@/lib/mcp-instance-sync";
+import { broadcastInstanceChange } from "@/lib/mcp-instance-broadcast";
 
 /**
  * MCP Instances CRUD API.
@@ -30,7 +31,7 @@ export async function GET() {
   let { data: instances, error: instErr } = await supabase
     .from("user_mcp_instances")
     .select(
-      "id, preset_type, category, scope, label, display_name, device_id, config, connection_server_id, enabled, created_at, updated_at",
+      "id, preset_type, category, scope, label, display_name, device_id, config, connection_server_id, enabled, dismissed, created_at, updated_at",
     )
     .order("created_at", { ascending: true });
 
@@ -70,7 +71,7 @@ export async function GET() {
       const { data: refreshed } = await supabase
         .from("user_mcp_instances")
         .select(
-          "id, preset_type, category, scope, label, display_name, device_id, config, connection_server_id, enabled, created_at, updated_at",
+          "id, preset_type, category, scope, label, display_name, device_id, config, connection_server_id, enabled, dismissed, created_at, updated_at",
         )
         .order("created_at", { ascending: true });
       if (refreshed) instances = refreshed;
@@ -154,6 +155,7 @@ export async function GET() {
         : null,
       config: inst.config,
       enabled: inst.enabled,
+      dismissed: (inst as { dismissed?: boolean }).dismissed ?? false,
       ready,
       created_at: inst.created_at,
       updated_at: inst.updated_at,
@@ -266,6 +268,23 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 
+  // Notify the companion (if local) so it can hot-add the client.
+  if (scope === "local" && deviceId) {
+    await broadcastInstanceChange(user.id, {
+      type: "instance-changed",
+      deviceId,
+      action: "added",
+      instance: {
+        instanceId: data.id as string,
+        label: data.label as string,
+        presetType,
+        url: (config as { url?: string })?.url,
+        transport: preset.transport as "http" | "sse" | "stdio" | undefined,
+        enabled: true,
+      },
+    });
+  }
+
   return NextResponse.json({ id: data.id, label: data.label }, { status: 201 });
 }
 
@@ -294,6 +313,7 @@ export async function PATCH(req: Request) {
   }
   if (body.display_name !== undefined) updates.display_name = body.display_name;
   if (body.enabled !== undefined) updates.enabled = body.enabled;
+  if (body.dismissed !== undefined) updates.dismissed = body.dismissed;
   if (body.config !== undefined) updates.config = body.config;
 
   if (Object.keys(updates).length === 0) {
@@ -315,6 +335,33 @@ export async function PATCH(req: Request) {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 
+  // If enabled/label/config changed on a local instance, notify the companion.
+  if (body.enabled !== undefined || body.label !== undefined || body.config !== undefined) {
+    const { data: inst } = await supabase
+      .from("user_mcp_instances")
+      .select("id, scope, device_id, preset_type, label, config, enabled")
+      .eq("id", instanceId)
+      .maybeSingle();
+
+    if (inst && inst.scope === "local" && inst.device_id) {
+      const preset = BUILTIN_PRESETS[inst.preset_type as string];
+      await broadcastInstanceChange(user.id, {
+        type: "instance-changed",
+        deviceId: inst.device_id as string,
+        action: "toggled",
+        instanceId: inst.id as string,
+        instance: {
+          instanceId: inst.id as string,
+          label: inst.label as string,
+          presetType: inst.preset_type as string,
+          url: (inst.config as { url?: string } | null)?.url,
+          transport: preset?.transport as "http" | "sse" | "stdio" | undefined,
+          enabled: inst.enabled as boolean,
+        },
+      });
+    }
+  }
+
   return NextResponse.json({ ok: true });
 }
 
@@ -333,7 +380,7 @@ export async function DELETE(req: Request) {
   // Fetch instance to check if we need to revoke a cloud token
   const { data: inst } = await supabase
     .from("user_mcp_instances")
-    .select("connection_server_id, scope")
+    .select("connection_server_id, scope, device_id")
     .eq("id", instanceId)
     .eq("user_id", user.id)
     .single();
@@ -359,6 +406,16 @@ export async function DELETE(req: Request) {
     .eq("user_id", user.id);
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+
+  // Notify the companion (if local) so it can drop the client.
+  if (inst.scope === "local" && inst.device_id) {
+    await broadcastInstanceChange(user.id, {
+      type: "instance-changed",
+      deviceId: inst.device_id as string,
+      action: "removed",
+      instanceId,
+    });
+  }
 
   // Also clean up category defaults pointing to this instance
   try {

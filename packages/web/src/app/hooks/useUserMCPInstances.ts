@@ -35,6 +35,8 @@ export type MCPInstance = {
   } | null;
   config: Record<string, unknown>;
   enabled: boolean;
+  /** True if the user explicitly ignored this discovered service (enabled=false only). */
+  dismissed: boolean;
   ready: boolean;
   created_at: string;
   updated_at: string;

@@ -7,6 +7,7 @@ import { ConnectedClients } from "@/components/ConnectedClients";
 import { GlassDropdown } from "@/components/GlassDropdown";
 import { LegalFooter } from "@/components/LegalFooter";
 import { useUserMCPInstances, type CloudPresetView } from "@/app/hooks/useUserMCPInstances";
+import { LocalServicesSection } from "./LocalServicesSection";
 
 type StoredKey = {
   id: string;
@@ -1242,45 +1243,8 @@ export default function AccountPage() {
         )}
       </section>
 
-      {/* ── Local Services (Guardian Bridge) ── */}
-      <section className="mb-8">
-        <h2 className="text-sm font-medium mb-1">Local services</h2>
-        <p className="text-xs text-white/40 mb-4">
-          Local MCP servers running on your machine, proxied via the Guardian overlay.
-        </p>
-
-        {mcpHook.localInstances.length === 0 ? (
-          <div className="px-4 py-6 rounded-xl bg-white/[0.04] border border-white/[0.08] text-center">
-            <p className="text-sm text-white/30 mb-2">No local services configured</p>
-            <p className="text-xs text-white/20">
-              Install and run the Guardian overlay on your machine, then pair it from the overlay settings.
-            </p>
-          </div>
-        ) : (
-          <div className="space-y-2">
-            {mcpHook.localInstances.map((inst) => (
-              <div
-                key={inst.id}
-                className="flex items-center justify-between gap-3 px-4 py-3 rounded-xl bg-white/[0.06] border border-white/[0.1]"
-              >
-                <div className="flex items-center gap-2.5 min-w-0">
-                  <span className={`shrink-0 w-2 h-2 rounded-full ${inst.ready ? "bg-emerald-400" : "bg-white/20"}`} />
-                  <div className="min-w-0">
-                    <span className="text-sm font-medium">{inst.display_name ?? inst.label}</span>
-                    <p className="text-[11px] text-white/30 truncate">
-                      {inst.device ? `${inst.device.name} ${inst.device.online ? "" : "(offline)"}` : inst.preset_type}
-                      {inst.ready && ` — ${inst.tool_prefix}*`}
-                    </p>
-                  </div>
-                </div>
-                <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-white/5 text-white/30 font-mono">
-                  {inst.label}
-                </span>
-              </div>
-            ))}
-          </div>
-        )}
-      </section>
+      {/* ── Local Services (Desktop Companion bridge) ── */}
+      <LocalServicesSection />
 
       {/* ── Developer settings ── */}
       <section className="mb-8">

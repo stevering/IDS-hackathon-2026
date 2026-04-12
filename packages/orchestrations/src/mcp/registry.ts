@@ -61,6 +61,22 @@ export type BuiltinPreset = {
   /** Local stdio only: arguments passed to the command. */
   stdio_args?: string[];
   /**
+   * Local http/sse only: ports to probe on 127.0.0.1 to detect a running
+   * instance. The Desktop Companion scans these periodically and reports
+   * found services in its heartbeat as "discovered". Omit for stdio presets
+   * (there's nothing to probe — they're always spawn-on-demand).
+   *
+   * Examples:
+   *   figma_desktop → [3845]
+   *   code_editor   → [3846, 63342, 3847, 52698]  (Cursor, IntelliJ, VSCode-Continue, Zed)
+   */
+  scan_ports?: number[];
+  /**
+   * Local http/sse only: path appended to the probed URL.
+   * Defaults to "/mcp" for http, "/sse" for sse.
+   */
+  scan_path?: string;
+  /**
    * Template presets can produce multiple instances on the same device
    * (e.g. code_editor: Cursor + VS Code + IntelliJ in parallel).
    * Non-template presets are singletons per (user, device) for locals
@@ -145,6 +161,8 @@ export const BUILTIN_PRESETS: Record<string, BuiltinPreset> = {
     description:
       "Local MCP exposed by the Figma Desktop app — only available on machines with Figma Desktop running",
     default_local_url: "http://127.0.0.1:3845/mcp",
+    scan_ports: [3845],
+    scan_path: "/mcp",
     is_template: false,
   },
   figma_console_local: {
@@ -174,6 +192,10 @@ export const BUILTIN_PRESETS: Record<string, BuiltinPreset> = {
     description:
       "Local MCP exposed by an IDE (Cursor, VS Code, IntelliJ, Claude Code, Zed, ...). Users can configure multiple instances per device.",
     default_local_url: "http://127.0.0.1:3846/sse",
+    // Common IDE MCP ports — the companion probes each one; any that responds
+    // is reported as a discovered instance of this preset.
+    scan_ports: [3846, 63342, 3847, 52698],
+    scan_path: "/sse",
     is_template: true,
   },
 };

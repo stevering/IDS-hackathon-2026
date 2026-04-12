@@ -26,6 +26,8 @@ export function devicesChannelName(userId: string): string {
 export const MCP_REQUEST_EVENT = "mcp-request" as const;
 export const MCP_RESPONSE_EVENT = "mcp-response" as const;
 export const BRIDGE_HELLO_EVENT = "bridge-hello" as const;
+/** Broadcast from the webapp to all user companions when a local instance is added/removed/toggled. */
+export const INSTANCE_CHANGED_EVENT = "instance-changed" as const;
 
 // ─── Request / Response (worker ↔ overlay) ──────────────────────────────────
 
@@ -82,6 +84,12 @@ export type BridgeHeartbeat = {
   osInfo: string;
   /** Per-instance status snapshot at the moment of publishing. */
   instances: BridgeHeartbeatInstance[];
+  /**
+   * Services detected by port scanning that are NOT yet registered as
+   * user_mcp_instances (i.e. the user hasn't clicked Enable or Ignore yet).
+   * The webapp shows these under "DISCOVERED" in the Local services section.
+   */
+  discoveredServices?: DiscoveredService[];
   /** epoch ms at publish time, used for staleness detection. */
   publishedAt: number;
 };
@@ -93,6 +101,57 @@ export type BridgeHeartbeatInstance = {
   online: boolean;
   toolCount?: number;
   error?: string;
+};
+
+/**
+ * A service found by port scanning but not yet registered in the DB.
+ * The webapp receives these via the heartbeat and offers [Enable] / [Ignore]
+ * buttons. Once the user clicks Enable, a row is created in user_mcp_instances
+ * and the service moves from `discoveredServices` → `instances` in subsequent
+ * heartbeats.
+ */
+export type DiscoveredService = {
+  /** Matches a preset_type in BUILTIN_PRESETS. */
+  presetType: string;
+  /** URL where the service was found (e.g. "http://127.0.0.1:3845/mcp"). */
+  url: string;
+  /** Stable fingerprint for dedupe across heartbeats — `${presetType}:${url}`. */
+  fingerprint: string;
+  /** Number of tools exposed (from a tools/list probe). */
+  toolCount: number;
+  /** Server name if the MCP server reports one (optional). */
+  serverName?: string;
+};
+
+// ─── Instance change broadcast (webapp → companions) ────────────────────────
+
+/**
+ * Published by the webapp on guardian:devices:${userId} whenever a local
+ * instance is created / updated / removed. The companion with matching
+ * deviceId reacts by hot-adding/removing the client — no restart needed.
+ *
+ * Only local-scope instances trigger this broadcast. Cloud instances don't
+ * need it (they're consumed server-side by the Temporal worker).
+ */
+export type InstanceChangedBroadcast = {
+  type: "instance-changed";
+  /** Target deviceId — companions ignore events for other devices. */
+  deviceId: string;
+  action: "added" | "removed" | "toggled";
+  /**
+   * Full instance descriptor for "added" and "toggled" (when enabled=true).
+   * For "removed" or "toggled" (enabled=false), only `instanceId` is needed.
+   */
+  instance?: {
+    instanceId: string;
+    label: string;
+    presetType: string;
+    url?: string;
+    transport?: "http" | "sse" | "stdio";
+    enabled: boolean;
+  };
+  /** For "removed" and for "toggled"→disabled: which instance to drop. */
+  instanceId?: string;
 };
 
 // ─── Timeout defaults ───────────────────────────────────────────────────────
