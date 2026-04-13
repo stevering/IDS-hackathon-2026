@@ -11,13 +11,15 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@ai-sdk/mcp": "^1.0.32",
+    "@ai-sdk/mcp": "^1.0.36",
     "@guardian/bridge": "workspace:*",
     "@guardian/orchestrations": "workspace:*",
-    "@supabase/supabase-js": "^2.101.1"
+    "@supabase/supabase-js": "^2.101.1",
+    "ws": "^8.20.0"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",
+    "@types/ws": "^8.18.1",
     "electron": "^33.2.0",
     "electron-vite": "^2.3.0",
     "typescript": "^5.7.3",

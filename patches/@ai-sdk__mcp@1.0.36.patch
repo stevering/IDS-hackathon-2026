@@ -1,0 +1,60 @@
+diff --git a/dist/index.js b/dist/index.js
+index 44228946660cd4d66d2c745b7317d5438e381d88..a49d6f8607268dc28d217332b59e3376956c1724 100644
+--- a/dist/index.js
++++ b/dist/index.js
+@@ -1098,7 +1098,7 @@ var SseMCPTransport = class {
+     const headers = {
+       ...this.headers,
+       ...base,
+-      "mcp-protocol-version": LATEST_PROTOCOL_VERSION
++      "mcp-protocol-version": this.protocolVersion ?? LATEST_PROTOCOL_VERSION
+     };
+     if (this.authProvider) {
+       const tokens = await this.authProvider.tokens();
+@@ -1314,7 +1314,7 @@ var HttpMCPTransport = class {
+     const headers = {
+       ...this.headers,
+       ...base,
+-      "mcp-protocol-version": LATEST_PROTOCOL_VERSION
++      "mcp-protocol-version": this.protocolVersion ?? LATEST_PROTOCOL_VERSION
+     };
+     if (this.sessionId) {
+       headers["mcp-session-id"] = this.sessionId;
+@@ -1728,6 +1728,7 @@ var DefaultMCPClient = class {
+         });
+       }
+       this.serverCapabilities = result.capabilities;
++      if (this.transport) { this.transport.protocolVersion = result.protocolVersion; }
+       this._serverInfo = result.serverInfo;
+       await this.notification({
+         method: "notifications/initialized"
+diff --git a/dist/index.mjs b/dist/index.mjs
+index b781835b37a1262510bdd66d8d3b399a076e9d68..6d3c34073a9a6bf1204db9e1deda4a9e78008f79 100644
+--- a/dist/index.mjs
++++ b/dist/index.mjs
+@@ -1068,7 +1068,7 @@ var SseMCPTransport = class {
+     const headers = {
+       ...this.headers,
+       ...base,
+-      "mcp-protocol-version": LATEST_PROTOCOL_VERSION
++      "mcp-protocol-version": this.protocolVersion ?? LATEST_PROTOCOL_VERSION
+     };
+     if (this.authProvider) {
+       const tokens = await this.authProvider.tokens();
+@@ -1288,7 +1288,7 @@ var HttpMCPTransport = class {
+     const headers = {
+       ...this.headers,
+       ...base,
+-      "mcp-protocol-version": LATEST_PROTOCOL_VERSION
++      "mcp-protocol-version": this.protocolVersion ?? LATEST_PROTOCOL_VERSION
+     };
+     if (this.sessionId) {
+       headers["mcp-session-id"] = this.sessionId;
+@@ -1702,6 +1702,7 @@ var DefaultMCPClient = class {
+         });
+       }
+       this.serverCapabilities = result.capabilities;
++      if (this.transport) { this.transport.protocolVersion = result.protocolVersion; }
+       this._serverInfo = result.serverInfo;
+       await this.notification({
+         method: "notifications/initialized"

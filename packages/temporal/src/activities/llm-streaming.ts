@@ -419,13 +419,44 @@ export async function callLLMStreaming(params: LLMStreamingParams): Promise<LLMC
     // Final DB snapshot — mark message as complete
     if (snapshotSupabase && snapshotMessageId) {
       if (toolCalls?.length) {
-        // When LLM returns tool calls, the text is just a preamble (e.g. "✅ Plugin connected! Tool: xxx").
-        // Delete the pre-created message — the tool call will be persisted separately by the workflow.
-        await snapshotSupabase
-          .from("messages")
-          .delete()
-          .eq("id", snapshotMessageId);
-        log.info("deleted intermediate message (has tool calls)", { msgId: snapshotMessageId });
+        // LLM returned tool calls AND possibly some text. The workflow will
+        // persist one assistant message per tool call afterwards (with a
+        // dynamic-tool part). For the pre-tool-call text:
+        //   - If it's non-trivial, keep it as a standalone text message so
+        //     the user sees reasoning like "Je vais vérifier ta sélection…"
+        //     or "Je vois que tu as sélectionné Rond Bleu…" alongside the
+        //     tool-call bubble. Trimming prevents pure whitespace leaks.
+        //   - If it's empty/short (e.g. just "✅" or ""), drop it — the
+        //     tool-call bubble alone carries the semantic content.
+        const meaningful = fullText.trim().length > 4;
+        if (meaningful) {
+          await snapshotSupabase
+            .from("messages")
+            .update({
+              content: fullText,
+              parts: [
+                ...(fullReasoning ? [{ type: "reasoning", text: fullReasoning, state: "done" }] : []),
+                { type: "text", text: fullText, state: "done" },
+              ],
+              metadata: {
+                model: resolved.modelId,
+                reasoning: fullReasoning || undefined,
+                usage: usage ?? undefined,
+                finishReason: finishReason ?? undefined,
+                streaming: false,
+              },
+            })
+            .eq("id", snapshotMessageId);
+          log.info("kept intermediate message (has meaningful text + tool calls)", {
+            msgId: snapshotMessageId, textLen: fullText.length, toolCallCount: toolCalls.length,
+          });
+        } else {
+          await snapshotSupabase
+            .from("messages")
+            .delete()
+            .eq("id", snapshotMessageId);
+          log.info("deleted intermediate message (tool calls, no meaningful text)", { msgId: snapshotMessageId });
+        }
       } else {
         await snapshotSupabase
           .from("messages")

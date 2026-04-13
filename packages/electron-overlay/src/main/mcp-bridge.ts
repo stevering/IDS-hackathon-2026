@@ -15,6 +15,7 @@
  */
 
 import { createClient as createSupabaseClient, type SupabaseClient, type RealtimeChannel } from "@supabase/supabase-js";
+import WebSocket from "ws";
 import { createMCPClient } from "@ai-sdk/mcp";
 import { Experimental_StdioMCPTransport } from "@ai-sdk/mcp/mcp-stdio";
 import { hostname } from "node:os";
@@ -64,7 +65,10 @@ export interface LocalInstanceConfig {
   transport?: "http" | "sse" | "stdio";
 }
 
-const HEARTBEAT_INTERVAL_MS = 30_000;
+// 5s so a freshly-mounted webapp hook (e.g. TargetSelector after navigating
+// back) sees the device as online within ~5s instead of waiting up to 30s for
+// the next broadcast. JSON over WS, cost is negligible.
+const HEARTBEAT_INTERVAL_MS = 5_000;
 const CLIENT_RETRY_DELAY_MS = 5_000;
 /** How often to scan known local ports for new MCP services. */
 const DISCOVERY_SCAN_INTERVAL_MS = 30_000;
@@ -171,14 +175,15 @@ export class GuardianBridge {
       global: config.accessToken
         ? { headers: { Authorization: `Bearer ${config.accessToken}` } }
         : undefined,
+      // Force the `ws` npm package for Realtime instead of relying on whatever
+      // WebSocket global Electron's main process exposes. Observed: with the
+      // Electron-provided WebSocket, `channel.subscribe()` consistently times
+      // out when connecting to Supabase Realtime, even though an identical
+      // supabase-js setup in a pure Node process succeeds. Using `ws` fixes it.
+      realtime: {
+        transport: WebSocket as unknown as typeof globalThis.WebSocket,
+      },
     });
-    // When we have a full Supabase session, set it so auth.getUser() + RLS work.
-    if (config.accessToken && config.supabaseRefreshToken) {
-      this.supabase.auth.setSession({
-        access_token: config.accessToken,
-        refresh_token: config.supabaseRefreshToken,
-      }).catch((e) => console.error("[mcp-bridge] setSession failed:", e));
-    }
   }
 
   // ── Lifecycle ─────────────────────────────────────────────────────────────
@@ -188,12 +193,45 @@ export class GuardianBridge {
     this.running = true;
 
     console.log(`[mcp-bridge] Starting bridge for user=${this.config.userId.slice(0, 8)} device=${this.config.deviceId.slice(0, 8)}`);
+
+    // Set the session SYNCHRONOUSLY before any DB / Realtime call, so the
+    // WS upgrade carries the user JWT. Without this, Realtime rejects the
+    // connection (observed as `Channel subscription failed: TIMED_OUT`) and
+    // inbound MCP requests from Temporal never reach the bridge.
+    if (this.config.accessToken && this.config.supabaseRefreshToken) {
+      try {
+        await this.supabase.auth.setSession({
+          access_token: this.config.accessToken,
+          refresh_token: this.config.supabaseRefreshToken,
+        });
+        // Also explicitly tie Realtime to the JWT (required on some versions of
+        // supabase-js where setSession does not automatically propagate).
+        this.supabase.realtime.setAuth(this.config.accessToken);
+      } catch (e) {
+        console.error("[mcp-bridge] setSession failed:", e);
+      }
+    }
+
+    // Fetch the user's local instances for THIS device from Supabase when we
+    // have an authenticated session. This runs BEFORE initLocalClients so the
+    // pool is populated at boot without depending on the Realtime broadcast
+    // (which can time out if the WS channel isn't subscribed).
+    if (this.config.accessToken) {
+      try {
+        await this.loadInstancesFromDb();
+      } catch (err) {
+        console.error("[mcp-bridge] loadInstancesFromDb failed:", err);
+      }
+    }
+
     console.log(`[mcp-bridge] ${this.config.instances.length} local instance(s) configured`);
 
-    // Create local MCP clients
-    await this.initLocalClients();
-
-    // Subscribe to the device-scoped MCP channel
+    // Subscribe to the device-scoped MCP channel BEFORE spinning up local MCP
+    // clients. initLocalClients keeps long-lived HTTP/SSE connections to
+    // 127.0.0.1 servers (e.g. Figma on 3845) that can saturate Electron's
+    // networking and cause the Supabase Realtime WS upgrade to time out if
+    // opened afterwards. Subscribing first keeps the WS handshake on a clean
+    // connection slot.
     const channelName = mcpChannelName(this.config.userId, this.config.deviceId);
     this.mcpChannel = this.supabase.channel(channelName);
 
@@ -207,16 +245,21 @@ export class GuardianBridge {
       },
     );
 
-    this.mcpChannel.subscribe((status) => {
+    this.mcpChannel.subscribe((status, err) => {
       if (status === "SUBSCRIBED") {
         console.log(`[mcp-bridge] Subscribed to ${channelName}`);
-      } else if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") {
-        console.error(`[mcp-bridge] Channel subscription failed: ${status}`);
+      } else if (status === "CHANNEL_ERROR" || status === "TIMED_OUT" || status === "CLOSED") {
+        console.error(`[mcp-bridge] Channel subscription failed: ${status}`, err ? `err: ${err.message ?? err}` : "");
+      } else {
+        console.log(`[mcp-bridge] mcpChannel status: ${status}`);
       }
     });
 
-    // Start heartbeat
+    // Start heartbeat (subscribes to the devices channel too)
     this.startHeartbeat();
+
+    // Now that both Realtime channels are set up, create the local MCP clients.
+    await this.initLocalClients();
 
     // Start port scan for auto-discovery of local services
     this.startDiscoveryScan();
@@ -254,6 +297,35 @@ export class GuardianBridge {
       console.log(`[mcp-bridge] Closed local client: ${key}`);
     }
     this.localClients.clear();
+  }
+
+  // ── Load user's local instances from Supabase ─────────────────────────────
+  // Reads user_mcp_instances filtered to this device + scope=local + enabled.
+  // Replaces `this.config.instances` with what the DB says, so boot doesn't
+  // depend on INSTANCE_CHANGED_EVENT broadcasts (which can miss if WS is down).
+  private async loadInstancesFromDb(): Promise<void> {
+    const { data, error } = await this.supabase
+      .from("user_mcp_instances")
+      .select("id, preset_type, label, config, scope, enabled, device_id")
+      .eq("user_id", this.config.userId)
+      .eq("device_id", this.config.deviceId)
+      .eq("scope", "local")
+      .eq("enabled", true);
+
+    if (error) {
+      console.error("[mcp-bridge] Failed to load instances from DB:", error.message);
+      return;
+    }
+
+    const fetched: LocalInstanceConfig[] = (data ?? []).map((row) => ({
+      instanceId: row.id,
+      label: row.label,
+      presetType: row.preset_type,
+      url: (row.config as { url?: string } | null)?.url,
+    }));
+
+    console.log(`[mcp-bridge] Loaded ${fetched.length} instance(s) from DB for this device`);
+    this.config.instances = fetched;
   }
 
   // ── Local MCP clients ─────────────────────────────────────────────────────
@@ -447,10 +519,14 @@ export class GuardianBridge {
       },
     );
 
-    this.devicesChannel.subscribe((status) => {
+    this.devicesChannel.subscribe((status, err) => {
       if (status === "SUBSCRIBED") {
         console.log(`[mcp-bridge] Heartbeat channel subscribed: ${channelName}`);
         this.publishHeartbeat(); // immediate first heartbeat
+      } else if (status === "CHANNEL_ERROR" || status === "TIMED_OUT" || status === "CLOSED") {
+        console.error(`[mcp-bridge] Heartbeat channel failed: ${status}`, err ? `err: ${err.message ?? err}` : "");
+      } else {
+        console.log(`[mcp-bridge] devicesChannel status: ${status}`);
       }
     });
 
@@ -524,7 +600,26 @@ export class GuardianBridge {
     this.publishHeartbeat();
   }
 
+  /**
+   * Update user_devices.last_seen_at in the DB so the webapp's REST endpoints
+   * (`/api/user/mcp-instances`, `/api/user/devices`) report the device as online.
+   * Fire-and-forget; failures are non-fatal. Runs on every heartbeat tick.
+   */
+  private touchLastSeen(): void {
+    if (!this.config.accessToken) return; // env-var mode has no session
+    this.supabase
+      .rpc("touch_device_last_seen", { p_device_fingerprint: this.config.deviceFingerprint })
+      .then(({ error }) => {
+        if (error) console.error("[mcp-bridge] touch_device_last_seen failed:", error.message);
+      });
+  }
+
   private publishHeartbeat(): void {
+    // Keep the DB's last_seen_at fresh so REST-driven UIs (TargetSelector,
+    // Local services) show the device as online without waiting for a live
+    // Realtime broadcast.
+    this.touchLastSeen();
+
     const instances: BridgeHeartbeatInstance[] = [];
     for (const entry of this.localClients.values()) {
       instances.push({

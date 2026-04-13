@@ -123,6 +123,21 @@ If any answer is "no", split into two migrations (expand, then contract after ol
 
 If you need a temprary directory for operations, create one here in the project root, in `tmp/`.
 
+## Patched dependencies
+
+### `@ai-sdk/mcp@1.0.36` — MCP protocol version header downgrade
+
+Local patch: `patches/@ai-sdk__mcp@1.0.36.patch` (wired through `pnpm.patchedDependencies` in the root `package.json`).
+
+**Why**: the upstream `HttpMCPTransport` / `SseMCPTransport` hardcode `mcp-protocol-version: <LATEST_PROTOCOL_VERSION>` in every request and never honour the version negotiated during `initialize`. This violates the MCP spec and breaks handshakes with any server that supports a version older than the SDK's latest — notably **Figma Dev Mode MCP** (supports up to `2025-06-18` while the SDK sends `2025-11-25`), which rejects the follow-up `notifications/initialized` with HTTP 400 "Unsupported protocol version".
+
+**What the patch does**: stores `result.protocolVersion` on the transport after init and uses it in `commonHeaders()` (`this.protocolVersion ?? LATEST_PROTOCOL_VERSION`). Aligned with the official `@modelcontextprotocol/sdk` behaviour and the MCP spec:
+> The protocol version sent by the client SHOULD be the one negotiated during initialization.
+
+**Upstream issue**: https://github.com/vercel/ai/issues/14413 — when this is fixed upstream and released, drop the patch and bump the dep.
+
+**Reminder**: if you bump `@ai-sdk/mcp`, `pnpm install` will try to re-apply the patch against the new dist. Expect a conflict on newer versions — either regenerate the patch (`pnpm patch`) against the new source or delete `patches/@ai-sdk__mcp@1.0.36.patch` + the `pnpm.patchedDependencies` entry if the fix landed upstream.
+
 ## LLM call delegation (dev-only)
 
 When the user enables "LLM call delegation" in Account > Developers, orchestration LLM calls are delegated to you. You act as the LLM instead of the AI provider.

@@ -58,6 +58,14 @@ export async function POST(
     isLocalPlugin,
     source,
     keyId,
+    // V2 focus instance IDs from the TargetSelector. When this route has to
+    // spin up a new chatWorkflow (idle timeout, first follow-up after reload,
+    // etc.), these drive the V2 discovery path — without them the workflow
+    // falls back to V1 legacy MCP discovery and the LLM only sees the
+    // hardcoded cloud servers (figma_console, github, guardian), never the
+    // user's selected local instance (e.g. figmadesktop).
+    designInstanceId,
+    codeInstanceId,
   } = body as {
     conversationId: string;
     message: string;
@@ -71,6 +79,8 @@ export async function POST(
     isLocalPlugin?: boolean;
     source?: string;
     keyId?: string;
+    designInstanceId?: string;
+    codeInstanceId?: string;
   };
 
   if (!message) {
@@ -241,6 +251,8 @@ export async function POST(
         systemPrompt,
         mcpServerIds: mcpServerIds ?? [],
         figmaPluginClientId,
+        focusDesignInstanceId: designInstanceId,
+        focusCodeInstanceId: codeInstanceId,
       }],
     });
 

@@ -670,13 +670,25 @@ export function useChatWorkflow({
         const msgId = streamingMsgRef.current.id;
 
         if (hasToolCalls) {
-          // LLM emitted tool calls — remove the intermediate text message.
-          // The LLM often writes tool names in its text output (e.g. "Tool: xxx")
-          // alongside the structured tool call. The tool call will be shown
-          // as a ToolCallBlock, and the final LLM response will have the real content.
-          // Cancel any in-flight smoothing frame; the message is about to disappear.
+          // LLM emitted tool calls. If the intermediate text is meaningful
+          // (real reasoning like "Je vais vérifier ta sélection…"), KEEP it
+          // as its own message so the tool-call bubbles appear below it.
+          // If it's trivial (empty or a short preamble like "Tool: xxx" or "✅"),
+          // drop it — the ToolCallBlock carries the semantics.
+          // Must match the backend rule in llm-streaming.ts (threshold > 4 chars).
+          const meaningful = (content ?? "").trim().length > 4;
           flushSmoothing();
-          setMessages((prev) => prev.filter((m) => m.id !== msgId));
+          if (meaningful) {
+            setMessages((prev) =>
+              prev.map((m) =>
+                m.id === msgId
+                  ? { ...m, content: content ?? "", parts: buildFinalParts(content ?? "", reasoning) }
+                  : m,
+              ),
+            );
+          } else {
+            setMessages((prev) => prev.filter((m) => m.id !== msgId));
+          }
           setStatus("tool_executing");
 
           // Switch streamingMsgRef — tool_call_start/result events will create
@@ -825,6 +837,10 @@ export function useChatWorkflow({
             model,
             mcpServerIds,
             figmaPluginClientId,
+            // Forwarded so /message can reapply V2 focus selection when it
+            // has to spin up a new chatWorkflow after idle timeout.
+            designInstanceId,
+            codeInstanceId,
             ...dynamicContext,
           }),
         });
