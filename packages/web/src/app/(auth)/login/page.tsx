@@ -133,7 +133,10 @@ export default function LoginPage() {
       setError("Incorrect email or password");
       setLoading(false);
     } else {
-      window.location.href = "/";
+      const nextParam = new URLSearchParams(window.location.search).get("next");
+      // Only accept same-origin relative paths to avoid open-redirect.
+      const safeNext = nextParam && nextParam.startsWith("/") && !nextParam.startsWith("//") ? nextParam : "/";
+      window.location.href = safeNext;
     }
   }
 

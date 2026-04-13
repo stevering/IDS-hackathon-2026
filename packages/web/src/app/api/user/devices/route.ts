@@ -29,6 +29,27 @@ export async function GET() {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 
+  // Join active OAuth refresh tokens per device to surface the pairing state
+  // (latest last_used_at). We use the service client because oauth_refresh_tokens
+  // is service-role only. This is safe — we filter by the authenticated user's
+  // id so no cross-user data can leak.
+  const { createServiceClient } = await import("@/lib/supabase/service");
+  const admin = createServiceClient();
+  const { data: grants } = await admin
+    .from("oauth_refresh_tokens")
+    .select("device_id, last_used_at, revoked_at")
+    .eq("user_id", user.id)
+    .is("revoked_at", null);
+
+  const grantByDevice = new Map<string, string | null>();
+  for (const g of grants ?? []) {
+    if (!g.device_id) continue;
+    const prev = grantByDevice.get(g.device_id);
+    if (!prev || (g.last_used_at && g.last_used_at > prev)) {
+      grantByDevice.set(g.device_id, g.last_used_at);
+    }
+  }
+
   const now = Date.now();
   const devices = (data ?? []).map((d) => ({
     id: d.id,
@@ -40,6 +61,8 @@ export async function GET() {
     created_at: d.created_at,
     online:
       now - new Date(d.last_seen_at as string).getTime() < DEVICE_ONLINE_TTL_MS,
+    oauth_paired: grantByDevice.has(d.id),
+    oauth_last_used_at: grantByDevice.get(d.id) ?? null,
   }));
 
   return NextResponse.json({ devices });

@@ -35,7 +35,7 @@ import {
   type BridgeHeartbeatInstance,
   type DiscoveredService,
   type InstanceChangedBroadcast,
-} from "@guardian/orchestrations";
+} from "@guardian/orchestrations/mcp";
 
 // ---------------------------------------------------------------------------
 // Config
@@ -47,6 +47,10 @@ export interface BridgeConfig {
   deviceFingerprint: string;
   supabaseUrl: string;
   supabaseAnonKey: string;
+  /** OAuth access_token — when set, Realtime and API calls are authenticated. */
+  accessToken?: string;
+  /** Supabase refresh_token — enables auto-refresh of access_token. */
+  supabaseRefreshToken?: string;
   instances: LocalInstanceConfig[];
 }
 
@@ -162,7 +166,19 @@ export class GuardianBridge {
 
   constructor(config: BridgeConfig) {
     this.config = config;
-    this.supabase = createSupabaseClient(config.supabaseUrl, config.supabaseAnonKey);
+    this.supabase = createSupabaseClient(config.supabaseUrl, config.supabaseAnonKey, {
+      auth: { persistSession: false, autoRefreshToken: !!config.supabaseRefreshToken },
+      global: config.accessToken
+        ? { headers: { Authorization: `Bearer ${config.accessToken}` } }
+        : undefined,
+    });
+    // When we have a full Supabase session, set it so auth.getUser() + RLS work.
+    if (config.accessToken && config.supabaseRefreshToken) {
+      this.supabase.auth.setSession({
+        access_token: config.accessToken,
+        refresh_token: config.supabaseRefreshToken,
+      }).catch((e) => console.error("[mcp-bridge] setSession failed:", e));
+    }
   }
 
   // ── Lifecycle ─────────────────────────────────────────────────────────────
@@ -587,6 +603,7 @@ export class GuardianBridge {
    */
   private async runDiscoveryScan(): Promise<void> {
     const next = new Map<string, DiscoveredService>();
+    const attempts: Array<{ url: string; ok: boolean; error?: string }> = [];
 
     const probes: Array<Promise<void>> = [];
     for (const preset of Object.values(BUILTIN_PRESETS)) {
@@ -601,9 +618,14 @@ export class GuardianBridge {
         probes.push(
           this.probeService(preset.preset_type, transportType, url)
             .then((found) => {
-              if (found) next.set(found.fingerprint, found);
+              if (found) {
+                next.set(found.fingerprint, found);
+                attempts.push({ url, ok: true });
+              } else {
+                attempts.push({ url, ok: false, error: "probe returned undefined" });
+              }
             })
-            .catch(() => { /* port closed or not an MCP server */ }),
+            .catch((e) => { attempts.push({ url, ok: false, error: String(e?.message ?? e) }); }),
         );
       }
     }
@@ -611,8 +633,15 @@ export class GuardianBridge {
     await Promise.allSettled(probes);
     this.discoveredServices = next;
 
+    const summary = `${next.size}/${attempts.length} services found`;
     if (next.size > 0) {
-      console.log(`[mcp-bridge] Discovery: ${next.size} service(s) on local ports`);
+      console.log(`[mcp-bridge] Discovery: ${summary}`);
+    } else {
+      // Print once per scan so you can see WHY nothing was discovered.
+      console.log(`[mcp-bridge] Discovery: ${summary}. Attempts:`);
+      for (const a of attempts) {
+        console.log(`  ${a.ok ? "✓" : "✗"} ${a.url}${a.error ? " — " + a.error : ""}`);
+      }
     }
   }
 
@@ -645,8 +674,11 @@ export class GuardianBridge {
 
       const toolCount = Object.keys(tools as Record<string, unknown>).length;
       return { presetType, url, fingerprint, toolCount };
-    } catch {
-      return undefined;
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      // Re-throw so the scan loop's error bucket surfaces the real reason
+      // (connection refused, 404, wrong transport, timeout, etc.).
+      throw new Error(msg);
     } finally {
       try { await client?.close?.(); } catch { /* ignore */ }
     }

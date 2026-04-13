@@ -72,6 +72,7 @@ When pushing code that includes DB migrations, follow this order:
    - Test the affected features (account page, chat, etc.)
 
 **Important rules**:
+- **NEVER write a `try{} catch{}` without logging the error in the `catch`
 - **NEVER apply `supabase/local-only/*` to cloud** — those are local Docker workarounds only.
 - **Migration order matters**: if migration N+1 depends on N, apply them sequentially.
 - **Rétrocompatibilité**: prefer `ADD COLUMN IF NOT EXISTS`, `CREATE OR REPLACE`, `DROP IF EXISTS` to avoid errors if re-applied.

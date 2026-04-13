@@ -7,7 +7,11 @@ export default defineConfig({
     // dependencies and externalizes it. Electron resolves it at runtime via the
     // pnpm symlink node_modules/@guardian/bridge → packages/bridge/dist/index.js
     // This avoids bundling ws and its optional deps (bufferutil, utf-8-validate).
-    plugins: [externalizeDepsPlugin()],
+    //
+    // @guardian/orchestrations has no dist build (tsc --noEmit) and exports .ts
+    // directly, so Node ESM can't load it at runtime. Force it to be bundled by
+    // vite instead of externalized.
+    plugins: [externalizeDepsPlugin({ exclude: ["@guardian/orchestrations"] })],
     build: {
       rollupOptions: {
         input: resolve(__dirname, "src/main/index.ts"),
@@ -15,7 +19,7 @@ export default defineConfig({
     },
   },
   preload: {
-    plugins: [externalizeDepsPlugin()],
+    plugins: [externalizeDepsPlugin({ exclude: ["@guardian/orchestrations"] })],
     build: {
       rollupOptions: {
         input: resolve(__dirname, "src/preload/index.ts"),

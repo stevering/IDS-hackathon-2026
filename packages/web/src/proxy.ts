@@ -36,6 +36,7 @@ const PUBLIC_AUTH_ROUTES = [
   "/api/signup/request-reinvite",  // Re-invite request — public, checks beta_invites table
   "/api/signup/check-invite",      // Check invite status — public
   "/api/mcp/oauth",                // MCP OAuth proxy endpoints (authorize, token, register)
+  "/api/oauth",                    // Guardian OAuth AS (token, revoke) — PKCE-protected, called by desktop companion
   "/api/mcp",                      // MCP server — handles its own auth (Bearer JWT)
   "/.well-known",                  // OAuth/MCP discovery endpoints
 ];
@@ -51,7 +52,7 @@ function getMcpCodeUrl(request: NextRequest): string | undefined {
 }
 
 // Pages accessible without being logged in
-const PUBLIC_PAGES = ["/login", "/signup", "/oauth/consent", "/auth/callback", "/privacy"];
+const PUBLIC_PAGES = ["/login", "/signup", "/oauth/consent", "/oauth/authorize", "/auth/callback", "/privacy"];
 
 // Pages that require auth but NOT a completed profile
 const ONBOARDING_PAGES = ["/signup/complete"];

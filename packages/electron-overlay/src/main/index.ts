@@ -15,7 +15,23 @@ import { execSync } from "child_process";
 import { readFileSync, writeFileSync } from "fs";
 import { BridgeServer } from "@guardian/bridge";
 import type { ClientInfo } from "@guardian/bridge";
-import { GuardianBridge, loadBridgeConfig } from "./mcp-bridge.js";
+import { GuardianBridge, getOrCreateFingerprint, loadBridgeConfig, type BridgeConfig } from "./mcp-bridge.js";
+import {
+  handleDeepLinkCallback,
+  refreshAccessToken,
+  revokeRefreshToken,
+  startPairingFlow,
+  type TokenResponse,
+} from "./oauth.js";
+import {
+  clearSession,
+  isAccessTokenExpired,
+  loadSession,
+  saveSession,
+  type StoredSession,
+} from "./session-store.js";
+import { hostname } from "node:os";
+import path from "path";
 
 const __dirname = fileURLToPath(new URL(".", import.meta.url));
 
@@ -107,6 +123,28 @@ process.on("unhandledRejection", (reason) => {
 
 // ── App lifecycle ────────────────────────────────────────────────────────────
 
+// ── Deep-link protocol (RFC 8252 — OAuth 2.0 for Native Apps) ───────────────
+// `guardian://oauth/callback?code=...&state=...` routes back to this app.
+//
+// Platform notes:
+//  - macOS: works out of the box (Info.plist CFBundleURLTypes auto-written by
+//    electron-builder from package.json build.protocols, or at runtime via the
+//    setAsDefaultProtocolClient call below for dev/unpackaged).
+//  - Windows: requires the app to be installed (registry entry). In dev,
+//    pass process.execPath + argv[1] explicitly so the handler resolves.
+//  - Linux: needs a .desktop file registering the MIME handler.
+if (process.defaultApp) {
+  // Dev / unpackaged: pass the script path explicitly so the OS knows which
+  // command to launch when the protocol is invoked.
+  if (process.argv.length >= 2) {
+    app.setAsDefaultProtocolClient("guardian", process.execPath, [
+      path.resolve(process.argv[1]!),
+    ]);
+  }
+} else {
+  app.setAsDefaultProtocolClient("guardian");
+}
+
 // Single instance lock — prevent multiple overlays running at once
 if (!app.requestSingleInstanceLock()) {
   console.log("[guardian] Another instance is already running — exiting.");
@@ -114,8 +152,24 @@ if (!app.requestSingleInstanceLock()) {
   process.exit(0);
 }
 
-app.on("second-instance", () => {
+// Windows/Linux: a second instance fires when the OS delivers a guardian://
+// URL to an already-running app. The URL is in argv.
+app.on("second-instance", (_event, argv) => {
   overlayWin?.show();
+  const deepLink = argv.find((a) => a.startsWith("guardian://"));
+  if (deepLink) {
+    handleDeepLinkCallback(deepLink).catch((e) =>
+      console.error("[guardian] deep-link handler failed:", e),
+    );
+  }
+});
+
+// macOS: deep links are delivered via the open-url event, not argv.
+app.on("open-url", (event, url) => {
+  event.preventDefault();
+  handleDeepLinkCallback(url).catch((e) =>
+    console.error("[guardian] open-url handler failed:", e),
+  );
 });
 
 app.whenReady().then(() => {
@@ -132,16 +186,10 @@ app.whenReady().then(() => {
   bridgeServer.start();
   setupBridgeHandlers();
 
-  // Start the Guardian MCP Bridge (Supabase Realtime for cloud workers)
-  const bridgeConfig = loadBridgeConfig(app.getPath("userData"));
-  if (bridgeConfig) {
-    mcpBridge = new GuardianBridge(bridgeConfig);
-    mcpBridge.start().catch((err) =>
-      console.error("[guardian] MCP Bridge start failed (non-fatal):", err),
-    );
-  } else {
-    console.log("[guardian] MCP Bridge not configured — set GUARDIAN_USER_ID + GUARDIAN_DEVICE_ID env vars or pair from Account page");
-  }
+  // Start the Guardian MCP Bridge — prefer stored OAuth session, else env vars.
+  bootBridge().catch((err) =>
+    console.error("[guardian] MCP Bridge boot failed (non-fatal):", err),
+  );
 
   createOverlay();
   try {
@@ -632,6 +680,11 @@ function buildTrayMenu(): Menu {
       ? `● MCP Bridge — ${mcpStatusTray.instances.filter(i => i.online).length}/${mcpStatusTray.instances.length} online`
       : `○ MCP Bridge — stopped`;
 
+  const session = loadSession(app.getPath("userData"));
+  const authItem: Electron.MenuItemConstructorOptions = session
+    ? { label: "Sign out of Guardian", click: () => { signOut().catch(() => {}); } }
+    : { label: "Connect to Guardian…", click: () => { runPairing().catch(() => {}); } };
+
   return Menu.buildFromTemplate([
     {
       label: isVisible ? "Hide Guardian" : "Show Guardian",
@@ -649,6 +702,8 @@ function buildTrayMenu(): Menu {
         }
       },
     },
+    { type: "separator" },
+    authItem,
     { type: "separator" },
     { label: "Servers:", enabled: false },
     { label: cloudLabelTray, enabled: false },
@@ -707,6 +762,151 @@ ipcMain.handle("launch-plugin", () => launchPlugin());
 ipcMain.on("cloud-status", (_event, connected: boolean) => {
   isCloudConnected = connected;
   refreshTrayMenu();
+});
+
+// ── OAuth pairing + session lifecycle ────────────────────────────────────────
+
+function sessionToBridgeConfig(session: StoredSession, userDataPath: string): BridgeConfig {
+  return {
+    userId: session.user_id,
+    deviceId: session.device_id ?? "",
+    deviceFingerprint: getOrCreateFingerprint(userDataPath),
+    supabaseUrl: session.supabase_url,
+    supabaseAnonKey: session.supabase_anon_key,
+    accessToken: session.access_token,
+    supabaseRefreshToken: session.supabase_refresh_token,
+    instances: [],
+  };
+}
+
+function storeTokens(tokens: TokenResponse): StoredSession {
+  const session: StoredSession = {
+    access_token: tokens.access_token,
+    supabase_refresh_token: tokens.supabase_refresh_token,
+    refresh_token: tokens.refresh_token,
+    user_id: tokens.user_id,
+    device_id: tokens.device_id,
+    scope: tokens.scope,
+    access_token_expires_at: Math.floor(Date.now() / 1000) + tokens.expires_in,
+    cloud_url: CLOUD_URL,
+    supabase_url: tokens.supabase_url,
+    supabase_anon_key: tokens.supabase_anon_key,
+    saved_at: Date.now(),
+  };
+  saveSession(app.getPath("userData"), session);
+  return session;
+}
+
+async function ensureFreshSession(session: StoredSession): Promise<StoredSession> {
+  if (!isAccessTokenExpired(session)) return session;
+  console.log("[guardian] Access token expired, refreshing…");
+  try {
+    const tokens = await refreshAccessToken({
+      cloudUrl: session.cloud_url,
+      refreshToken: session.refresh_token,
+    });
+    return storeTokens(tokens);
+  } catch (e) {
+    console.error("[guardian] Refresh failed, clearing session:", e);
+    clearSession(app.getPath("userData"));
+    throw e;
+  }
+}
+
+async function startBridgeFromSession(session: StoredSession): Promise<void> {
+  if (mcpBridge) {
+    await mcpBridge.stop().catch(() => {});
+    mcpBridge = null;
+  }
+  const config = sessionToBridgeConfig(session, app.getPath("userData"));
+  mcpBridge = new GuardianBridge(config);
+  await mcpBridge.start();
+  refreshTrayMenu();
+}
+
+async function bootBridge(): Promise<void> {
+  const userDataPath = app.getPath("userData");
+  const stored = loadSession(userDataPath);
+
+  if (stored) {
+    try {
+      const fresh = await ensureFreshSession(stored);
+      await startBridgeFromSession(fresh);
+      console.log("[guardian] Bridge started from stored OAuth session");
+      return;
+    } catch (e) {
+      console.error("[guardian] Stored session unusable:", e);
+      // Fall through to env-var mode.
+    }
+  }
+
+  // Fallback: env-var dev mode (keeps local testing working without OAuth).
+  const envConfig = loadBridgeConfig(userDataPath);
+  if (envConfig) {
+    mcpBridge = new GuardianBridge(envConfig);
+    await mcpBridge.start();
+    console.log("[guardian] Bridge started from env vars");
+    refreshTrayMenu();
+    return;
+  }
+
+  console.log(
+    "[guardian] No OAuth session and no env vars — click 'Connect to Guardian' in the panel to pair",
+  );
+  refreshTrayMenu();
+}
+
+async function runPairing(): Promise<void> {
+  try {
+    const tokens = await startPairingFlow({
+      cloudUrl: CLOUD_URL,
+      deviceFingerprint: getOrCreateFingerprint(app.getPath("userData")),
+      deviceName: hostname(),
+    });
+    const session = storeTokens(tokens);
+    await startBridgeFromSession(session);
+    overlayWin?.webContents.send("guardian-auth", { authenticated: true, user_id: session.user_id });
+    console.log("[guardian] Paired successfully");
+  } catch (e) {
+    overlayWin?.webContents.send("guardian-auth", {
+      authenticated: false,
+      error: (e as Error).message,
+    });
+    console.error("[guardian] Pairing failed:", e);
+  }
+}
+
+async function signOut(): Promise<void> {
+  const userDataPath = app.getPath("userData");
+  const stored = loadSession(userDataPath);
+  if (stored) {
+    await revokeRefreshToken({
+      cloudUrl: stored.cloud_url,
+      refreshToken: stored.refresh_token,
+    });
+  }
+  clearSession(userDataPath);
+  if (mcpBridge) {
+    await mcpBridge.stop().catch(() => {});
+    mcpBridge = null;
+  }
+  overlayWin?.webContents.send("guardian-auth", { authenticated: false });
+  refreshTrayMenu();
+}
+
+ipcMain.handle("guardian-start-pairing", async () => {
+  await runPairing();
+});
+
+ipcMain.handle("guardian-sign-out", async () => {
+  await signOut();
+});
+
+ipcMain.handle("guardian-session-status", () => {
+  const session = loadSession(app.getPath("userData"));
+  return session
+    ? { authenticated: true, user_id: session.user_id, device_id: session.device_id }
+    : { authenticated: false };
 });
 
 // Renderer console → main terminal (for debugging without opening DevTools)
