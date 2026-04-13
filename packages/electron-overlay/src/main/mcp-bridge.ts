@@ -676,6 +676,7 @@ export class GuardianBridge {
       return { presetType, url, fingerprint, toolCount };
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
+      console.error(`[mcp-bridge] probe ${url} failed: ${msg}`);
       // Re-throw so the scan loop's error bucket surfaces the real reason
       // (connection refused, 404, wrong transport, timeout, etc.).
       throw new Error(msg);
