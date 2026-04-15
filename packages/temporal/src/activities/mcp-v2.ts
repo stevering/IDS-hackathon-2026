@@ -149,8 +149,20 @@ export async function discoverMCPToolsV2(params: {
 
       log.info(`${inst.label}: ${tools.length} tools ${isFocus ? "(FOCUS)" : ""}`);
     } catch (err) {
+      // Undici's `fetch failed` is a generic top-level message; the real
+      // reason lives on `err.cause` (e.g. UND_ERR_SOCKET, ECONNRESET,
+      // UND_ERR_HEADERS_TIMEOUT). Include it so cloud MCP failures are
+      // actually diagnosable.
       const errorMsg = err instanceof Error ? err.message : String(err);
-      log.error(`Failed to discover ${inst.label}`, { error: errorMsg });
+      const causeMsg =
+        err instanceof Error && err.cause
+          ? err.cause instanceof Error
+            ? `${err.cause.name}: ${err.cause.message}`
+            : String(err.cause)
+          : undefined;
+      log.error(`Failed to discover ${inst.label}`, {
+        error: causeMsg ? `${errorMsg} (cause: ${causeMsg})` : errorMsg,
+      });
       manifest.push({
         instanceId: inst.id,
         label: inst.label,

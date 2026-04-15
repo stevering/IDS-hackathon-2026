@@ -172,7 +172,9 @@ export function useChatWorkflow({
     reasoningCursor: number;
     rafId: number | null;
     lastTick: number;
-  }>({ textCursor: 0, reasoningCursor: 0, rafId: null, lastTick: 0 });
+    /** Wall-clock time of the first received char for the current stream. */
+    streamStartAt: number;
+  }>({ textCursor: 0, reasoningCursor: 0, rafId: null, lastTick: 0, streamStartAt: 0 });
 
   // Refs for dynamic context (captured at send time, not stale from closure)
   const selectedNodeRef = useRef(selectedNode);
@@ -379,15 +381,40 @@ export function useChatWorkflow({
     if (smoothingRef.current.rafId !== null) {
       cancelAnimationFrame(smoothingRef.current.rafId);
     }
-    smoothingRef.current = { textCursor: 0, reasoningCursor: 0, rafId: null, lastTick: 0 };
+    smoothingRef.current = { textCursor: 0, reasoningCursor: 0, rafId: null, lastTick: 0, streamStartAt: 0 };
 
     // ── Smoothing tuning ─────────────────────────────────────────────────
-    // These numbers control the typewriter feel. Local constants so they
-    // can be tweaked without changing the hook's public surface.
+    // Drain strategy: instead of deriving rate from the current backlog
+    // (which stalls whenever the buffer empties between provider bursts),
+    // we drain at the **running-average incoming rate** with a gentle
+    // correction toward a target lag. This decouples the output rate from
+    // the instantaneous arrival pattern — even if 50 chars arrive then
+    // silence for 500ms, the cursor keeps advancing at the average rate
+    // until the next burst. Result: constant visible typewriter speed.
+    //
+    // Target lag = how far the cursor trails the target. Smaller = more
+    // responsive feel, less smoothing headroom. Larger = stable but laggy.
     const SMOOTHING_ENABLED = true;
-    const CATCH_UP_MS = 450;          // drain a burst within ~this window
-    const MIN_CHARS_PER_SEC = 60;     // floor — ensures the cursor never stalls
-    const MAX_CHARS_PER_SEC = 500;    // cap — prevents runaway on large backlogs
+    const TARGET_LAG_MS = 1200;       // cursor trails ~1.2s behind target in steady state
+    const CORRECTION_GAIN = 0.4;      // chars/sec of correction per char of lag error (soft PID P-term)
+    const MIN_CHARS_PER_SEC = 40;     // floor so short messages don't feel frozen
+    const MAX_CHARS_PER_SEC = 300;    // hard cap protecting against runaway catch-up
+    const DEFAULT_INCOMING_RATE = 140;// used before enough elapsed time to measure
+
+    // ── Debug instrumentation (toggle via localStorage.smoothDebug = "1") ─
+    // When enabled, logs incoming bursts (size + inter-arrival) and emits
+    // a drain sample every ~250ms showing pending/rate/cursor progress.
+    // Use window.__smoothingLog in devtools to inspect the last samples.
+    const DEBUG = typeof window !== "undefined" && window.localStorage?.getItem("smoothDebug") === "1";
+    const SLOW_MODE = typeof window !== "undefined" && window.localStorage?.getItem("smoothSlow") === "1";
+    const SLOW_FIXED_CPS = 25; // fixed rate for slow-mode diagnostic runs
+    let lastDrainLogAt = 0;
+    let lastBurstAt = 0;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const wnd = (typeof window !== "undefined" ? (window as any) : null);
+    if (DEBUG && wnd) {
+      wnd.__smoothingLog = { bursts: [], drains: [] };
+    }
     // Minimum interval between React state commits. rAF fires at 60fps but
     // each commit re-wraps ALL chars in every markdown element of the bubble
     // through react-markdown + wrapCharsInSpans — O(N) where N is total
@@ -454,17 +481,49 @@ export function useChatWorkflow({
       const pendingReasoning = snap.reasoning.length - buf.reasoningCursor;
       if (pendingText <= 0 && pendingReasoning <= 0) return;
 
-      // Adaptive rate: drain the current backlog over CATCH_UP_MS, clamped.
-      // Small backlog → MIN rate (slow typewriter). Large backlog → capped
-      // at MAX so we don't firehose huge chunks in a single frame.
+      // Running-average incoming rate: total chars received since stream
+      // start divided by elapsed time. Smooths over provider bursts better
+      // than a short EMA because char arrivals are very bursty at the
+      // sub-second scale. Uses DEFAULT_INCOMING_RATE before 500ms of data
+      // exists so early frames don't drain at a noisy measurement.
+      const elapsedMs = buf.streamStartAt > 0 ? now - buf.streamStartAt : 0;
+      const avgIncoming = elapsedMs > 500
+        ? Math.max(MIN_CHARS_PER_SEC, (snap.text.length * 1000) / elapsedMs)
+        : DEFAULT_INCOMING_RATE;
+
+      // Drain at avgIncoming, with a correction proportional to the
+      // error between current lag and target lag. If we're behind target
+      // (too much backlog) → speed up. If we're ahead → slow down. Kept
+      // gentle (small gain) so the output rate stays near constant.
       const rateFor = (pending: number) => {
         if (pending <= 0) return 0;
-        const cps = (pending / CATCH_UP_MS) * 1000;
-        return Math.max(MIN_CHARS_PER_SEC, Math.min(MAX_CHARS_PER_SEC, cps));
+        if (SLOW_MODE) return SLOW_FIXED_CPS;
+        const targetBacklog = (avgIncoming * TARGET_LAG_MS) / 1000;
+        const error = pending - targetBacklog;
+        const target = avgIncoming + error * CORRECTION_GAIN;
+        return Math.max(MIN_CHARS_PER_SEC, Math.min(MAX_CHARS_PER_SEC, target));
       };
 
-      const advanceText = Math.ceil((rateFor(pendingText) * dt) / 1000);
+      const textRate = rateFor(pendingText);
+      const advanceText = Math.ceil((textRate * dt) / 1000);
       const advanceReasoning = Math.ceil((rateFor(pendingReasoning) * dt) / 1000);
+
+      if (DEBUG && now - lastDrainLogAt > 250) {
+        lastDrainLogAt = now;
+        const sample = {
+          t: Math.round(now - buf.streamStartAt),
+          elapsedMs: Math.round(elapsedMs),
+          target: snap.text.length,
+          cursor: buf.textCursor,
+          pending: pendingText,
+          avgIncoming: Math.round(avgIncoming),
+          rate: Math.round(textRate),
+          dt: Math.round(dt),
+          advance: advanceText,
+        };
+        console.log("[smooth]", sample);
+        if (wnd?.__smoothingLog) wnd.__smoothingLog.drains.push(sample);
+      }
 
       let changed = false;
       if (pendingText > 0 && advanceText > 0) {
@@ -530,6 +589,7 @@ export function useChatWorkflow({
       buf.textCursor = 0;
       buf.reasoningCursor = 0;
       buf.lastTick = 0;
+      buf.streamStartAt = 0;
     };
 
     const supabase = createClient();
@@ -581,6 +641,26 @@ export function useChatWorkflow({
           benchmarkRef.current.firstDeltaAt = Date.now();
           const ttfd = benchmarkRef.current.firstDeltaAt - benchmarkRef.current.sendAt;
           console.log(`[ChatWorkflow] BENCHMARK first_delta: ${ttfd}ms (time from send to first visible token)`);
+        }
+
+        // Mark stream start on first char — used by rateFor() to compute
+        // the running-average incoming rate.
+        if (smoothingRef.current.streamStartAt === 0) {
+          smoothingRef.current.streamStartAt = performance.now();
+        }
+
+        if (DEBUG) {
+          const now = performance.now();
+          const gap = lastBurstAt === 0 ? 0 : now - lastBurstAt;
+          lastBurstAt = now;
+          const burst = {
+            t: Math.round(now - smoothingRef.current.streamStartAt),
+            size: content.length,
+            gapMs: Math.round(gap),
+            totalReceived: streamingMsgRef.current.text.length + content.length,
+          };
+          console.log("[burst]", burst);
+          if (wnd?.__smoothingLog) wnd.__smoothingLog.bursts.push(burst);
         }
 
         // Append to the TARGET. The rAF drain will progressively reveal

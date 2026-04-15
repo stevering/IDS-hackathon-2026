@@ -63,18 +63,38 @@ export function useUserMCPInstances() {
   const [loading, setLoading] = useState(true);
 
   const load = useCallback(async () => {
+    // Diagnostic timing: helps identify the "TargetSelector flashes offline
+    // on nav back" pattern — measures empty-state duration on each remount.
+    // Add ?slowMcp=2000 to URL to inject a synthetic delay (in ms) and
+    // exaggerate the symptom for visual verification.
+    const t0 = performance.now();
+    const slowMs = typeof window !== "undefined"
+      ? Number(new URLSearchParams(window.location.search).get("slowMcp")) || 0
+      : 0;
     try {
+      if (slowMs > 0) await new Promise((r) => setTimeout(r, slowMs));
       const res = await fetch("/api/user/mcp-instances");
       if (!res.ok) return;
       const data = await res.json();
+      const elapsed = Math.round(performance.now() - t0);
+      const instCount = (data.instances ?? []).length;
+      console.log(`[useUserMCPInstances] fetch done in ${elapsed}ms — ${instCount} instance(s)${slowMs ? ` (synthetic +${slowMs}ms)` : ""}`);
       setInstances(data.instances ?? []);
       setDefaults(data.defaults ?? { design: null, code: null });
-    } catch { /* ignore */ } finally {
+    } catch (err) {
+      console.error("[useUserMCPInstances] fetch failed:", err);
+    } finally {
       setLoading(false);
     }
   }, []);
 
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    console.log("[useUserMCPInstances] mount — empty state until fetch resolves");
+    load();
+    return () => {
+      console.log("[useUserMCPInstances] unmount");
+    };
+  }, [load]);
 
   /** Cloud presets with instance overlaid. */
   const cloudPresets: CloudPresetView[] = Object.values(BUILTIN_PRESETS)

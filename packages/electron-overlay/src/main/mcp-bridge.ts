@@ -207,6 +207,23 @@ export class GuardianBridge {
         // Also explicitly tie Realtime to the JWT (required on some versions of
         // supabase-js where setSession does not automatically propagate).
         this.supabase.realtime.setAuth(this.config.accessToken);
+
+        // CRITICAL for Electron main / Node: supabase-js's autoRefreshToken
+        // relies on browser visibility events (document.visibilitychange) that
+        // do NOT exist outside the browser. Without an explicit start, the
+        // access_token expires after ~1h and every authenticated call (incl.
+        // touch_device_last_seen, RLS reads) starts failing with
+        // `JWT expired` until the app restarts. startAutoRefresh() polls every
+        // ~10s and refreshes ahead of expiry using supabaseRefreshToken.
+        await this.supabase.auth.startAutoRefresh();
+
+        // Keep Realtime's auth in sync with each refresh, otherwise the WS
+        // connection eventually drops with `auth_expired`.
+        this.supabase.auth.onAuthStateChange((_event, session) => {
+          if (session?.access_token) {
+            this.supabase.realtime.setAuth(session.access_token);
+          }
+        });
       } catch (e) {
         console.error("[mcp-bridge] setSession failed:", e);
       }
@@ -270,6 +287,11 @@ export class GuardianBridge {
     this.running = false;
 
     console.log("[mcp-bridge] Stopping bridge...");
+
+    // Stop the JWT auto-refresh polling (started in start() for Node/Electron).
+    try {
+      await this.supabase.auth.stopAutoRefresh();
+    } catch { /* idempotent, may not have been started */ }
 
     if (this.heartbeatTimer) {
       clearInterval(this.heartbeatTimer);

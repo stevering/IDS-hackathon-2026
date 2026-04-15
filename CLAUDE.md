@@ -138,6 +138,43 @@ Local patch: `patches/@ai-sdk__mcp@1.0.36.patch` (wired through `pnpm.patchedDep
 
 **Reminder**: if you bump `@ai-sdk/mcp`, `pnpm install` will try to re-apply the patch against the new dist. Expect a conflict on newer versions — either regenerate the patch (`pnpm patch`) against the new source or delete `patches/@ai-sdk__mcp@1.0.36.patch` + the `pnpm.patchedDependencies` entry if the fix landed upstream.
 
+## Supabase client in Electron / Node (non-browser)
+
+When you create a `@supabase/supabase-js` client outside the browser (Electron main process, Temporal worker, Node script, etc.), browser-only assumptions break in subtle ways:
+
+### 1. Auto-refresh of the access_token requires explicit start
+
+`autoRefreshToken: true` (the default) only works in the browser because supabase-js relies on `document.visibilitychange` to schedule refreshes. In Node/Electron there is no such event, so the JWT silently expires after ~1h and every authenticated call (`rpc()`, RLS-backed queries, Realtime auth) starts failing with `JWT expired`.
+
+**Always call `await supabase.auth.startAutoRefresh()` after `setSession()`** in non-browser code, and `await supabase.auth.stopAutoRefresh()` on teardown. Example: `packages/electron-overlay/src/main/mcp-bridge.ts` (`GuardianBridge.start` / `stop`).
+
+### 2. Realtime auth must be re-synced on each token refresh
+
+`supabase.realtime.setAuth(accessToken)` is called once at startup, but a refreshed token isn't propagated automatically. The WebSocket eventually disconnects with `auth_expired`. Fix by hooking `onAuthStateChange`:
+
+```ts
+this.supabase.auth.onAuthStateChange((_event, session) => {
+  if (session?.access_token) {
+    this.supabase.realtime.setAuth(session.access_token);
+  }
+});
+```
+
+### 3. Realtime WebSocket — use the `ws` package, not Electron's built-in
+
+Electron main's global `WebSocket` interferes with Supabase Realtime's handshake (observed: `channel.subscribe()` consistently times out, even though the same supabase-js setup works in pure Node). Force the `ws` npm package via `realtime.transport`:
+
+```ts
+import WebSocket from "ws";
+createSupabaseClient(url, key, {
+  realtime: { transport: WebSocket as unknown as typeof globalThis.WebSocket },
+});
+```
+
+### 4. Order of operations in `start()`
+
+Subscribe to Realtime channels **before** opening long-lived HTTP/SSE connections to local services (e.g. local MCP servers on 127.0.0.1). Heavy local socket activity opened first can saturate the Electron network slot and stall the WS upgrade.
+
 ## LLM call delegation (dev-only)
 
 When the user enables "LLM call delegation" in Account > Developers, orchestration LLM calls are delegated to you. You act as the LLM instead of the AI provider.

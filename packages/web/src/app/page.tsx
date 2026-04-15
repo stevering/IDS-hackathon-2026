@@ -6,7 +6,7 @@
 // was decommissioned in April 2026 and only re-exported this type.
 import type { UIMessage } from "ai";
 import { useChatWorkflow } from "./hooks/useChatWorkflow";
-import { useState, useRef, useEffect, useLayoutEffect, useMemo, useCallback, Children, type ReactNode } from "react";
+import { useState, useRef, useEffect, useLayoutEffect, useMemo, useCallback, Children, memo, type ReactNode } from "react";
 import Link from "next/link";
 import type { GatewayModel } from "./api/gateway-models/route";
 import { useFigmaPlugin, pushPluginEvent, type PluginEvent, type FigmaPluginContext, type ExecuteCodeResult } from "./hooks/useFigmaPlugin";
@@ -82,20 +82,62 @@ const markdownComponents: Components = {
  * `idSeed` discriminates keys across sibling string chunks so e.g. the
  * second text child doesn't collide with the first.
  */
-function wrapCharsInSpans(children: ReactNode, idSeed = ""): ReactNode {
-  return Children.map(children, (child, childIdx) => {
+/**
+ * Drops the `.streaming-char` class once the CSS fade-in animation ends.
+ * The span reverts to a plain inline node — no inline-block box, no
+ * animation state, no compositor layer. For long messages this collapses
+ * the browser's per-frame rendering cost: only the ~50 chars currently
+ * mid-animation carry the expensive styling, everything already faded in
+ * becomes cheap static text.
+ *
+ * React doesn't know about this mutation, but it also won't undo it: on
+ * subsequent commits the new JSX still says `className="streaming-char"`,
+ * but React only applies DOM updates when the prop VALUE changes between
+ * renders. Same value → no DOM write → our class removal persists.
+ */
+function handleStreamingCharAnimationEnd(e: React.AnimationEvent<HTMLSpanElement>) {
+  e.currentTarget.classList.remove("streaming-char");
+}
+
+/**
+ * Module-level counter used by `wrapCharsInSpans` to emit **absolute-
+ * offset** keys for each streaming char. The counter is reset at the
+ * start of each `StreamingMarkdown` render (to `splitAt`, the offset of
+ * the fresh/animated tail in the full message).
+ *
+ * Why absolute keys: when the stable/fresh split advances and a chunk
+ * of chars migrates from the fresh zone to the stable zone, React must
+ * unmount the old spans cleanly without reusing their DOM nodes for a
+ * DIFFERENT char further down the tail. Local offsets (the old `${idSeed}${i}`
+ * scheme) would shift by the migration delta — React would see matching
+ * keys and reuse the same span for a different char, producing the visible
+ * "letters morph" flicker documented in the StreamingMarkdown comment.
+ * Absolute offsets never collide: each position in the message has a
+ * unique, stable key across all renders.
+ *
+ * Caveat: this is a module-level mutable variable. React renders are
+ * effectively sequential in our usage (one streaming bubble at a time),
+ * so this is safe — but do NOT rely on the counter inside async or
+ * concurrent code paths.
+ */
+let freshOffsetCursor = 0;
+
+function wrapCharsInSpans(children: ReactNode): ReactNode {
+  return Children.map(children, (child) => {
     if (typeof child === "string") {
       const out: ReactNode[] = [];
       for (let i = 0; i < child.length; i++) {
         const c = child[i];
+        const key = `c-${freshOffsetCursor++}`;
         if (c === " " || c === "\n" || c === "\t") {
           // Plain text — preserves natural line-wrap points.
           out.push(c);
         } else {
           out.push(
             <span
-              key={`${idSeed}${childIdx}-${i}`}
+              key={key}
               className="streaming-char"
+              onAnimationEnd={handleStreamingCharAnimationEnd}
             >
               {c}
             </span>
@@ -125,13 +167,13 @@ function wrapCharsInSpans(children: ReactNode, idSeed = ""): ReactNode {
 const wrapFactory = (Tag: string) => ({ children, ...props }: any) => {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const Component = Tag as any;
-  return <Component {...props}>{wrapCharsInSpans(children, `${Tag}-`)}</Component>;
+  return <Component {...props}>{wrapCharsInSpans(children)}</Component>;
 };
 
 const streamingMarkdownComponents: Components = {
   a: ({ href, children, ...props }) => (
     <a href={href} target="_blank" rel="noopener noreferrer" {...props}>
-      {wrapCharsInSpans(children, "a-")}
+      {wrapCharsInSpans(children)}
     </a>
   ),
   p: wrapFactory("p"),
@@ -149,32 +191,87 @@ const streamingMarkdownComponents: Components = {
 };
 
 /**
- * StreamingMarkdown — renders a streaming assistant message's current
- * content via `streamingMarkdownComponents` so each char is wrapped in
- * a `.streaming-char` span that runs the fade-in-blur keyframe on mount.
- *
- * NOTE: an earlier version of this component tried to split the content
- * into a memoized "stable" zone (everything up to the last \n\n) and an
- * animated "fresh" tail, to bound the per-char wrapping cost. That caused
- * a visible flicker where letters near the split boundary appeared to
- * CHANGE on screen: when a new `\n\n` migrated chars from fresh to stable,
- * the fresh component's `<span>` keys (based on local offset inside the
- * fresh substring) shifted by that delta. React reused the same DOM nodes
- * at keys 0, 1, 2, … but their text content changed to the new first
- * chars of the now-shorter fresh string — so "S", "e", "c" would visibly
- * become "T", "h", "i" etc. Un-fixable without threading absolute text
- * offsets through react-markdown's children tree (there's no clean hook
- * for that). Dropped the split; perf is regained via the 20fps commit
- * throttle in useChatWorkflow instead.
+ * Minimum chars the fresh tail keeps. We only split if the total content
+ * exceeds this AND we find a paragraph break past this threshold.
  */
-function StreamingMarkdown({ content }: { content: string }) {
+const FRESH_TAIL_MIN = 120;
+
+/**
+ * Compute the stable/fresh split index. Only splits at a `\n\n` paragraph
+ * boundary so markdown is never cut mid-token (unclosed `**`, mid-heading,
+ * broken list item…). If no safe boundary leaves enough tail, returns 0
+ * and everything is rendered as fresh.
+ */
+function computeSplitAt(content: string): number {
+  if (content.length <= FRESH_TAIL_MIN) return 0;
+  const maxSplit = content.length - FRESH_TAIL_MIN;
+  const idx = content.lastIndexOf("\n\n", maxSplit);
+  return idx > 0 ? idx + 2 : 0;
+}
+
+/**
+ * Memoized render of the "stable" zone (everything before splitAt). This
+ * is the key perf win — the stable zone can be thousands of chars, and
+ * without memoization every streaming commit would re-parse it through
+ * remark + react-markdown + wrapCharsInSpans. With memo, it only re-runs
+ * when `content` changes (which only happens when splitAt advances to
+ * include a newly-completed paragraph, i.e. once every few hundred chars).
+ *
+ * Uses the plain `markdownComponents` (no spans) because the stable zone
+ * has already been fully revealed — no animation needed. Zero spans means
+ * zero compositor layers and negligible DOM cost regardless of length.
+ */
+const MemoStableMarkdown = memo(function MemoStableMarkdown({ content }: { content: string }) {
   return (
     <ReactMarkdown
       remarkPlugins={[remarkGfm]}
-      components={streamingMarkdownComponents}
+      components={markdownComponents}
     >
       {fixUnpairedMarkdown(content)}
     </ReactMarkdown>
+  );
+});
+
+/**
+ * StreamingMarkdown — renders a streaming assistant message by splitting
+ * content into a memoized stable zone and a fresh/animated tail.
+ *
+ * Why split: re-parsing a 3000-char message through remark + react-markdown
+ * + wrapCharsInSpans on every 50ms commit dominates the main thread, turning
+ * React commits into 150-250ms stalls that manifest as visible stutter in
+ * the typewriter output. The fresh tail is bounded (~120–300 chars), so the
+ * per-commit cost stays flat regardless of message length.
+ *
+ * Key stability: fresh spans use **absolute offsets** as keys (see the
+ * `freshOffsetCursor` comment). When splitAt advances and chars migrate
+ * from fresh → stable, their absolute keys remain fixed, so React unmounts
+ * cleanly instead of reusing spans for different chars (the "letters morph"
+ * flicker from the previous split attempt).
+ */
+function StreamingMarkdown({ content }: { content: string }) {
+  const fixed = fixUnpairedMarkdown(content);
+  const splitAt = computeSplitAt(fixed);
+  const stable = splitAt > 0 ? fixed.slice(0, splitAt) : "";
+  const fresh = splitAt > 0 ? fixed.slice(splitAt) : fixed;
+
+  // Reset the absolute-offset counter for this render. wrapCharsInSpans
+  // will increment it as it walks the fresh markdown tree, producing
+  // keys `c-${splitAt}`, `c-${splitAt+1}`, … stable across renders and
+  // across splitAt advances.
+  freshOffsetCursor = splitAt;
+
+  return (
+    <>
+      {stable && <MemoStableMarkdown content={stable} />}
+      {fresh && (
+        <ReactMarkdown
+          remarkPlugins={[remarkGfm]}
+          components={streamingMarkdownComponents}
+        >
+          {fresh}
+        </ReactMarkdown>
+      )}
+    </>
   );
 }
 
@@ -1426,6 +1523,28 @@ export default function Home() {
 
   // New MCP instances hook (Phase 4) — sources TargetSelector items
   const mcpInstances = useUserMCPInstances();
+
+  // Seed the TargetSelector selection from user_category_defaults (DB) once
+  // instances are loaded, so the chat starts with the user's preferred focus
+  // instead of null. Without this, the first Send fires with
+  // designInstanceId=undefined and the chatWorkflow falls back to V1 legacy
+  // → the LLM never sees local instances like figmadesktop as focus tools.
+  // Only seeds if the user hasn't made an explicit choice this session.
+  const defaultsApplied = useRef(false);
+  useEffect(() => {
+    if (defaultsApplied.current) return;
+    if (mcpInstances.loading) return;
+    if (mcpInstances.instances.length === 0) return;
+    defaultsApplied.current = true;
+
+    if (selectedDesignTarget === null && mcpInstances.defaults.design) {
+      setSelectedDesignTarget(`instance:${mcpInstances.defaults.design}`);
+    }
+    if (selectedCodeTarget === null && mcpInstances.defaults.code) {
+      setSelectedCodeTarget(`instance:${mcpInstances.defaults.code}`);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mcpInstances.loading, mcpInstances.instances.length, mcpInstances.defaults.design, mcpInstances.defaults.code]);
 
 
 
