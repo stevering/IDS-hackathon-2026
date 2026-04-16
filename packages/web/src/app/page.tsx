@@ -1930,6 +1930,7 @@ export default function Home() {
   const orchScrollContainerRef = useRef<HTMLDivElement>(null);
   const shouldAutoScroll = useRef(true);
   const shouldAutoScrollOrch = useRef(true);
+  const scrollRafRef = useRef<number | null>(null);
 
   // Whether we should show the orchestration panel (combined for webapp + plugin)
   const showOrchPanel = (!isFigmaPlugin && orchConv.isInOrchestrationConversation)
@@ -2706,9 +2707,13 @@ export default function Home() {
   );
 
   const handleScroll = () => {
+    // While the rAF lerp is running, onScroll events are programmatic —
+    // ignore them so the lerp's temporary gap (it's always slightly behind
+    // target) doesn't flip shouldAutoScroll to false.
+    if (scrollRafRef.current !== null) return;
     const el = scrollContainerRef.current;
     if (!el) return;
-    const threshold = 40;
+    const threshold = 80;
     shouldAutoScroll.current = el.scrollHeight - el.scrollTop - el.clientHeight < threshold;
   };
 
@@ -2716,18 +2721,34 @@ export default function Home() {
 
 
 
-  // useLayoutEffect (not useEffect) is intentional: it runs synchronously
-  // AFTER DOM mutations but BEFORE the browser paints the frame. This makes
-  // the scroll catch-up happen in the same paint as the content growth —
-  // otherwise the user sees an intermediate frame where the new line has
-  // pushed the thinking block down, then a second frame where scroll rattrape.
-  // That visible two-step is the "jump" perceived during streaming.
+  // Smooth scroll via rAF lerp. Each frame moves 18% of the remaining
+  // distance toward the target (scrollHeight). At 60fps that's ~14
+  // frames to cover 95% of any gap — fast enough to track streaming
+  // line growth without the "jump" of instant scrollTop assignment, and
+  // without CSS scroll-behavior: smooth which has a fixed ~300ms
+  // duration that fights with the 50ms commit cadence.
   useLayoutEffect(() => {
-    if (shouldAutoScroll.current) {
-      const el = scrollContainerRef.current;
-      if (el) {
-        el.scrollTop = el.scrollHeight;
+    if (!shouldAutoScroll.current) return;
+    const el = scrollContainerRef.current;
+    if (!el) return;
+
+    const step = () => {
+      scrollRafRef.current = null;
+      const el2 = scrollContainerRef.current;
+      if (!el2 || !shouldAutoScroll.current) return;
+
+      const target = el2.scrollHeight - el2.clientHeight;
+      const diff = target - el2.scrollTop;
+      if (Math.abs(diff) < 1) {
+        el2.scrollTop = target;
+        return;
       }
+      el2.scrollTop += diff * 0.18;
+      scrollRafRef.current = requestAnimationFrame(step);
+    };
+
+    if (scrollRafRef.current === null) {
+      scrollRafRef.current = requestAnimationFrame(step);
     }
   }, [messages]);
 
