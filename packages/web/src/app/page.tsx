@@ -6,7 +6,7 @@
 // was decommissioned in April 2026 and only re-exported this type.
 import type { UIMessage } from "ai";
 import { useChatWorkflow } from "./hooks/useChatWorkflow";
-import { useState, useRef, useEffect, useLayoutEffect, useMemo, useCallback, Children, memo, type ReactNode } from "react";
+import { useState, useRef, useEffect, useLayoutEffect, useMemo, useCallback, memo, type ReactNode } from "react";
 import Link from "next/link";
 import type { GatewayModel } from "./api/gateway-models/route";
 import { useFigmaPlugin, pushPluginEvent, type PluginEvent, type FigmaPluginContext, type ExecuteCodeResult } from "./hooks/useFigmaPlugin";
@@ -21,6 +21,8 @@ import { PeekBanner } from "@/components/PeekBanner";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import remarkBreaks from "remark-breaks";
+import { unified } from "unified";
+import remarkParse from "remark-parse";
 import { useConversations } from "./hooks/useConversations";
 import { matchesShortId, type CollaboratorInfo } from "./hooks/useOrchestration";
 import { useTemporalOrchestration } from "./hooks/useTemporalOrchestration";
@@ -67,22 +69,6 @@ const markdownComponents: Components = {
 };
 
 /**
- * Wrap each non-whitespace character of a text string in a
- * `<span class="streaming-char">`. Whitespace (space / newline / tab) is
- * kept as plain text so the browser can still wrap lines at natural word
- * boundaries — otherwise every char would be an independent inline-block
- * and the browser could break inside words.
- *
- * Keys are derived from the absolute offset of the char inside the string,
- * so across re-renders (as more chars are appended) React's reconciler
- * matches existing spans by key and does NOT re-mount them — which would
- * re-trigger the CSS animation on every already-rendered char. Only NEW
- * chars at the end actually mount → only NEW chars animate.
- *
- * `idSeed` discriminates keys across sibling string chunks so e.g. the
- * second text child doesn't collide with the first.
- */
-/**
  * Drops the `.streaming-char` class once the CSS fade-in animation ends.
  * The span reverts to a plain inline node — no inline-block box, no
  * animation state, no compositor layer. For long messages this collapses
@@ -98,97 +84,6 @@ const markdownComponents: Components = {
 function handleStreamingCharAnimationEnd(e: React.AnimationEvent<HTMLSpanElement>) {
   e.currentTarget.classList.remove("streaming-char");
 }
-
-/**
- * Module-level counter used by `wrapCharsInSpans` to emit **absolute-
- * offset** keys for each streaming char. The counter is reset at the
- * start of each `StreamingMarkdown` render (to `splitAt`, the offset of
- * the fresh/animated tail in the full message).
- *
- * Why absolute keys: when the stable/fresh split advances and a chunk
- * of chars migrates from the fresh zone to the stable zone, React must
- * unmount the old spans cleanly without reusing their DOM nodes for a
- * DIFFERENT char further down the tail. Local offsets (the old `${idSeed}${i}`
- * scheme) would shift by the migration delta — React would see matching
- * keys and reuse the same span for a different char, producing the visible
- * "letters morph" flicker documented in the StreamingMarkdown comment.
- * Absolute offsets never collide: each position in the message has a
- * unique, stable key across all renders.
- *
- * Caveat: this is a module-level mutable variable. React renders are
- * effectively sequential in our usage (one streaming bubble at a time),
- * so this is safe — but do NOT rely on the counter inside async or
- * concurrent code paths.
- */
-let freshOffsetCursor = 0;
-
-function wrapCharsInSpans(children: ReactNode): ReactNode {
-  return Children.map(children, (child) => {
-    if (typeof child === "string") {
-      const out: ReactNode[] = [];
-      for (let i = 0; i < child.length; i++) {
-        const c = child[i];
-        const key = `c-${freshOffsetCursor++}`;
-        if (c === " " || c === "\n" || c === "\t") {
-          // Plain text — preserves natural line-wrap points.
-          out.push(c);
-        } else {
-          out.push(
-            <span
-              key={key}
-              className="streaming-char"
-              onAnimationEnd={handleStreamingCharAnimationEnd}
-            >
-              {c}
-            </span>
-          );
-        }
-      }
-      return <>{out}</>;
-    }
-    // Element children (<em>, <strong>, …) are rendered by their own
-    // streamingMarkdownComponents override, which recursively applies
-    // wrapCharsInSpans to THEIR children. So we just pass them through.
-    return child;
-  });
-}
-
-/**
- * Markdown component overrides used ONLY for the currently-streaming
- * assistant message. Every text-bearing element wraps its string children
- * in per-character spans so the CSS `streaming-char-in` keyframe fires for
- * each new character as it arrives.
- *
- * `code` (inline) and `pre`/code blocks are intentionally NOT overridden:
- * animating monospace source char-by-char looks glitchy and is rarely
- * worth the cost.
- */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-const wrapFactory = (Tag: string) => ({ children, ...props }: any) => {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const Component = Tag as any;
-  return <Component {...props}>{wrapCharsInSpans(children)}</Component>;
-};
-
-const streamingMarkdownComponents: Components = {
-  a: ({ href, children, ...props }) => (
-    <a href={href} target="_blank" rel="noopener noreferrer" {...props}>
-      {wrapCharsInSpans(children)}
-    </a>
-  ),
-  p: wrapFactory("p"),
-  li: wrapFactory("li"),
-  strong: wrapFactory("strong"),
-  em: wrapFactory("em"),
-  h1: wrapFactory("h1"),
-  h2: wrapFactory("h2"),
-  h3: wrapFactory("h3"),
-  h4: wrapFactory("h4"),
-  h5: wrapFactory("h5"),
-  h6: wrapFactory("h6"),
-  blockquote: wrapFactory("blockquote"),
-  del: wrapFactory("del"),
-};
 
 /**
  * Minimum chars the fresh tail keeps. We only split if the total content
@@ -213,9 +108,9 @@ function computeSplitAt(content: string): number {
  * Memoized render of the "stable" zone (everything before splitAt). This
  * is the key perf win — the stable zone can be thousands of chars, and
  * without memoization every streaming commit would re-parse it through
- * remark + react-markdown + wrapCharsInSpans. With memo, it only re-runs
- * when `content` changes (which only happens when splitAt advances to
- * include a newly-completed paragraph, i.e. once every few hundred chars).
+ * remark + react-markdown. With memo, it only re-runs when `content`
+ * changes (which only happens when splitAt advances to include a newly-
+ * completed paragraph, i.e. once every few hundred chars).
  *
  * Uses the plain `markdownComponents` (no spans) because the stable zone
  * has already been fully revealed — no animation needed. Zero spans means
@@ -233,20 +128,177 @@ const MemoStableMarkdown = memo(function MemoStableMarkdown({ content }: { conte
 });
 
 /**
+ * Fresh zone renderer — B.2 (mdast walker).
+ *
+ * Parses the fresh tail with unified+remark directly, then walks the
+ * mdast tree ourselves. Each text node's `position.start.offset` gives
+ * us the char's TRUE source position, so keys are absolute offsets
+ * (offsetBase + position + charIndex) — stable across renders and
+ * across splitAt advances.
+ *
+ * This fixes the re-mount/"letters morph" flicker that happens with
+ * react-markdown's approach, where string children lose their source
+ * positions and we had to fall back to a traversal-order counter (which
+ * diverges from source order when nested elements are present).
+ *
+ * Handles the markdown element types that typically appear in streaming
+ * LLM output. Anything unknown falls back to its raw `value` as plain
+ * text via `renderStreamingText`.
+ */
+const freshProcessor = unified().use(remarkParse).use(remarkGfm);
+
+function renderStreamingText(text: string, absoluteOffset: number): ReactNode {
+  const nodes: ReactNode[] = [];
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    const abs = absoluteOffset + i;
+    if (c === "\n") {
+      nodes.push(<br key={`br-${abs}`} />);
+    } else if (c === " " || c === "\t") {
+      nodes.push(c);
+    } else {
+      nodes.push(
+        <span
+          key={`c-${abs}`}
+          className="streaming-char"
+          onAnimationEnd={handleStreamingCharAnimationEnd}
+        >
+          {c}
+        </span>
+      );
+    }
+  }
+  return <>{nodes}</>;
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function renderMdastNode(node: any, offsetBase: number): ReactNode {
+  const pos = node.position?.start?.offset ?? 0;
+  const absolute = offsetBase + pos;
+  const key = `${node.type}-${absolute}`;
+
+  const renderChildren = () =>
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (node.children ?? []).map((c: any) => renderMdastNode(c, offsetBase));
+
+  switch (node.type) {
+    case "text":
+      return renderStreamingText(node.value, absolute);
+    case "paragraph":
+      return <p key={key}>{renderChildren()}</p>;
+    case "heading": {
+      const Tag = `h${node.depth}` as "h1" | "h2" | "h3" | "h4" | "h5" | "h6";
+      return <Tag key={key}>{renderChildren()}</Tag>;
+    }
+    case "strong":
+      return <strong key={key}>{renderChildren()}</strong>;
+    case "emphasis":
+      return <em key={key}>{renderChildren()}</em>;
+    case "delete":
+      return <del key={key}>{renderChildren()}</del>;
+    case "inlineCode":
+      return <code key={key}>{node.value}</code>;
+    case "code":
+      return (
+        <pre key={key}>
+          <code>{node.value}</code>
+        </pre>
+      );
+    case "link":
+      return (
+        <a key={key} href={node.url} target="_blank" rel="noopener noreferrer">
+          {renderChildren()}
+        </a>
+      );
+    case "list": {
+      const ListTag = node.ordered ? "ol" : "ul";
+      return <ListTag key={key}>{renderChildren()}</ListTag>;
+    }
+    case "listItem":
+      return <li key={key}>{renderChildren()}</li>;
+    case "blockquote":
+      return <blockquote key={key}>{renderChildren()}</blockquote>;
+    case "break":
+      return <br key={key} />;
+    case "thematicBreak":
+      return <hr key={key} />;
+    case "table": {
+      // remark-gfm table: first row is conventionally the header, rest
+      // are body rows. `node.align` gives per-column text alignment.
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const rows = (node.children ?? []) as any[];
+      const [headerRow, ...bodyRows] = rows;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const align: (string | null | undefined)[] = node.align ?? [];
+      const cellStyle = (i: number) =>
+        align[i] ? { textAlign: align[i] as "left" | "right" | "center" } : undefined;
+      return (
+        <table key={key}>
+          {headerRow && (
+            <thead>
+              <tr>
+                {/* eslint-disable-next-line @typescript-eslint/no-explicit-any */}
+                {(headerRow.children ?? []).map((cell: any, i: number) => {
+                  const cpos = cell.position?.start?.offset ?? 0;
+                  return (
+                    <th key={`th-${offsetBase + cpos}`} style={cellStyle(i)}>
+                      {/* eslint-disable-next-line @typescript-eslint/no-explicit-any */}
+                      {(cell.children ?? []).map((c: any) => renderMdastNode(c, offsetBase))}
+                    </th>
+                  );
+                })}
+              </tr>
+            </thead>
+          )}
+          {bodyRows.length > 0 && (
+            <tbody>
+              {bodyRows.map((row) => {
+                const rpos = row.position?.start?.offset ?? 0;
+                return (
+                  <tr key={`tr-${offsetBase + rpos}`}>
+                    {/* eslint-disable-next-line @typescript-eslint/no-explicit-any */}
+                    {(row.children ?? []).map((cell: any, i: number) => {
+                      const cpos = cell.position?.start?.offset ?? 0;
+                      return (
+                        <td key={`td-${offsetBase + cpos}`} style={cellStyle(i)}>
+                          {/* eslint-disable-next-line @typescript-eslint/no-explicit-any */}
+                          {(cell.children ?? []).map((c: any) => renderMdastNode(c, offsetBase))}
+                        </td>
+                      );
+                    })}
+                  </tr>
+                );
+              })}
+            </tbody>
+          )}
+        </table>
+      );
+    }
+    default:
+      if (typeof node.value === "string") {
+        return renderStreamingText(node.value, absolute);
+      }
+      if (node.children) {
+        return <span key={key}>{renderChildren()}</span>;
+      }
+      return null;
+  }
+}
+
+function FreshMarkdownRenderer({ content, offsetBase }: { content: string; offsetBase: number }) {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const tree = freshProcessor.parse(content) as any;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  return <>{tree.children.map((n: any) => renderMdastNode(n, offsetBase))}</>;
+}
+
+/**
  * StreamingMarkdown — renders a streaming assistant message by splitting
  * content into a memoized stable zone and a fresh/animated tail.
  *
  * Why split: re-parsing a 3000-char message through remark + react-markdown
- * + wrapCharsInSpans on every 50ms commit dominates the main thread, turning
- * React commits into 150-250ms stalls that manifest as visible stutter in
- * the typewriter output. The fresh tail is bounded (~120–300 chars), so the
- * per-commit cost stays flat regardless of message length.
- *
- * Key stability: fresh spans use **absolute offsets** as keys (see the
- * `freshOffsetCursor` comment). When splitAt advances and chars migrate
- * from fresh → stable, their absolute keys remain fixed, so React unmounts
- * cleanly instead of reusing spans for different chars (the "letters morph"
- * flicker from the previous split attempt).
+ * on every 50ms commit dominates the main thread. The fresh tail is
+ * bounded (~120–300 chars), so per-commit cost stays flat.
  */
 function StreamingMarkdown({ content }: { content: string }) {
   const fixed = fixUnpairedMarkdown(content);
@@ -254,23 +306,10 @@ function StreamingMarkdown({ content }: { content: string }) {
   const stable = splitAt > 0 ? fixed.slice(0, splitAt) : "";
   const fresh = splitAt > 0 ? fixed.slice(splitAt) : fixed;
 
-  // Reset the absolute-offset counter for this render. wrapCharsInSpans
-  // will increment it as it walks the fresh markdown tree, producing
-  // keys `c-${splitAt}`, `c-${splitAt+1}`, … stable across renders and
-  // across splitAt advances.
-  freshOffsetCursor = splitAt;
-
   return (
     <>
       {stable && <MemoStableMarkdown content={stable} />}
-      {fresh && (
-        <ReactMarkdown
-          remarkPlugins={[remarkGfm]}
-          components={streamingMarkdownComponents}
-        >
-          {fresh}
-        </ReactMarkdown>
-      )}
+      {fresh && <FreshMarkdownRenderer content={fresh} offsetBase={splitAt} />}
     </>
   );
 }
