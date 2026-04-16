@@ -1050,16 +1050,50 @@ select {
   }
 }
 
+/* ── Trailing glow — integrated cursor ──────────────────────────
+   No separate cursor element. Instead each char gets a text-shadow
+   glow that lasts 1.5s (fading out via ease-out). Since chars mount
+   sequentially, the most recent ~200 chars carry a visible glow
+   that's brightest at the frontier and fades behind — a warm trail
+   that acts as the write-head indicator organically.
+   Zero layout impact: text-shadow paints outside the box. */
+/* ── Trailing color — integrated cursor ─────────────────────────
+   Each char arrives in a bright blue-cyan color with a subtle glow,
+   then fades to the normal text color over 5s. At ~130 chars/sec
+   this creates a warm-to-cool gradient spanning ~650 chars (~5-6
+   lines) that clearly marks the active writing frontier.
+   Uses `color` + `text-shadow` (no `filter` conflict with the
+   blur entry animation). */
+/* Trail start color is driven by `--trail-color` (CSS custom property).
+   Default: blue-cyan. When logprob-based coloring (option D) is enabled,
+   the JS sets `--trail-color` per span based on confidence — green for
+   high confidence, orange/red for uncertainty. The trail animation fades
+   whatever that color is to `inherit` (normal text color) over 5s. */
+@keyframes streaming-char-trail {
+  0%   { color: var(--trail-color, #7dd3fc); text-shadow: 0 0 6px var(--trail-glow, rgba(125, 211, 252, 0.5)); }
+  100% { color: inherit; text-shadow: none; }
+}
+
 .streaming-char {
   display: inline-block;
-  animation: streaming-char-in 400ms cubic-bezier(0.2, 0, 0, 1) backwards;
-  /* NOTE: we deliberately do NOT set `will-change` here. On a typical
-     bubble there are hundreds of .streaming-char elements alive at the
-     same time but only ~3 are actually mid-animation. Setting will-change
-     on all of them forces the compositor to promote every char to its own
-     GPU layer permanently, which ends up costing more than it saves. The
-     browser auto-promotes the actively-animating ones and drops the layer
-     as soon as the animation ends — that's the cheaper path here. */
+  animation:
+    streaming-char-in 400ms cubic-bezier(0.2, 0, 0, 1) backwards,
+    streaming-char-trail 5s ease-out backwards;
+}
+
+/* ── Punctuation accent — warmer pink flash on punct ────────────
+   Punct chars override trail color to pink for contrast. When D is
+   enabled, punct will also use logprob-mapped colors (set via
+   --trail-color on the span). */
+@keyframes streaming-punct-glow {
+  0%   { color: var(--trail-color, #f9a8d4); text-shadow: 0 0 8px var(--trail-glow, rgba(249, 168, 212, 0.6)); }
+  100% { color: inherit; text-shadow: none; }
+}
+
+.streaming-char.streaming-punct {
+  animation:
+    streaming-char-in 400ms cubic-bezier(0.2, 0, 0, 1) backwards,
+    streaming-punct-glow 5.5s ease-out backwards;
 }
 
 .glass-input-bar {

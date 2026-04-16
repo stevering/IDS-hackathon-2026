@@ -82,14 +82,23 @@ const markdownComponents: Components = {
  * renders. Same value → no DOM write → our class removal persists.
  */
 function handleStreamingCharAnimationEnd(e: React.AnimationEvent<HTMLSpanElement>) {
-  e.currentTarget.classList.remove("streaming-char");
+  // Only clean up after the longest animation finishes. Normal chars have
+  // streaming-char-trail (1.5s), punct chars have streaming-punct-glow (1.8s).
+  // streaming-char-in (400ms) ends first — ignore it so the trailing glow
+  // keeps running. When the trail/glow ends, drop both classes.
+  if (e.animationName === "streaming-char-in") return;
+  e.currentTarget.classList.remove("streaming-char", "streaming-punct");
 }
+
+/** Chars that get a brighter/pinker glow accent on mount. */
+const PUNCT_PULSE = new Set([".", ",", ";", ":", "!", "?", "—", "–", "…", ")"]);
+
 
 /**
  * Minimum chars the fresh tail keeps. We only split if the total content
  * exceeds this AND we find a paragraph break past this threshold.
  */
-const FRESH_TAIL_MIN = 120;
+const FRESH_TAIL_MIN = 600;
 
 /**
  * Compute the stable/fresh split index. Only splits at a `\n\n` paragraph
@@ -147,27 +156,49 @@ const MemoStableMarkdown = memo(function MemoStableMarkdown({ content }: { conte
  */
 const freshProcessor = unified().use(remarkParse).use(remarkGfm);
 
+const noWrapStyle = { whiteSpace: "nowrap" as const };
+
 function renderStreamingText(text: string, absoluteOffset: number): ReactNode {
   const nodes: ReactNode[] = [];
-  for (let i = 0; i < text.length; i++) {
-    const c = text[i];
-    const abs = absoluteOffset + i;
-    if (c === "\n") {
-      nodes.push(<br key={`br-${abs}`} />);
-    } else if (c === " " || c === "\t") {
-      nodes.push(c);
-    } else {
-      nodes.push(
+  let wordStart = -1;
+
+  const flushWord = (end: number) => {
+    if (wordStart === -1) return;
+    const chars: ReactNode[] = [];
+    for (let j = wordStart; j < end; j++) {
+      const ch = text[j];
+      const abs = absoluteOffset + j;
+      chars.push(
         <span
           key={`c-${abs}`}
-          className="streaming-char"
+          className={PUNCT_PULSE.has(ch) ? "streaming-char streaming-punct" : "streaming-char"}
           onAnimationEnd={handleStreamingCharAnimationEnd}
         >
-          {c}
+          {ch}
         </span>
       );
     }
+    nodes.push(
+      <span key={`w-${absoluteOffset + wordStart}`} style={noWrapStyle}>{chars}</span>
+    );
+    wordStart = -1;
+  };
+
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (c === " " || c === "\t" || c === "\n") {
+      flushWord(i);
+      if (c === "\n") {
+        nodes.push(<br key={`br-${absoluteOffset + i}`} />);
+      } else {
+        nodes.push(c);
+      }
+    } else if (wordStart === -1) {
+      wordStart = i;
+    }
   }
+  flushWord(text.length);
+
   return <>{nodes}</>;
 }
 
@@ -289,7 +320,8 @@ function FreshMarkdownRenderer({ content, offsetBase }: { content: string; offse
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const tree = freshProcessor.parse(content) as any;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  return <>{tree.children.map((n: any) => renderMdastNode(n, offsetBase))}</>;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  return <>{(tree.children ?? []).map((n: any) => renderMdastNode(n, offsetBase))}</>;
 }
 
 /**
