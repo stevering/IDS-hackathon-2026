@@ -465,7 +465,14 @@ export function processLLMResponse(
     const textToolCalls = extractTextToolCalls(content);
 
     if (textToolCalls.length > 0) {
-      // Process extracted tool calls as if the LLM had invoked them properly
+      // Patch the assistant message we just pushed so its toolCalls match
+      // the tool results that processToolCall will inject. Without this,
+      // LLM APIs reject the next call with "tool_call_id not found".
+      const lastMsg = state.messageHistory[state.messageHistory.length - 1];
+      if (lastMsg?.role === "assistant") {
+        lastMsg.toolCalls = textToolCalls;
+      }
+
       for (const tc of textToolCalls) {
         activities.push({ action: "tool_call", toolName: tc.name, summary: `(auto-detected from text) ${tc.name}` });
         const { effects: toolEffects, activities: toolActivities } = processToolCall(state, tc);
@@ -494,11 +501,10 @@ export function processLLMResponse(
     const codeBlockInText = /```(?:js|javascript)\s*\n([\s\S]*?)```/.test(content);
 
     if (calledToolInText) {
-      // Pattern: [Called tool: figmaconsole_figma_execute({...})] written as text
       const toolName = calledToolInText[1];
       const nudge = `You wrote a tool call in your text response instead of using a structured tool call. ` +
         `Do NOT write "[Called tool: ...]" in text — instead, invoke the tool "${toolName}" directly using the tool_use mechanism.`;
-      injectToolResult(state, `nudge-${state.stepCount}`, nudge);
+      state.messageHistory.push({ role: "user", content: nudge });
       activities.push({ action: "guardian_message", recipient: `agent ${state.agent.shortId}`, message: nudge });
       if (activities.length > 0) {
         effects.push({ type: "emit_activity", activities });
@@ -511,11 +517,10 @@ export function processLLMResponse(
     }
 
     if (codeBlockInText && content.includes("figma.")) {
-      // Pattern: ```js\nconst frame = figma.createFrame()...\n``` — code intended for execution
       const nudge = `You wrote Figma code in a text code block but did not call a tool to execute it. ` +
         `If you intended to run this code, use a dedicated figmaconsole_ tool (create_child, set_fills, set_text, etc.) ` +
         `or call figmaconsole_figma_execute as a last resort.`;
-      injectToolResult(state, `nudge-${state.stepCount}`, nudge);
+      state.messageHistory.push({ role: "user", content: nudge });
       activities.push({ action: "guardian_message", recipient: `agent ${state.agent.shortId}`, message: nudge });
       if (activities.length > 0) {
         effects.push({ type: "emit_activity", activities });

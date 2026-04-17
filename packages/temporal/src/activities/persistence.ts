@@ -31,12 +31,12 @@ const DURABLE_EVENT_TYPES = new Set([
 ]);
 
 /** Map event type → message role for the messages table. */
-function eventToMessageRole(eventType: string): "system" | "assistant" | "agent" | null {
+function eventToMessageRole(eventType: string): "system" | "assistant" | "tool" | null {
   switch (eventType) {
     case "orchestration_started": return "system";
     case "orchestrator_brief": return "assistant";
     case "orchestrator_directive": return "assistant";
-    case "agent_report": return "agent";
+    case "agent_report": return "assistant";
     case "orchestration_completed": return "system";
     default: return null;
   }

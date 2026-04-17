@@ -17,6 +17,10 @@ type Props = {
   completedStatus: "completed" | "completed_with_errors" | "failed" | "cancelled" | "timed_out" | null;
   /** Error detail when failed */
   errorMessage?: string | null;
+  /** Current view mode (chat vs developer) */
+  viewMode?: "chat" | "developer";
+  /** Callback to toggle view mode */
+  onToggleViewMode?: () => void;
 };
 
 /**
@@ -35,6 +39,8 @@ export function OrchestrationBanner({
   timerRemainingMs,
   completedStatus,
   errorMessage,
+  viewMode,
+  onToggleViewMode,
 }: Props) {
   const [elapsed, setElapsed] = useState(0);
 
@@ -132,6 +138,28 @@ export function OrchestrationBanner({
           </svg>
           <span>Back to chat</span>
         </button>
+
+        {/* Center: view mode toggle */}
+        {onToggleViewMode && (
+          <div className="flex items-center gap-0.5 rounded-md border border-white/10 bg-white/[0.03] p-0.5">
+            <button
+              onClick={viewMode === "chat" ? undefined : onToggleViewMode}
+              className={`text-[10px] px-2 py-0.5 rounded transition-colors cursor-pointer ${
+                viewMode === "chat" ? "bg-white/10 text-white/70" : "text-white/30 hover:text-white/50"
+              }`}
+            >
+              Chat
+            </button>
+            <button
+              onClick={viewMode === "developer" ? undefined : onToggleViewMode}
+              className={`text-[10px] px-2 py-0.5 rounded transition-colors cursor-pointer ${
+                viewMode === "developer" ? "bg-white/10 text-white/70" : "text-white/30 hover:text-white/50"
+              }`}
+            >
+              Dev
+            </button>
+          </div>
+        )}
 
         {/* Right: status + timer */}
         <div className={`ml-auto flex items-center gap-2 ${statusColorClass}`}>

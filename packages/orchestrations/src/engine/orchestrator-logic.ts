@@ -433,8 +433,9 @@ export function processOrchestratorLLMResponse(
   }
 
   // Log text content (the model's visible response)
+  const hadReasoning = !!reasoning?.trim();
   if (content.trim()) {
-    const event = { type: "orchestrator_text" as const, content, modelId, usage: !usageAttached ? usage : undefined, intercepted: !usageAttached ? intercepted : undefined };
+    const event = { type: "orchestrator_text" as const, content, modelId, hadReasoning: hadReasoning || undefined, usage: !usageAttached ? usage : undefined, intercepted: !usageAttached ? intercepted : undefined };
     if (usage) usageAttached = true;
     effects.push({ type: "emit_event", event });
     state.eventLog.push(event);

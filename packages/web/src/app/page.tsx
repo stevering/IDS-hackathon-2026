@@ -28,6 +28,7 @@ import { ConversationSwitcher } from "@/components/ConversationSwitcher";
 import { ConversationSidebar } from "@/components/ConversationSidebar";
 import { OrchestrationStatusBar } from "@/components/OrchestrationStatusBar";
 import { OrchestrationEventLog } from "@/components/OrchestrationEventLog";
+import { OrchestrationChatView } from "@/components/OrchestrationChatView";
 import { OrchestrationBanner } from "@/components/OrchestrationBanner";
 import { ApprovalOverlay } from "@/components/ApprovalOverlay";
 import { useOrchestrationConversation } from "./hooks/useOrchestrationConversation";
@@ -1088,6 +1089,12 @@ export default function Home() {
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const orchScrollContainerRef = useRef<HTMLDivElement>(null);
   const shouldAutoScroll = useRef(true);
+  const [orchViewMode, setOrchViewMode] = useState<"chat" | "developer">(() => {
+    if (typeof window !== "undefined") {
+      return (localStorage.getItem("guardian:orchViewMode") as "chat" | "developer") || "chat";
+    }
+    return "chat";
+  });
   const shouldAutoScrollOrch = useRef(true);
   const scrollRafRef = useRef<number | null>(null);
 
@@ -1403,8 +1410,16 @@ export default function Home() {
 
   // (temporal error sync is below, after chatWorkflow declaration)
 
-  // ── Auto-push debug trace on orchestration completion ─────────────
+  // ── Dismiss pending approval when orchestration ends ─────────────
   const orchCompletedStatus = isFigmaPlugin ? pluginOrch.completedStatus : temporal.completedStatus;
+  useEffect(() => {
+    if (orchCompletedStatus && pendingApproval) {
+      pendingApproval.resolve(false);
+      setPendingApproval(null);
+    }
+  }, [orchCompletedStatus]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── Auto-push debug trace on orchestration completion ─────────────
   const autoPushFired = useRef(false);
   useEffect(() => {
     if (!orchCompletedStatus) {
@@ -2167,6 +2182,12 @@ export default function Home() {
               timerRemainingMs={temporal.timerRemainingMs}
               completedStatus={temporal.completedStatus}
               errorMessage={temporal.streamError}
+              viewMode={orchViewMode}
+              onToggleViewMode={() => {
+                const next = orchViewMode === "chat" ? "developer" : "chat";
+                setOrchViewMode(next);
+                localStorage.setItem("guardian:orchViewMode", next);
+              }}
             />
           )}
           {isFigmaPlugin && pluginOrch.hasOrchestration && (
@@ -2178,6 +2199,12 @@ export default function Home() {
               timerRemainingMs={pluginOrch.stream.timerRemainingMs}
               completedStatus={pluginOrch.stream.completedStatus}
               errorMessage={pluginOrch.stream.error}
+              viewMode={orchViewMode}
+              onToggleViewMode={() => {
+                const next = orchViewMode === "chat" ? "developer" : "chat";
+                setOrchViewMode(next);
+                localStorage.setItem("guardian:orchViewMode", next);
+              }}
             />
           )}
         </header>
@@ -3262,22 +3289,37 @@ export default function Home() {
             {/* ── Right panel: Orchestration conversation ── */}
             <div className="min-w-full h-full relative">
             <div ref={orchScrollContainerRef} onScroll={handleOrchScroll} className={`absolute inset-0 overflow-y-auto px-3 sm:px-4 pb-40 ${headerPaddingClass}`}>
-              {/* Orchestration event log — webapp side */}
+              {/* Orchestration view — webapp side */}
               {!isFigmaPlugin && temporal.events.length > 0 && (
-                <OrchestrationEventLog
-                  events={temporal.events}
-                  agents={temporal.agents}
-                  showAllEvents={developerMode && devShowAllEvents}
-                />
+                orchViewMode === "chat" ? (
+                  <OrchestrationChatView
+                    events={temporal.events}
+                    agents={temporal.agents}
+                  />
+                ) : (
+                  <OrchestrationEventLog
+                    events={temporal.events}
+                    agents={temporal.agents}
+                    showAllEvents={developerMode && devShowAllEvents}
+                  />
+                )
               )}
-              {/* Orchestration event log — plugin side (filtered to this agent) */}
+              {/* Orchestration view — plugin side (filtered to this agent) */}
               {isFigmaPlugin && pluginOrch.stream.events.length > 0 && (
-                <OrchestrationEventLog
-                  events={pluginOrch.stream.events}
-                  agents={pluginOrch.stream.agents}
-                  agentFilter={myDisplayShortId}
-                  showAllEvents={developerMode && devShowAllEvents}
-                />
+                orchViewMode === "chat" ? (
+                  <OrchestrationChatView
+                    events={pluginOrch.stream.events}
+                    agents={pluginOrch.stream.agents}
+                    agentFilter={myDisplayShortId}
+                  />
+                ) : (
+                  <OrchestrationEventLog
+                    events={pluginOrch.stream.events}
+                    agents={pluginOrch.stream.agents}
+                    agentFilter={myDisplayShortId}
+                    showAllEvents={developerMode && devShowAllEvents}
+                  />
+                )
               )}
               {/* Welcome placeholder when no events yet */}
               {((!isFigmaPlugin && temporal.events.length === 0) || (isFigmaPlugin && pluginOrch.stream.events.length === 0)) && (
