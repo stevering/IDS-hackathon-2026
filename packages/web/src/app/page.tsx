@@ -2717,6 +2717,24 @@ export default function Home() {
     shouldAutoScroll.current = el.scrollHeight - el.scrollTop - el.clientHeight < threshold;
   };
 
+  // Wheel events are always user-initiated (never from programmatic scroll).
+  // Detect scroll-up intent even while the rAF lerp is running and cancel it.
+  useEffect(() => {
+    const el = scrollContainerRef.current;
+    if (!el) return;
+    const onWheel = (e: WheelEvent) => {
+      if (e.deltaY < 0) {
+        shouldAutoScroll.current = false;
+        if (scrollRafRef.current !== null) {
+          cancelAnimationFrame(scrollRafRef.current);
+          scrollRafRef.current = null;
+        }
+      }
+    };
+    el.addEventListener("wheel", onWheel, { passive: true });
+    return () => el.removeEventListener("wheel", onWheel);
+  }, []);
+
 
 
 
