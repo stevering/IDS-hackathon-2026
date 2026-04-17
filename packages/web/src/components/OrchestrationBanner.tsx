@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import type { AgentViewState } from "@guardian/orchestrations";
 
 type Props = {
   /** Whether an orchestration exists (active or completed) */
@@ -21,6 +22,8 @@ type Props = {
   viewMode?: "chat" | "developer";
   /** Callback to toggle view mode */
   onToggleViewMode?: () => void;
+  /** Agent list with status */
+  agents?: AgentViewState[];
 };
 
 /**
@@ -41,6 +44,7 @@ export function OrchestrationBanner({
   errorMessage,
   viewMode,
   onToggleViewMode,
+  agents,
 }: Props) {
   const [elapsed, setElapsed] = useState(0);
 
@@ -158,6 +162,28 @@ export function OrchestrationBanner({
             >
               Dev
             </button>
+          </div>
+        )}
+
+        {/* Center-right: agent dots */}
+        {agents && agents.length > 0 && (
+          <div className="flex items-center gap-1.5 ml-2">
+            {agents.map((a) => {
+              const dotColor =
+                a.status === "completed" ? "bg-emerald-400" :
+                a.status === "active" ? "bg-amber-400 animate-pulse" :
+                a.status === "failed" || a.status === "interrupted" ? "bg-red-400" :
+                "bg-white/25";
+              return (
+                <div key={a.shortId} className="flex items-center gap-1" title={`${a.label || a.shortId}: ${a.status}`}>
+                  <span className={`w-1.5 h-1.5 rounded-full ${dotColor}`} />
+                  <span className="text-[10px] text-white/40">{a.label || a.shortId}</span>
+                </div>
+              );
+            })}
+            <span className="text-[10px] text-white/25 ml-1">
+              {agents.filter(a => a.status === "completed").length}/{agents.length}
+            </span>
           </div>
         )}
 

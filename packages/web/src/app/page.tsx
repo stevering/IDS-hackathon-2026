@@ -44,6 +44,7 @@ import { GuardianSendButton } from "@/components/guardian/GuardianSendButton";
 import { ComposerAurora } from "@/components/guardian/ComposerAurora";
 import { PhaseBubble } from "@/components/guardian/PhaseBubble";
 import { useGuardianPhase } from "@/components/guardian/useGuardianPhase";
+import { useOrchestrationPhase } from "@/components/guardian/useOrchestrationPhase";
 import { StreamingMarkdown } from "@/components/chat/StreamingMarkdown";
 import { ThinkingBlock } from "@/components/chat/ThinkingBlock";
 import { DetailsBlock } from "@/components/chat/DetailsBlock";
@@ -1410,8 +1411,9 @@ export default function Home() {
 
   // (temporal error sync is below, after chatWorkflow declaration)
 
-  // ── Dismiss pending approval when orchestration ends ─────────────
   const orchCompletedStatus = isFigmaPlugin ? pluginOrch.completedStatus : temporal.completedStatus;
+
+  // ── Dismiss pending approval when orchestration ends ─────────────
   useEffect(() => {
     if (orchCompletedStatus && pendingApproval) {
       pendingApproval.resolve(false);
@@ -1946,6 +1948,7 @@ export default function Home() {
 
   // Orchestration panel scroll — same logic as chat panel
   const orchEvents = isFigmaPlugin ? pluginOrch.stream.events : temporal.events;
+  const orchPhase = useOrchestrationPhase(orchEvents, orchCompletedStatus);
 
   const handleOrchScroll = () => {
     const el = orchScrollContainerRef.current;
@@ -2188,6 +2191,7 @@ export default function Home() {
                 setOrchViewMode(next);
                 localStorage.setItem("guardian:orchViewMode", next);
               }}
+              agents={temporal.agents}
             />
           )}
           {isFigmaPlugin && pluginOrch.hasOrchestration && (
@@ -2205,6 +2209,7 @@ export default function Home() {
                 setOrchViewMode(next);
                 localStorage.setItem("guardian:orchViewMode", next);
               }}
+              agents={pluginOrch.stream.agents}
             />
           )}
         </header>
@@ -3376,9 +3381,8 @@ export default function Home() {
                 />
               )}
             </div>
-            {/* ── Orchestration input form (simpler, inside the orch panel) ── */}
+            {/* ── Orchestration input form (same composer as chat) ── */}
             <div className="absolute bottom-0 left-0 right-0 z-10 px-3 sm:px-4 pt-2 pb-[calc(0.75rem+env(safe-area-inset-bottom))]">
-              {/* Approval overlay — also in orchestration panel for plugins */}
               {pendingApproval && (
                 <div className="mb-2 max-w-3xl mx-auto">
                   <ApprovalOverlay
@@ -3401,9 +3405,15 @@ export default function Home() {
                   />
                 </div>
               )}
+              <div className="mx-auto max-w-3xl">
+              <ComposerAurora active={temporal.isActive && !orchCompletedStatus}>
+                <PhaseBubble
+                  currentPhase={orchPhase.currentPhase}
+                  history={orchPhase.history}
+                />
               <form
                 onSubmit={onSubmit}
-                className="relative mx-auto max-w-3xl rounded-2xl border border-white/30 overflow-visible"
+                className="composer-aurora-form relative z-10 rounded-2xl border border-white/30 overflow-visible"
                 style={{ background: "rgba(10,10,10,0.25)", backdropFilter: "blur(6px) saturate(1.3)", boxShadow: "0 8px 40px rgba(0,0,0,0.6), 0 2px 8px rgba(0,0,0,0.4), 0 1px 0 rgba(255,255,255,0.05) inset" }}
               >
                 <textarea
@@ -3415,24 +3425,27 @@ export default function Home() {
                     e.target.style.height = Math.min(e.target.scrollHeight, maxH) + "px";
                   }}
                   onKeyDown={(e) => {
-                    if (e.key === "Enter" && !e.shiftKey) {
+                    if (e.key === "Enter" && !e.shiftKey && !isLoading) {
                       e.preventDefault();
                       onSubmit(e);
                     }
                   }}
-                  placeholder="Send message to orchestrator..."
-                  className={`w-full bg-transparent px-4 pt-3 pb-10 text-sm text-white placeholder:text-white/45 focus:outline-none resize-none overflow-y-auto ${isLoading ? "opacity-50" : ""}`}
+                  placeholder="Message the orchestrator..."
+                  className={`w-full bg-transparent px-4 pt-3 pb-16 text-sm text-white placeholder:text-white/45 focus:outline-none resize-none overflow-y-auto ${isLoading ? "opacity-50" : ""}`}
                   readOnly={isLoading}
-                  rows={2}
+                  rows={3}
                 />
                 <div className="absolute bottom-0 right-0 flex items-center gap-2 px-3 py-2">
                   <GuardianSendButton
-                    type="submit"
+                    type={isLoading ? "button" : "submit"}
                     isGenerating={isLoading}
                     disabled={!isLoading && !input.trim()}
+                    onClick={isLoading ? () => cancelMessage?.() : undefined}
                   />
                 </div>
               </form>
+              </ComposerAurora>
+              </div>
             </div>
             </div>{/* end orchestration panel */}
 
