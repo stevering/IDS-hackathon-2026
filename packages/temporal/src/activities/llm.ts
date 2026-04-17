@@ -409,7 +409,7 @@ async function callLLMDirect(params: LLMCallParams): Promise<LLMCallResult> {
     | { role: "system"; content: string }
     | { role: "user"; content: string | Array<{ type: "text"; text: string } | { type: "image"; image: string }> }
     | { role: "assistant"; content: Array<{ type: "text"; text: string } | { type: "tool-call"; toolCallId: string; toolName: string; input: Record<string, unknown> }> }
-    | { role: "tool"; content: Array<{ type: "tool-result"; toolCallId: string; toolName: string; output: string; isError?: boolean }> };
+    | { role: "tool"; content: Array<{ type: "tool-result"; toolCallId: string; toolName: string; output: { type: "text"; value: string }; isError?: boolean }> };
 
   // Build a map of toolCallId -> toolName for tool result messages
   const toolCallNames = new Map<string, string>();
@@ -434,7 +434,7 @@ async function callLLMDirect(params: LLMCallParams): Promise<LLMCallResult> {
       const tcId = m.toolCallId ?? "unknown";
       messages.push({
         role: "tool",
-        content: [{ type: "tool-result", toolCallId: tcId, toolName: toolCallNames.get(tcId) ?? "unknown", output: m.content }],
+        content: [{ type: "tool-result", toolCallId: tcId, toolName: toolCallNames.get(tcId) ?? "unknown", output: { type: "text", value: m.content } }],
       });
       continue;
     }
