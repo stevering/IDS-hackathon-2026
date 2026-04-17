@@ -458,6 +458,10 @@ async function callLLMDirect(params: LLMCallParams): Promise<LLMCallResult> {
     }
   }
 
+  const promptJson = JSON.stringify(messages);
+  const promptSizeKB = Math.round(promptJson.length / 1024);
+  console.log(`[callLLM] purpose=${params.purpose ?? "?"} model=${resolved.modelId} msgs=${messages.length} promptSize=${promptSizeKB}KB`);
+
   const result = await generateText({
     model,
     // eslint-disable-next-line @typescript-eslint/no-explicit-any

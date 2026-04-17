@@ -1086,6 +1086,9 @@ function processToolCall(
             content: args.content,
           },
         });
+        injectToolResult(state, tc.id, JSON.stringify({ success: true, message: `Message sent to ${args.targetAgentId}.` }));
+      } else {
+        injectToolResult(state, tc.id, JSON.stringify({ success: false, error: `Agent ${args.targetAgentId} not found.` }));
       }
       break;
     }
@@ -1100,6 +1103,7 @@ function processToolCall(
           content: args.content,
         },
       });
+      injectToolResult(state, tc.id, JSON.stringify({ success: true, message: "Broadcast sent." }));
       break;
     }
 
@@ -1142,6 +1146,9 @@ function processToolCall(
           participantIds: [state.agent.shortId, ...args.participantIds],
           topic: args.topic,
         });
+        injectToolResult(state, tc.id, JSON.stringify({ success: true, subConvId }));
+      } else {
+        injectToolResult(state, tc.id, JSON.stringify({ success: false, error: "A sub-conversation is already active." }));
       }
       break;
     }
@@ -1172,6 +1179,9 @@ function processToolCall(
           participantIds: [state.agent.shortId, ...subConv.participantIds],
           reason: "completed",
         });
+        injectToolResult(state, tc.id, JSON.stringify({ success: true, message: "Sub-conversation closed." }));
+      } else {
+        injectToolResult(state, tc.id, JSON.stringify({ success: false, error: "No active sub-conversation." }));
       }
       break;
     }
