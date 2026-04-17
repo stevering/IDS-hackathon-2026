@@ -114,9 +114,10 @@ export function useOrchestrationStream(workflowId: string | null) {
 
             case "orchestration_completed":
               if ("status" in data) {
-                const d = data as { status: OrchestrationStreamState["completedStatus"] };
+                const d = data as { status: OrchestrationStreamState["completedStatus"]; error?: string };
                 next.completedStatus = d.status;
                 next.connected = false;
+                if (d.error) next.error = d.error;
               }
               // Close EventSource — prevent auto-reconnect loop
               es.close();

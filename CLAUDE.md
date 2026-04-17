@@ -4,6 +4,8 @@ When you have to write code in the monorepo or show a snippet of code, you must 
 
 In any AI chat, discuss in the user language, based on the user messages, ignoring snippets of code or logs (probably in English).
 
+When you need to change the UIs, always use the already developed components and ask for building a new one or update an existing one.
+
 Each time you modify a file, you have to update the documentation in:
 - `docs/architecture/*.md`
 

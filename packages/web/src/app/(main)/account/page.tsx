@@ -6,6 +6,7 @@ import { useGuardianPresence } from "@/app/hooks/useGuardianPresence";
 import { ConnectedClients } from "@/components/ConnectedClients";
 import { GlassDropdown } from "@/components/GlassDropdown";
 import { LegalFooter } from "@/components/LegalFooter";
+import { MiniToggle } from "@/components/MiniToggle";
 import { useUserMCPInstances, type CloudPresetView } from "@/app/hooks/useUserMCPInstances";
 import { LocalServicesSection } from "./LocalServicesSection";
 
@@ -1090,8 +1091,10 @@ export default function AccountPage() {
               Always require approval for critical operations (remove, flatten, detach) regardless of mode.
             </p>
           </div>
-          <button
-            onClick={async () => {
+          <MiniToggle
+            checked={guardEnabled}
+            disabled={savingOrchSettings}
+            onChange={async () => {
               const next = !guardEnabled;
               setGuardEnabled(next);
               setSavingOrchSettings(true);
@@ -1102,17 +1105,7 @@ export default function AccountPage() {
               }).catch(() => {});
               setSavingOrchSettings(false);
             }}
-            disabled={savingOrchSettings}
-            className={`relative shrink-0 w-10 h-5 rounded-full transition-colors cursor-pointer ${
-              guardEnabled ? "bg-emerald-600" : "bg-white/20"
-            }`}
-          >
-            <span
-              className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
-                guardEnabled ? "translate-x-5" : ""
-              }`}
-            />
-          </button>
+          />
         </div>
       </section>
 
@@ -1139,6 +1132,15 @@ export default function AccountPage() {
                   mcpHook.defaults[cp.category as "design" | "code"] === cp.instance?.id
                 }
                 disconnecting={disconnectingService === cp.preset_type}
+                onToggleEnabled={async (next: boolean) => {
+                  if (!cp.instance) return;
+                  await fetch(`/api/user/mcp-instances?id=${encodeURIComponent(cp.instance.id)}`, {
+                    method: "PATCH",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ enabled: next }),
+                  });
+                  await mcpHook.reload();
+                }}
                 onConnect={() => {
                   const sessionId = Math.random().toString(36).slice(2);
                   const authUrl = cp.oauth_auth_path + (cp.oauth_auth_path.includes("?") ? "&" : "?") + `session=${sessionId}`;
@@ -1482,6 +1484,7 @@ function CloudServiceRow({
   preset,
   isDefault,
   disconnecting,
+  onToggleEnabled,
   onConnect,
   onDisconnect,
   onSetDefault,
@@ -1490,6 +1493,7 @@ function CloudServiceRow({
   preset: CloudPresetView;
   isDefault: boolean;
   disconnecting: boolean;
+  onToggleEnabled: (next: boolean) => void;
   onConnect: () => void;
   onDisconnect: () => void;
   onSetDefault: () => void;
@@ -1498,13 +1502,17 @@ function CloudServiceRow({
   const [editingLabel, setEditingLabel] = useState(false);
   const [labelDraft, setLabelDraft] = useState("");
   const [labelError, setLabelError] = useState<string | null>(null);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const moreRef = useRef<HTMLButtonElement>(null);
 
   const inst = preset.instance;
   const connected = !!inst?.connection;
   const expired = inst?.connection?.expired ?? false;
+  const enabled = inst?.enabled ?? true;
+  const dimmed = connected && !enabled;
 
   return (
-    <div className="flex items-center justify-between gap-3 px-4 py-3 rounded-xl bg-white/[0.06] border border-white/[0.1] backdrop-blur-lg backdrop-saturate-[1.3]">
+    <div className={`flex items-center justify-between gap-3 px-4 py-3 rounded-xl bg-white/[0.06] border border-white/[0.1] backdrop-blur-lg backdrop-saturate-[1.3] transition-opacity ${dimmed ? "opacity-50" : ""}`}>
       <div className="flex items-center gap-2.5 min-w-0">
         <span
           className={`shrink-0 w-2 h-2 rounded-full ${
@@ -1514,7 +1522,44 @@ function CloudServiceRow({
           }`}
         />
         <div className="min-w-0">
-          <span className="text-sm font-medium">{preset.display_name}</span>
+          <div className="flex items-center gap-1.5">
+            <span className="text-sm font-medium">{preset.display_name}</span>
+            {connected && (
+              editingLabel ? (
+                <form
+                  onSubmit={async (e) => {
+                    e.preventDefault();
+                    setLabelError(null);
+                    if (!/^[a-z0-9_]+$/.test(labelDraft)) {
+                      setLabelError("a-z, 0-9, _ only");
+                      return;
+                    }
+                    const ok = await onLabelChange(labelDraft);
+                    if (ok) setEditingLabel(false);
+                    else setLabelError("Label taken");
+                  }}
+                  className="flex items-center gap-1"
+                >
+                  <input
+                    autoFocus
+                    value={labelDraft}
+                    onChange={(e) => { setLabelDraft(e.target.value); setLabelError(null); }}
+                    onBlur={() => { setEditingLabel(false); setLabelError(null); }}
+                    className="w-20 text-[10px] px-1.5 py-0.5 rounded bg-white/10 border border-white/20 text-white font-mono focus:outline-none focus:border-violet-400"
+                  />
+                  {labelError && <span className="text-[9px] text-red-400">{labelError}</span>}
+                </form>
+              ) : (
+                <button
+                  onClick={() => { setLabelDraft(inst?.label ?? ""); setEditingLabel(true); }}
+                  className="text-[10px] px-1.5 py-0.5 rounded-full bg-white/5 text-white/40 font-mono hover:bg-white/10 transition-colors cursor-pointer"
+                  title="Click to rename label"
+                >
+                  {inst?.label}
+                </button>
+              )
+            )}
+          </div>
           <p className="text-[11px] text-white/30 truncate">{preset.description}</p>
         </div>
       </div>
@@ -1522,69 +1567,55 @@ function CloudServiceRow({
       <div className="flex items-center gap-2 shrink-0">
         {connected ? (
           <>
-            {/* Label badge (click to edit) */}
-            {editingLabel ? (
-              <form
-                onSubmit={async (e) => {
-                  e.preventDefault();
-                  setLabelError(null);
-                  if (!/^[a-z0-9_]+$/.test(labelDraft)) {
-                    setLabelError("a-z, 0-9, _ only");
-                    return;
-                  }
-                  const ok = await onLabelChange(labelDraft);
-                  if (ok) setEditingLabel(false);
-                  else setLabelError("Label taken");
-                }}
-                className="flex items-center gap-1"
-              >
-                <input
-                  autoFocus
-                  value={labelDraft}
-                  onChange={(e) => { setLabelDraft(e.target.value); setLabelError(null); }}
-                  onBlur={() => { setEditingLabel(false); setLabelError(null); }}
-                  className="w-20 text-[10px] px-1.5 py-0.5 rounded bg-white/10 border border-white/20 text-white font-mono focus:outline-none focus:border-violet-400"
-                />
-                {labelError && <span className="text-[9px] text-red-400">{labelError}</span>}
-              </form>
-            ) : (
-              <button
-                onClick={() => { setLabelDraft(inst?.label ?? ""); setEditingLabel(true); }}
-                className="text-[10px] px-1.5 py-0.5 rounded-full bg-white/5 text-white/40 font-mono hover:bg-white/10 transition-colors cursor-pointer"
-                title="Click to rename label"
-              >
-                {inst?.label}
-              </button>
-            )}
-
             {expired && (
               <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-amber-500/20 border border-amber-500/30 text-amber-300">
                 expired
               </span>
             )}
 
-            {!isDefault && (
+            {enabled && !isDefault && (
               <button
                 onClick={onSetDefault}
-                className="text-[10px] text-white/30 hover:text-white/60 transition-colors cursor-pointer"
+                className="text-[10px] px-1.5 py-0.5 rounded-full text-white/30 hover:text-white/60 hover:bg-white/10 transition-colors cursor-pointer"
                 title="Set as default for this category"
               >
                 set default
               </button>
             )}
-            {isDefault && (
+            {enabled && isDefault && (
               <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-violet-500/20 text-violet-300">
                 default
               </span>
             )}
 
+            {!enabled && (
+              <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-white/[0.08] text-white/40">
+                disabled
+              </span>
+            )}
+
+            <MiniToggle
+              checked={enabled}
+              onChange={() => onToggleEnabled(!enabled)}
+              title={enabled ? "Disable service" : "Enable service"}
+            />
+
             <button
-              onClick={onDisconnect}
-              disabled={disconnecting}
-              className="text-xs text-red-400/70 hover:text-red-400 transition-colors disabled:opacity-40 cursor-pointer"
+              ref={moreRef}
+              onClick={() => setMenuOpen(!menuOpen)}
+              className="text-white/40 hover:text-white/70 px-1.5 py-0.5 rounded hover:bg-white/10 transition-colors cursor-pointer text-sm"
             >
-              {disconnecting ? "..." : "Disconnect"}
+              ⋯
             </button>
+            <GlassDropdown open={menuOpen} onClose={() => setMenuOpen(false)} anchorRef={moreRef} align="right" width={140}>
+              <button
+                onClick={() => { setMenuOpen(false); onDisconnect(); }}
+                disabled={disconnecting}
+                className="w-full text-left text-xs px-3 py-2 text-red-400/80 hover:bg-white/10 hover:text-red-400 transition-colors disabled:opacity-40 cursor-pointer"
+              >
+                {disconnecting ? "Disconnecting..." : "Disconnect"}
+              </button>
+            </GlassDropdown>
           </>
         ) : (
           <button

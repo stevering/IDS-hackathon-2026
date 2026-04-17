@@ -2989,6 +2989,7 @@ export default function Home() {
               onBack={orchConv.switchBackToChat}
               timerRemainingMs={temporal.timerRemainingMs}
               completedStatus={temporal.completedStatus}
+              errorMessage={temporal.streamError}
             />
           )}
           {isFigmaPlugin && pluginOrch.hasOrchestration && (
@@ -2999,6 +3000,7 @@ export default function Home() {
               onBack={pluginOrch.hideOrchestration}
               timerRemainingMs={pluginOrch.stream.timerRemainingMs}
               completedStatus={pluginOrch.stream.completedStatus}
+              errorMessage={pluginOrch.stream.error}
             />
           )}
         </header>

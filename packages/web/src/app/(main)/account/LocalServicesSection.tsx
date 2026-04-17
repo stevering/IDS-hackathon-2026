@@ -8,8 +8,10 @@
  * not yet registered). The user can Enable / Ignore / Disable / Remove each.
  */
 
-import { useState } from "react";
+import { useState, useRef } from "react";
 import { useLocalServicesView, type LocalServiceView, type LocalServiceStatus } from "@/app/hooks/useLocalServicesView";
+import { MiniToggle } from "@/components/MiniToggle";
+import { GlassDropdown } from "@/components/GlassDropdown";
 
 export function LocalServicesSection() {
   const view = useLocalServicesView();
@@ -221,14 +223,21 @@ function ServiceRow({
 }: ServiceRowProps) {
   const discoveredKey = `${deviceId}:${service.presetType}:${service.url ?? ""}`;
   const isBusy = busyKey === service.instanceId || busyKey === discoveredKey;
+  const [menuOpen, setMenuOpen] = useState(false);
+  const moreRef = useRef<HTMLButtonElement>(null);
   const meta = [
     service.toolCount != null ? `${service.toolCount} tools` : null,
     service.label ? service.label : null,
     service.url ? shortenUrl(service.url) : null,
   ].filter(Boolean).join("  ·  ");
 
+  const isActive = service.status === "active" || service.status === "active_offline";
+  const isDisabled = service.status === "disabled";
+  const hasInstance = !!service.instanceId;
+  const dimmed = isDisabled && hasInstance;
+
   return (
-    <div className="flex items-center gap-3 px-4 py-2.5">
+    <div className={`flex items-center gap-3 px-4 py-2.5 transition-opacity ${dimmed ? "opacity-50" : ""}`}>
       <StatusDot status={service.status} />
 
       <div className="flex-1 min-w-0">
@@ -266,40 +275,30 @@ function ServiceRow({
             </button>
           </>
         )}
-        {(service.status === "active" || service.status === "active_offline") && service.instanceId && (
+        {(isActive || isDisabled) && hasInstance && (
           <>
-            <button
-              onClick={() => onToggleEnabled(service.instanceId!, false)}
+            <MiniToggle
+              checked={isActive}
+              onChange={() => onToggleEnabled(service.instanceId!, !isActive)}
               disabled={isBusy}
-              className="text-xs px-2 py-1 rounded-md text-white/40 hover:text-white/70 disabled:opacity-40"
-            >
-              Disable
-            </button>
+              title={isActive ? "Disable service" : "Enable service"}
+            />
             <button
-              onClick={() => onRemove(service.instanceId!)}
-              disabled={isBusy}
-              className="text-xs px-2 py-1 rounded-md text-red-400/70 hover:text-red-400 disabled:opacity-40"
+              ref={moreRef}
+              onClick={() => setMenuOpen(!menuOpen)}
+              className="text-white/40 hover:text-white/70 px-1.5 py-0.5 rounded hover:bg-white/10 transition-colors cursor-pointer text-sm"
             >
-              Remove
+              ⋯
             </button>
-          </>
-        )}
-        {service.status === "disabled" && service.instanceId && (
-          <>
-            <button
-              onClick={() => onToggleEnabled(service.instanceId!, true)}
-              disabled={isBusy}
-              className="text-xs px-2.5 py-1 rounded-md bg-emerald-500/15 border border-emerald-500/25 hover:bg-emerald-500/25 text-emerald-300 disabled:opacity-40"
-            >
-              Enable
-            </button>
-            <button
-              onClick={() => onRemove(service.instanceId!)}
-              disabled={isBusy}
-              className="text-xs px-2 py-1 rounded-md text-red-400/70 hover:text-red-400 disabled:opacity-40"
-            >
-              Remove
-            </button>
+            <GlassDropdown open={menuOpen} onClose={() => setMenuOpen(false)} anchorRef={moreRef} align="right" width={120}>
+              <button
+                onClick={() => { setMenuOpen(false); onRemove(service.instanceId!); }}
+                disabled={isBusy}
+                className="w-full text-left text-xs px-3 py-2 text-red-400/80 hover:bg-white/10 hover:text-red-400 transition-colors disabled:opacity-40 cursor-pointer"
+              >
+                Remove
+              </button>
+            </GlassDropdown>
           </>
         )}
         {service.status === "ignored" && service.instanceId && (

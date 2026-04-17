@@ -57,7 +57,7 @@ export type OrchestrationSSEEvent =
   | { type: "orchestrator_input"; content: string; fromAgentShortId?: string }
   | { type: "guardian_feedback"; content: string; targetRole: "orchestrator" | "agent"; targetAgentShortId?: string }
   | { type: "system_prompt"; content: string; targetRole: "orchestrator" | "agent"; targetAgentShortId?: string }
-  | { type: "orchestration_completed"; status: "completed" | "completed_with_errors" | "failed" | "cancelled" | "timed_out" }
+  | { type: "orchestration_completed"; status: "completed" | "completed_with_errors" | "failed" | "cancelled" | "timed_out"; error?: string }
   | { type: "error"; message: string }
   // ---------------------------------------------------------------------------
   // Streaming events (used by both chat and collab workflows)

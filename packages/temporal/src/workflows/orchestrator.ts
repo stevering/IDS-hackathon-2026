@@ -172,6 +172,13 @@ export async function orchestratorWorkflow(
     };
   });
 
+  // Tracks uncaught errors from any phase so the Final save block can emit
+  // `orchestration_completed` with `status:"failed"` instead of letting the
+  // workflow die silently (which leaves the UI stuck on `isActive:true`).
+  let uncaughtError: string | null = null;
+
+  try {
+
   // ── Phase 1: Start agent child workflows ─────────────────────────────────
   const startEffects = generateStartEffects(state);
   for (const effect of startEffects) {
@@ -389,8 +396,25 @@ export async function orchestratorWorkflow(
     }
   }
 
+  } catch (err) {
+    // Unwrap Temporal's ActivityFailure to surface the root cause
+    let rootMessage = err instanceof Error ? err.message : String(err);
+    let current: unknown = err;
+    while (current instanceof Error && current.cause) {
+      current = current.cause;
+      if (current instanceof Error && current.message) {
+        rootMessage = current.message;
+      }
+    }
+    uncaughtError = rootMessage;
+    state.status = "failed";
+    for (const agentState of state.agents.values()) {
+      if (agentState.status === "active") agentState.status = "failed";
+    }
+  }
+
   // ── Final save ──────────────────────────────────────────────────────────
-  // Reached when: completion break, while exit (status !== active), or cancellation.
+  // Reached when: completion break, while exit (status !== active), cancellation, or uncaught error.
   const result: OrchestrationResult = {
     status: state.status === "active" ? "cancelled" : state.status as OrchestrationResult["status"],
     agentResults: Object.fromEntries(
@@ -409,6 +433,7 @@ export async function orchestratorWorkflow(
   state.eventLog.push({
     type: "orchestration_completed",
     status: result.status,
+    ...(uncaughtError ? { error: uncaughtError } : {}),
   });
 
   await flushDurableEvents();

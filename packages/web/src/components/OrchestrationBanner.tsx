@@ -15,6 +15,8 @@ type Props = {
   timerRemainingMs: number | null;
   /** Completion status (null while still running) */
   completedStatus: "completed" | "completed_with_errors" | "failed" | "cancelled" | "timed_out" | null;
+  /** Error detail when failed */
+  errorMessage?: string | null;
 };
 
 /**
@@ -32,6 +34,7 @@ export function OrchestrationBanner({
   onBack,
   timerRemainingMs,
   completedStatus,
+  errorMessage,
 }: Props) {
   const [elapsed, setElapsed] = useState(0);
 
@@ -134,6 +137,11 @@ export function OrchestrationBanner({
         <div className={`ml-auto flex items-center gap-2 ${statusColorClass}`}>
           <StatusIcon />
           <span className="truncate">{statusLabel}</span>
+          {isError && errorMessage && (
+            <span className="text-red-400/60 truncate max-w-[300px]" title={errorMessage}>
+              — {errorMessage}
+            </span>
+          )}
           <TimerDisplay />
         </div>
       </div>
@@ -148,6 +156,11 @@ export function OrchestrationBanner({
     >
       <StatusIcon />
       <span className="truncate">{statusLabel}</span>
+      {isError && errorMessage && (
+        <span className="text-red-400/60 truncate max-w-[200px]" title={errorMessage}>
+          — {errorMessage}
+        </span>
+      )}
       <TimerDisplay />
       <span className="font-medium shrink-0 ml-auto">
         View &rarr;
