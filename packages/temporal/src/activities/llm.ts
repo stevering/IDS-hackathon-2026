@@ -362,7 +362,7 @@ async function callLLMDirect(params: LLMCallParams): Promise<LLMCallResult> {
   const { resolveModelForActivity } = await import("./llm-resolver.js");
   const { generateText, jsonSchema, wrapLanguageModel, extractReasoningMiddleware } = await import("ai");
 
-  const resolved = await resolveModelForActivity(params.userId, params.model);
+  const resolved = await resolveModelForActivity(params.userId, params.model, params.purpose);
 
   // For models without native reasoning, wrap with extractReasoningMiddleware
   // so <thinking> tags in text become reasoning parts (same approach as chat route).

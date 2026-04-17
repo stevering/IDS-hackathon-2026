@@ -14,6 +14,22 @@ import type { LanguageModel } from "ai";
 const FREE_TIER_MODEL = "google/gemini-2.5-flash";
 const FREE_TIER_ALLOWED = ["google/gemini-2.5-flash", "google/gemini-2.5-pro"];
 
+const FAST_VARIANT: Record<string, string> = {
+  "moonshotai/kimi-k2.5": "moonshotai/kimi-k2-turbo",
+  "google/gemini-2.5-flash": "google/gemini-2.0-flash",
+  "google/gemini-2.5-pro": "google/gemini-2.0-flash",
+  "anthropic/claude-sonnet-4.6": "anthropic/claude-haiku-4.5",
+  "anthropic/claude-sonnet-4.5": "anthropic/claude-haiku-4.5",
+  "anthropic/claude-sonnet-4": "anthropic/claude-haiku-4.5",
+  "anthropic/claude-opus-4.6": "anthropic/claude-sonnet-4.6",
+  "anthropic/claude-opus-4.7": "anthropic/claude-sonnet-4.6",
+  "openai/gpt-4.1": "openai/gpt-4.1-mini",
+  "openai/gpt-4o": "openai/gpt-4o-mini",
+  "xai/grok-3": "xai/grok-3-mini-fast",
+  "xai/grok-4-fast-non-reasoning": "xai/grok-4-fast-non-reasoning",
+  "deepseek/deepseek-v3": "deepseek/deepseek-v3.2",
+};
+
 type ResolvedModel = {
   model: LanguageModel;
   isFreeTier: boolean;
@@ -35,7 +51,8 @@ function getServiceClient() {
  */
 export async function resolveModelForActivity(
   userId: string | undefined,
-  requestedModel: string | undefined
+  requestedModel: string | undefined,
+  purpose?: string
 ): Promise<ResolvedModel> {
   if (!userId) {
     return resolveIncluded();
@@ -48,7 +65,14 @@ export async function resolveModelForActivity(
 
   // Determine the user's preferred source and default model
   const { source, model: defaultModel } = await getUserPreferences(userId, supabase);
-  const modelStr = requestedModel || defaultModel || "";
+  let modelStr = requestedModel || defaultModel || "";
+
+  // Auto-downgrade to fast variant for agent purposes
+  if (purpose === "agent" && modelStr && FAST_VARIANT[modelStr]) {
+    const fast = FAST_VARIANT[modelStr];
+    console.log(`[llm-resolver] agent fast downgrade: ${modelStr} → ${fast}`);
+    modelStr = fast;
+  }
 
   if (source === "included" || !modelStr) {
     return resolveIncluded(modelStr || undefined);

@@ -80,7 +80,7 @@ export async function callLLMStreaming(params: LLMStreamingParams): Promise<LLMC
   // Resolve model
   const { resolveModelForActivity } = await import("./llm-resolver.js");
   const { streamText, jsonSchema, wrapLanguageModel, extractReasoningMiddleware } = await import("ai");
-  const resolved = await resolveModelForActivity(params.userId, params.model);
+  const resolved = await resolveModelForActivity(params.userId, params.model, params.purpose);
 
   // Reasoning middleware for non-reasoning models
   const { modelSupportsReasoning } = await import("./llm.js");
