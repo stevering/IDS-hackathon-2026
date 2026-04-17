@@ -67,4 +67,4 @@ packages/web/public/plugin/*.zip
 packages/figma-desktop-plugin-beta/dist/
 
 # private internal repo (figdesys/guardian-internal)
-internal/
+internal/.migration-applied

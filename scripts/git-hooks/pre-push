@@ -1,0 +1,67 @@
+#!/bin/bash
+# Pre-push hook: BLOCK if migration files in the push haven't been applied
+# to the Supabase environment matching the target branch.
+#
+# feat/preview, main → cloud Supabase (checked via `supabase db query --linked`)
+# other branches     → no check (no Vercel deploy triggered)
+
+remote="$1"
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+current_branch=$(git rev-parse --abbrev-ref HEAD)
+
+# Only check branches that trigger a Vercel deploy
+case "$current_branch" in
+  feat/preview|main|master) ;;
+  *)
+    exit 0
+    ;;
+esac
+
+tracking=$(git rev-parse --abbrev-ref --symbolic-full-name @{u} 2>/dev/null)
+if [ -z "$tracking" ]; then
+  tracking="$remote/main"
+fi
+
+changed_migrations=$(git diff --name-only "$tracking"...HEAD -- 'supabase/migrations/*.sql' 2>/dev/null)
+
+if [ -z "$changed_migrations" ]; then
+  exit 0
+fi
+
+# Check against cloud Supabase
+# shellcheck disable=SC2086
+missing=$("$REPO_ROOT/scripts/check-migrations.sh" $changed_migrations 2>&1) || true
+
+if [ "$missing" = "QUERY_FAILED" ]; then
+  echo ""
+  echo "⚠️  MIGRATION CHECK — could not reach cloud Supabase."
+  echo "  Make sure 'npx supabase login' and 'npx supabase link' have been run."
+  echo ""
+  echo "  Branch: $current_branch → cloud deploy"
+  echo "  Migrations in this push:"
+  echo "$changed_migrations" | while read -r f; do echo "   $f"; done
+  echo ""
+  echo "  To bypass: touch .migration-applied && git push"
+  echo ""
+  if [ -f "$REPO_ROOT/.migration-applied" ]; then
+    rm -f "$REPO_ROOT/.migration-applied"
+    exit 0
+  fi
+  exit 1
+fi
+
+if [ -z "$missing" ]; then
+  echo "✓ All migrations applied to cloud Supabase ($current_branch → deploy)."
+  exit 0
+fi
+
+echo ""
+echo "⛔ MIGRATION CHECK FAILED — these migrations are NOT applied to cloud Supabase:"
+echo ""
+echo "$missing" | while read -r f; do echo "   $f"; done
+echo ""
+echo "  Branch '$current_branch' triggers a Vercel deploy."
+echo "  Apply migrations first:"
+echo "  mcp__supabase__apply_migration(project_id=\"ookghxkvzdnqicjdslej\", name=\"...\", query=\"...\")"
+echo ""
+exit 1
