@@ -39,46 +39,47 @@ const freshProcessor = unified().use(remarkParse).use(remarkGfm);
 
 const noWrapStyle = { whiteSpace: "nowrap" as const };
 
+// Iterate by grapheme cluster so emojis (surrogate pairs, ZWJ sequences, skin-tone
+// modifiers) and combining marks stay intact instead of splitting into U+FFFD � spans.
+const graphemeSegmenter = new Intl.Segmenter(undefined, { granularity: "grapheme" });
+
 function renderStreamingText(text: string, absoluteOffset: number): ReactNode {
   const nodes: ReactNode[] = [];
+  let wordChars: ReactNode[] = [];
   let wordStart = -1;
 
-  const flushWord = (end: number) => {
+  const flushWord = () => {
     if (wordStart === -1) return;
-    const chars: ReactNode[] = [];
-    for (let j = wordStart; j < end; j++) {
-      const ch = text[j];
-      const abs = absoluteOffset + j;
-      chars.push(
-        <span
-          key={`c-${abs}`}
-          className={PUNCT_PULSE.has(ch) ? "streaming-char streaming-punct" : "streaming-char"}
-          onAnimationEnd={handleStreamingCharAnimationEnd}
-        >
-          {ch}
-        </span>
-      );
-    }
     nodes.push(
-      <span key={`w-${absoluteOffset + wordStart}`} style={noWrapStyle}>{chars}</span>
+      <span key={`w-${absoluteOffset + wordStart}`} style={noWrapStyle}>{wordChars}</span>
     );
+    wordChars = [];
     wordStart = -1;
   };
 
-  for (let i = 0; i < text.length; i++) {
-    const c = text[i];
-    if (c === " " || c === "\t" || c === "\n") {
-      flushWord(i);
-      if (c === "\n") {
-        nodes.push(<br key={`br-${absoluteOffset + i}`} />);
+  for (const { segment: ch, index: j } of graphemeSegmenter.segment(text)) {
+    if (ch === " " || ch === "\t" || ch === "\n") {
+      flushWord();
+      if (ch === "\n") {
+        nodes.push(<br key={`br-${absoluteOffset + j}`} />);
       } else {
-        nodes.push(c);
+        nodes.push(ch);
       }
-    } else if (wordStart === -1) {
-      wordStart = i;
+      continue;
     }
+    if (wordStart === -1) wordStart = j;
+    const abs = absoluteOffset + j;
+    wordChars.push(
+      <span
+        key={`c-${abs}`}
+        className={PUNCT_PULSE.has(ch) ? "streaming-char streaming-punct" : "streaming-char"}
+        onAnimationEnd={handleStreamingCharAnimationEnd}
+      >
+        {ch}
+      </span>
+    );
   }
-  flushWord(text.length);
+  flushWord();
 
   return <>{nodes}</>;
 }
