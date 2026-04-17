@@ -33,6 +33,13 @@ import type {
 } from "@guardian/orchestrations";
 
 import {
+  selectToolGroups,
+  filterToolsByGroups,
+  buildToolGroupPrompt,
+  TOOL_GROUPS,
+} from "@guardian/orchestrations";
+
+import {
   chatNewMessageSignal,
   chatCancelSignal,
   chatStatusQuery,
@@ -307,6 +314,10 @@ export async function chatWorkflow(params: ChatWorkflowParams): Promise<void> {
   }
 
   // ── V2: inject Guardian meta-tools + instance system prompt ──────────────
+  // allFocusTools stores the unfiltered tool set for progressive disclosure
+  // (guardian_load_tool_group). Declared here so the closure in runTurnBody can access it.
+  let allFocusTools: LLMToolDefinition[] = [...mcpTools];
+
   if (useV2 && instanceManifest.length > 0) {
     // Add the 3 meta-tools to the catalog (always available)
     const metaSpecs: LLMToolDefinition[] = [
@@ -316,6 +327,48 @@ export async function chatWorkflow(params: ChatWorkflowParams): Promise<void> {
     ];
     mcpTools.push(...metaSpecs);
 
+    // Add the 2 tool-group meta-tools (always available, even when no filtering)
+    const toolGroupSpecs: LLMToolDefinition[] = [
+      { name: "guardian_load_tool_group", description: "Load additional tools from a functional group into the current session. Call guardian_list_tool_groups first to see available groups.", parameters: { type: "object", properties: { group_id: { type: "string", description: "The group ID to load (e.g., 'figma_variables', 'code_editing')." } }, required: ["group_id"] } },
+      { name: "guardian_list_tool_groups", description: "List all available tool groups with their descriptions. Use to discover which group to load.", parameters: { type: "object", properties: {}, required: [] } },
+    ];
+    mcpTools.push(...toolGroupSpecs);
+
+    // ── Smart Tool Selection: pre-filter tools when over budget ────────────
+    // Update allFocusTools now that meta-tools have been added.
+    allFocusTools = [...mcpTools];
+    const SMART_SELECTION_THRESHOLD = 40;
+    let smartSelectionActive = false;
+    let activeGroupIds: string[] = [];
+
+    if (mcpTools.length > SMART_SELECTION_THRESHOLD) {
+      // Extract the user message for scoring.
+      const userMsg = params.userMessage ?? "";
+
+      // Collect raw tool names from focus instances (strip prefix).
+      const focusEntries = instanceManifest.filter((e) => e.isFocus);
+      const rawToolNames = focusEntries.flatMap((e) => e.toolNames);
+
+      const selection = selectToolGroups(userMsg, rawToolNames);
+      activeGroupIds = selection.selectedGroupIds;
+
+      // Filter focus-instance tools, keep non-focus tools (meta-tools, etc.) as-is.
+      const focusPrefixes = focusEntries.map((e) => e.toolPrefix);
+      const nonFocusTools = mcpTools.filter(
+        (t) => !focusPrefixes.some((p) => t.name.startsWith(p)),
+      );
+      const filteredFocusTools: LLMToolDefinition[] = [];
+      for (const entry of focusEntries) {
+        const entryTools = mcpTools.filter((t) => t.name.startsWith(entry.toolPrefix));
+        filteredFocusTools.push(
+          ...filterToolsByGroups(entryTools, activeGroupIds, entry.toolPrefix),
+        );
+      }
+
+      mcpTools = [...filteredFocusTools, ...nonFocusTools];
+      smartSelectionActive = true;
+    }
+
     // Inject the instance manifest into the system prompt.
     //
     // Guard: `messages` may be empty here if the caller passed no systemPrompt
@@ -324,15 +377,19 @@ export async function chatWorkflow(params: ChatWorkflowParams): Promise<void> {
     // Spreading `messages[0]` when it's undefined crashes the workflow at
     // boot. Instead, prepend a fresh system message when empty.
     const manifestBlock = buildManifestPrompt(instanceManifest);
-    if (manifestBlock) {
+    const toolGroupBlock = smartSelectionActive
+      ? buildToolGroupPrompt(activeGroupIds, allFocusTools.length, mcpTools.length)
+      : "";
+    const fullBlock = [manifestBlock, toolGroupBlock].filter(Boolean).join("\n\n");
+    if (fullBlock) {
       const first = messages[0];
       if (first && first.role === "system") {
         messages[0] = {
           ...first,
-          content: (first.content ?? "") + "\n\n" + manifestBlock,
+          content: (first.content ?? "") + "\n\n" + fullBlock,
         };
       } else {
-        messages.unshift({ role: "system", content: manifestBlock });
+        messages.unshift({ role: "system", content: fullBlock });
       }
     }
 
@@ -490,6 +547,69 @@ export async function chatWorkflow(params: ChatWorkflowParams): Promise<void> {
               ? JSON.stringify(result.result ?? { success: true })
               : formatToolError(tc.name, result.error, { source: "Figma plugin" });
             isError = !result.success;
+          } else if (tc.name === "guardian_load_tool_group") {
+            // Smart Tool Selection: dynamically load a tool group into the session.
+            const groupId = (tc.arguments.group_id as string) ?? "";
+            const group = TOOL_GROUPS.find((g) => g.id === groupId);
+            if (!group) {
+              toolResult = JSON.stringify({ success: false, error: `Unknown group "${groupId}". Call guardian_list_tool_groups to see available groups.` });
+              isError = true;
+            } else {
+              // Find tools from allFocusTools that match this group but aren't already in mcpTools.
+              const existingNames = new Set(mcpTools.map((t) => t.name));
+              const newTools = allFocusTools.filter((t) => {
+                if (existingNames.has(t.name)) return false;
+                let rawName = t.name;
+                for (const entry of instanceManifest) {
+                  if (t.name.startsWith(entry.toolPrefix)) {
+                    rawName = t.name.slice(entry.toolPrefix.length);
+                    break;
+                  }
+                }
+                return group.toolPatterns.some((p) => rawName === p || rawName.startsWith(p + "_"));
+              });
+              mcpTools.push(...newTools);
+              toolResult = JSON.stringify({
+                success: true,
+                loaded: newTools.length,
+                tools: newTools.map((t) => t.name),
+                totalTools: mcpTools.length,
+              });
+            }
+          } else if (tc.name === "guardian_list_tool_groups") {
+            // Smart Tool Selection: list available groups with tool counts.
+            const groups = TOOL_GROUPS.map((g) => {
+              const toolCount = allFocusTools.filter((t) => {
+                let rawName = t.name;
+                for (const entry of instanceManifest) {
+                  if (t.name.startsWith(entry.toolPrefix)) {
+                    rawName = t.name.slice(entry.toolPrefix.length);
+                    break;
+                  }
+                }
+                return g.toolPatterns.some((p) => rawName === p || rawName.startsWith(p + "_"));
+              }).length;
+              const loadedCount = mcpTools.filter((t) => {
+                let rawName = t.name;
+                for (const entry of instanceManifest) {
+                  if (t.name.startsWith(entry.toolPrefix)) {
+                    rawName = t.name.slice(entry.toolPrefix.length);
+                    break;
+                  }
+                }
+                return g.toolPatterns.some((p) => rawName === p || rawName.startsWith(p + "_"));
+              }).length;
+              return {
+                id: g.id,
+                label: g.label,
+                category: g.category,
+                description: g.description,
+                totalTools: toolCount,
+                loadedTools: loadedCount,
+                fullyLoaded: loadedCount >= toolCount,
+              };
+            }).filter((g) => g.totalTools > 0);
+            toolResult = JSON.stringify({ success: true, groups });
           } else if (useV2 && tc.name.startsWith("guardian_") && ["guardian_list_instances", "guardian_get_instance_tools", "guardian_call_instance_tool"].includes(tc.name)) {
             // V2: Guardian meta-tool (instance discovery / proxy)
             const result = await executeGuardianMetaTool({

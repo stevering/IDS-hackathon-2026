@@ -76,4 +76,5 @@ export * from "./logic/index.js";
 // Temporal/overlay (tsx/vitest) uses this barrel re-export via .js extensions:
 export * from "./mcp/registry.js";
 export * from "./mcp/bridge-protocol.js";
+export * from "./mcp/tool-groups.js";
 

@@ -61,6 +61,30 @@ export const GUARDIAN_META_TOOL_SPECS: LLMToolDefinition[] = [
       required: ["label", "tool_name", "arguments"],
     },
   },
+  {
+    name: "guardian_load_tool_group",
+    description:
+      "Load additional tools from a functional group into the current session. " +
+      "Use this when you need capabilities not in the current tool set. " +
+      "Call guardian_list_tool_groups first to see available groups.",
+    parameters: {
+      type: "object",
+      properties: {
+        group_id: {
+          type: "string",
+          description: "The group ID to load (e.g., 'figma_variables', 'code_editing').",
+        },
+      },
+      required: ["group_id"],
+    },
+  },
+  {
+    name: "guardian_list_tool_groups",
+    description:
+      "List all available tool groups with their descriptions. " +
+      "Use this to discover which group to load via guardian_load_tool_group.",
+    parameters: { type: "object", properties: {}, required: [] },
+  },
 ];
 
 // ---------------------------------------------------------------------------
