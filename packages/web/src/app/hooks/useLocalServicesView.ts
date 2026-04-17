@@ -38,6 +38,10 @@ export type LocalServiceView = {
   label?: string;
   /** URL where the service is reachable (for http/sse transports). */
   url?: string;
+  /** Transport that successfully connected during discovery ("http" or "sse"). */
+  transport?: "http" | "sse";
+  /** Server name as reported by the MCP server during discovery. */
+  serverName?: string;
   /** Tool count — live from heartbeat if available, else from last discovery. */
   toolCount?: number;
   status: LocalServiceStatus;
@@ -180,7 +184,9 @@ export function useLocalServicesView(): LocalServicesView {
         services.push({
           presetType: disc.presetType,
           displayName: disc.serverName ?? preset?.display_name ?? disc.presetType,
+          serverName: disc.serverName,
           url: disc.url,
+          transport: disc.transport,
           toolCount: disc.toolCount,
           status: "discovered",
           protocolBadge: "MCP",

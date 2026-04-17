@@ -68,7 +68,7 @@ export type BuiltinPreset = {
    *
    * Examples:
    *   figma_desktop → [3845]
-   *   code_editor   → [3846, 63342, 3847, 52698]  (Cursor, IntelliJ, VSCode-Continue, Zed)
+   *   code_editor   → [3846, 63342, 6365, 64342, 3847, 52698]  (Cursor, IntelliJ Web, JetBrains MCP, JetBrains MCP alt, VSCode-Continue, Zed)
    */
   scan_ports?: number[];
   /**
@@ -185,17 +185,17 @@ export const BUILTIN_PRESETS: Record<string, BuiltinPreset> = {
     preset_slug: "codeedit",
     category: "code",
     scope: "local",
-    // Default transport for most IDE MCP servers; instances may override
-    // to 'sse' via config.transport if their IDE uses SSE.
+    // Default transport — used when creating a client without explicit transport.
+    // Discovery scan always tries http (/mcp) first, then sse (/sse) as fallback.
     transport: "http",
     display_name: "Code Editor MCP",
     description:
       "Local MCP exposed by an IDE (Cursor, VS Code, IntelliJ, Claude Code, Zed, ...). Users can configure multiple instances per device.",
-    default_local_url: "http://127.0.0.1:3846/sse",
-    // Common IDE MCP ports — the companion probes each one; any that responds
-    // is reported as a discovered instance of this preset.
-    scan_ports: [3846, 63342, 3847, 52698],
-    scan_path: "/sse",
+    default_local_url: "http://127.0.0.1:3846/mcp",
+    // Common IDE MCP ports — the companion probes http then sse on each.
+    // 3846: Cursor, 63342: IntelliJ Web Server, 6365: JetBrains MCP (default),
+    // 64342: JetBrains MCP (alt), 3847: VSCode-Continue, 52698: Zed
+    scan_ports: [3846, 63342, 6365, 64342, 3847, 52698],
     is_template: true,
   },
 };

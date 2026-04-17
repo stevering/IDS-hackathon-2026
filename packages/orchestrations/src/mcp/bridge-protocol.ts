@@ -115,6 +115,8 @@ export type DiscoveredService = {
   presetType: string;
   /** URL where the service was found (e.g. "http://127.0.0.1:3845/mcp"). */
   url: string;
+  /** Transport that successfully connected ("http" or "sse"). */
+  transport: "http" | "sse";
   /** Stable fingerprint for dedupe across heartbeats — `${presetType}:${url}`. */
   fingerprint: string;
   /** Number of tools exposed (from a tools/list probe). */

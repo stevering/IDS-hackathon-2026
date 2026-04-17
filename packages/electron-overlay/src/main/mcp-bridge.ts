@@ -164,6 +164,8 @@ export class GuardianBridge {
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
   private discoveryTimer: ReturnType<typeof setInterval> | null = null;
   private localClients = new Map<string, MCPClientEntry>();
+  /** IDs removed while createLocalClient was still in-flight — prevents race condition. */
+  private removedWhileConnecting = new Set<string>();
   /** Services found by port scan but not yet registered in DB. Keyed by fingerprint. */
   private discoveredServices = new Map<string, DiscoveredService>();
   private running = false;
@@ -339,12 +341,16 @@ export class GuardianBridge {
       return;
     }
 
-    const fetched: LocalInstanceConfig[] = (data ?? []).map((row) => ({
-      instanceId: row.id,
-      label: row.label,
-      presetType: row.preset_type,
-      url: (row.config as { url?: string } | null)?.url,
-    }));
+    const fetched: LocalInstanceConfig[] = (data ?? []).map((row) => {
+      const cfg = row.config as { url?: string; transport?: string } | null;
+      return {
+        instanceId: row.id,
+        label: row.label,
+        presetType: row.preset_type,
+        url: cfg?.url,
+        transport: cfg?.transport as "http" | "sse" | undefined,
+      };
+    });
 
     console.log(`[mcp-bridge] Loaded ${fetched.length} instance(s) from DB for this device`);
     this.config.instances = fetched;
@@ -389,6 +395,14 @@ export class GuardianBridge {
       const tools = await client.tools();
       const toolCount = Object.keys(tools).length;
       console.log(`[mcp-bridge] ✓ ${inst.label}: ${toolCount} tools`);
+
+      // Guard: if the instance was removed while we were connecting, close immediately.
+      if (this.removedWhileConnecting.has(inst.instanceId)) {
+        console.log(`[mcp-bridge] ${inst.label} was removed while connecting — discarding`);
+        this.removedWhileConnecting.delete(inst.instanceId);
+        try { await client.close?.(); } catch { /* ignore */ }
+        return;
+      }
 
       this.localClients.set(inst.instanceId, {
         instanceId: inst.instanceId,
@@ -575,12 +589,16 @@ export class GuardianBridge {
     if (payload.action === "removed") {
       const id = payload.instanceId;
       if (!id) return;
+      // Mark as removed so in-flight createLocalClient won't re-add it.
+      this.removedWhileConnecting.add(id);
       const entry = this.localClients.get(id);
       if (entry) {
         try { await entry.client?.close?.(); } catch { /* ignore */ }
         this.localClients.delete(id);
       }
     } else if (payload.action === "added" && payload.instance) {
+      // Clear any prior removal guard — the user re-enabled or re-added this instance.
+      this.removedWhileConnecting.delete(payload.instance.instanceId);
       // Idempotent: if the instance is already in the pool (e.g. duplicate
       // broadcast, retry, or races with discovery scan), skip the re-create
       // to avoid leaking the previous client's socket/subprocess.
@@ -722,32 +740,45 @@ export class GuardianBridge {
     const next = new Map<string, DiscoveredService>();
     const attempts: Array<{ url: string; ok: boolean; error?: string }> = [];
 
-    const probes: Array<Promise<void>> = [];
+    // For each port, try Streamable HTTP first (/mcp), then SSE (/sse).
+    // HTTP is preferred (newer, more features). If HTTP responds, skip SSE.
+    // Fingerprint is keyed by preset+port so HTTP wins over SSE for the same port.
+    const portProbes: Array<Promise<void>> = [];
     for (const preset of Object.values(BUILTIN_PRESETS)) {
       if (preset.scope !== "local" || !preset.scan_ports) continue;
       if (preset.transport === "stdio") continue; // no port to probe
 
-      const path = preset.scan_path ?? (preset.transport === "sse" ? "/sse" : "/mcp");
-      const transportType = preset.transport as "http" | "sse";
-
       for (const port of preset.scan_ports) {
-        const url = `http://127.0.0.1:${port}${path}`;
-        probes.push(
-          this.probeService(preset.preset_type, transportType, url)
-            .then((found) => {
-              if (found) {
-                next.set(found.fingerprint, found);
-                attempts.push({ url, ok: true });
-              } else {
-                attempts.push({ url, ok: false, error: "probe returned undefined" });
+        // Priority order: http (/mcp) → sse (/sse)
+        const candidates: Array<{ transport: "http" | "sse"; url: string }> = [
+          { transport: "http", url: `http://127.0.0.1:${port}/mcp` },
+          { transport: "sse",  url: `http://127.0.0.1:${port}/sse` },
+        ];
+        const fingerprint = `${preset.preset_type}:127.0.0.1:${port}`;
+
+        portProbes.push(
+          (async () => {
+            for (const { transport, url } of candidates) {
+              try {
+                const found = await this.probeService(preset.preset_type, transport, url);
+                if (found) {
+                  // Override fingerprint so both transports map to the same port key
+                  found.fingerprint = fingerprint;
+                  next.set(fingerprint, found);
+                  attempts.push({ url: `${url} (${transport})`, ok: true });
+                  return; // HTTP succeeded → skip SSE
+                }
+                attempts.push({ url: `${url} (${transport})`, ok: false, error: "probe returned undefined" });
+              } catch (e) {
+                attempts.push({ url: `${url} (${transport})`, ok: false, error: String((e as Error)?.message ?? e) });
               }
-            })
-            .catch((e) => { attempts.push({ url, ok: false, error: String(e?.message ?? e) }); }),
+            }
+          })(),
         );
       }
     }
 
-    await Promise.allSettled(probes);
+    await Promise.allSettled(portProbes);
     this.discoveredServices = next;
 
     const summary = `${next.size}/${attempts.length} services found`;
@@ -790,7 +821,10 @@ export class GuardianBridge {
       ]);
 
       const toolCount = Object.keys(tools as Record<string, unknown>).length;
-      return { presetType, url, fingerprint, toolCount };
+      const serverName = (client.serverInfo as { name?: string; title?: string })?.title
+        ?? (client.serverInfo as { name?: string })?.name
+        ?? undefined;
+      return { presetType, url, transport, fingerprint, toolCount, serverName };
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       console.error(`[mcp-bridge] probe ${url} failed: ${msg}`);

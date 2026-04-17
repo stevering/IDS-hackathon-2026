@@ -29,7 +29,11 @@ export function LocalServicesSection() {
         body: JSON.stringify({
           preset_type: svc.presetType,
           device_id: deviceId,
-          config: svc.url ? { url: svc.url } : {},
+          display_name: svc.serverName ?? undefined,
+          config: {
+            ...(svc.url ? { url: svc.url } : {}),
+            ...(svc.transport ? { transport: svc.transport } : {}),
+          },
         }),
       });
       await view.reload();
@@ -90,6 +94,19 @@ export function LocalServicesSection() {
     }
   };
 
+  const renameInstance = async (instanceId: string, label: string): Promise<boolean> => {
+    const res = await fetch(`/api/user/mcp-instances?id=${instanceId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ label }),
+    });
+    if (res.ok) {
+      await view.reload();
+      return true;
+    }
+    return false;
+  };
+
   const restoreIgnored = async (instanceId: string) => {
     // Un-ignore: keep the row but clear dismissed so it shows up as a regular discovered again.
     // Simpler: just delete the row, and it'll reappear as discovered on the next heartbeat.
@@ -128,6 +145,7 @@ export function LocalServicesSection() {
               onEnable={(svc) => enableDiscovered(d.deviceId, svc)}
               onIgnore={(svc) => ignoreDiscovered(d.deviceId, svc)}
               onToggleEnabled={toggleEnabled}
+              onRename={renameInstance}
               onRemove={removeInstance}
               onRestoreIgnored={restoreIgnored}
             />
@@ -156,13 +174,14 @@ type DeviceCardProps = {
   busy: string | null;
   onEnable: (svc: LocalServiceView) => void;
   onIgnore: (svc: LocalServiceView) => void;
+  onRename: (instanceId: string, label: string) => Promise<boolean>;
   onToggleEnabled: (instanceId: string, next: boolean) => void;
   onRemove: (instanceId: string) => void;
   onRestoreIgnored: (instanceId: string) => void;
 };
 
 function DeviceCard({
-  device, showIgnored, busy, onEnable, onIgnore, onToggleEnabled, onRemove, onRestoreIgnored,
+  device, showIgnored, busy, onEnable, onIgnore, onRename, onToggleEnabled, onRemove, onRestoreIgnored,
 }: DeviceCardProps) {
   const visibleServices = device.services.filter((s) => showIgnored || s.status !== "ignored");
   const lastSeenAgo = device.lastSeenAt
@@ -196,6 +215,7 @@ function DeviceCard({
               deviceId={device.deviceId}
               onEnable={() => onEnable(svc)}
               onIgnore={() => onIgnore(svc)}
+              onRename={onRename}
               onToggleEnabled={onToggleEnabled}
               onRemove={onRemove}
               onRestoreIgnored={onRestoreIgnored}
@@ -213,21 +233,24 @@ type ServiceRowProps = {
   deviceId: string;
   onEnable: () => void;
   onIgnore: () => void;
+  onRename: (instanceId: string, label: string) => Promise<boolean>;
   onToggleEnabled: (instanceId: string, next: boolean) => void;
   onRemove: (instanceId: string) => void;
   onRestoreIgnored: (instanceId: string) => void;
 };
 
 function ServiceRow({
-  service, busyKey, deviceId, onEnable, onIgnore, onToggleEnabled, onRemove, onRestoreIgnored,
+  service, busyKey, deviceId, onEnable, onIgnore, onRename, onToggleEnabled, onRemove, onRestoreIgnored,
 }: ServiceRowProps) {
   const discoveredKey = `${deviceId}:${service.presetType}:${service.url ?? ""}`;
   const isBusy = busyKey === service.instanceId || busyKey === discoveredKey;
   const [menuOpen, setMenuOpen] = useState(false);
+  const [editingLabel, setEditingLabel] = useState(false);
+  const [labelDraft, setLabelDraft] = useState("");
+  const [labelError, setLabelError] = useState<string | null>(null);
   const moreRef = useRef<HTMLButtonElement>(null);
   const meta = [
     service.toolCount != null ? `${service.toolCount} tools` : null,
-    service.label ? service.label : null,
     service.url ? shortenUrl(service.url) : null,
   ].filter(Boolean).join("  ·  ");
 
@@ -243,6 +266,41 @@ function ServiceRow({
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2">
           <span className="text-sm truncate">{service.displayName}</span>
+          {service.label && service.instanceId && (
+            editingLabel ? (
+              <form
+                onSubmit={async (e) => {
+                  e.preventDefault();
+                  setLabelError(null);
+                  if (!/^[a-z0-9_]+$/.test(labelDraft)) {
+                    setLabelError("a-z, 0-9, _ only");
+                    return;
+                  }
+                  const ok = await onRename(service.instanceId!, labelDraft);
+                  if (ok) setEditingLabel(false);
+                  else setLabelError("Label taken");
+                }}
+                className="flex items-center gap-1"
+              >
+                <input
+                  autoFocus
+                  value={labelDraft}
+                  onChange={(e) => { setLabelDraft(e.target.value); setLabelError(null); }}
+                  onBlur={() => { setEditingLabel(false); setLabelError(null); }}
+                  className="w-20 text-[10px] px-1.5 py-0.5 rounded bg-white/10 border border-white/20 text-white font-mono focus:outline-none focus:border-violet-400"
+                />
+                {labelError && <span className="text-[9px] text-red-400">{labelError}</span>}
+              </form>
+            ) : (
+              <button
+                onClick={() => { setLabelDraft(service.label ?? ""); setEditingLabel(true); }}
+                className="text-[10px] px-1.5 py-0.5 rounded-full bg-white/5 text-white/40 font-mono hover:bg-white/10 transition-colors cursor-pointer"
+                title="Click to rename label"
+              >
+                {service.label}
+              </button>
+            )
+          )}
           <span className="text-[9px] px-1 py-0.5 rounded bg-white/[0.06] text-white/35 font-mono">
             {service.protocolBadge}
           </span>
@@ -291,6 +349,12 @@ function ServiceRow({
               ⋯
             </button>
             <GlassDropdown open={menuOpen} onClose={() => setMenuOpen(false)} anchorRef={moreRef} align="right" width={120}>
+              <button
+                onClick={() => { setMenuOpen(false); setLabelDraft(service.label ?? ""); setEditingLabel(true); }}
+                className="w-full text-left text-xs px-3 py-2 text-white/70 hover:bg-white/10 hover:text-white transition-colors cursor-pointer"
+              >
+                Rename
+              </button>
               <button
                 onClick={() => { setMenuOpen(false); onRemove(service.instanceId!); }}
                 disabled={isBusy}

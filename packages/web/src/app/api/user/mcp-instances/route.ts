@@ -279,7 +279,8 @@ export async function POST(req: Request) {
         label: data.label as string,
         presetType,
         url: (config as { url?: string })?.url,
-        transport: preset.transport as "http" | "sse" | "stdio" | undefined,
+        transport: (config as { transport?: string })?.transport as "http" | "sse" | "stdio" | undefined
+          ?? preset.transport as "http" | "sse" | "stdio" | undefined,
         enabled: true,
       },
     });
@@ -355,7 +356,8 @@ export async function PATCH(req: Request) {
           label: inst.label as string,
           presetType: inst.preset_type as string,
           url: (inst.config as { url?: string } | null)?.url,
-          transport: preset?.transport as "http" | "sse" | "stdio" | undefined,
+          transport: (inst.config as { transport?: string } | null)?.transport as "http" | "sse" | "stdio" | undefined
+            ?? preset?.transport as "http" | "sse" | "stdio" | undefined,
           enabled: inst.enabled as boolean,
         },
       });

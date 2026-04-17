@@ -85,18 +85,18 @@ function renderStreamingText(text: string, absoluteOffset: number): ReactNode {
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-function renderMdastNode(node: any, offsetBase: number): ReactNode {
+function renderMdastNode(node: any, offsetBase: number, siblingIndex?: number): ReactNode {
   const pos = node.position?.start?.offset ?? 0;
   const absolute = offsetBase + pos;
-  const key = `${node.type}-${absolute}`;
+  const key = siblingIndex != null ? `${node.type}-${absolute}-${siblingIndex}` : `${node.type}-${absolute}`;
 
   const renderChildren = () =>
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    (node.children ?? []).map((c: any) => renderMdastNode(c, offsetBase));
+    (node.children ?? []).map((c: any, i: number) => renderMdastNode(c, offsetBase, i));
 
   switch (node.type) {
     case "text":
-      return renderStreamingText(node.value, absolute);
+      return <span key={key} style={{ display: "contents" }}>{renderStreamingText(node.value, absolute)}</span>;
     case "paragraph":
       return <p key={key}>{renderChildren()}</p>;
     case "heading": {
@@ -154,7 +154,7 @@ function renderMdastNode(node: any, offsetBase: number): ReactNode {
                   return (
                     <th key={`th-${offsetBase + cpos}`} style={cellStyle(i)}>
                       {/* eslint-disable-next-line @typescript-eslint/no-explicit-any */}
-                      {(cell.children ?? []).map((c: any) => renderMdastNode(c, offsetBase))}
+                      {(cell.children ?? []).map((c: any, ci: number) => renderMdastNode(c, offsetBase, ci))}
                     </th>
                   );
                 })}
@@ -173,7 +173,7 @@ function renderMdastNode(node: any, offsetBase: number): ReactNode {
                       return (
                         <td key={`td-${offsetBase + cpos}`} style={cellStyle(i)}>
                           {/* eslint-disable-next-line @typescript-eslint/no-explicit-any */}
-                          {(cell.children ?? []).map((c: any) => renderMdastNode(c, offsetBase))}
+                          {(cell.children ?? []).map((c: any, ci: number) => renderMdastNode(c, offsetBase, ci))}
                         </td>
                       );
                     })}
@@ -187,7 +187,7 @@ function renderMdastNode(node: any, offsetBase: number): ReactNode {
     }
     default:
       if (typeof node.value === "string") {
-        return renderStreamingText(node.value, absolute);
+        return <span key={key} style={{ display: "contents" }}>{renderStreamingText(node.value, absolute)}</span>;
       }
       if (node.children) {
         return <span key={key}>{renderChildren()}</span>;
@@ -200,7 +200,7 @@ function FreshMarkdownRenderer({ content, offsetBase }: { content: string; offse
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const tree = freshProcessor.parse(content) as any;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  return <>{(tree.children ?? []).map((n: any) => renderMdastNode(n, offsetBase))}</>;
+  return <>{(tree.children ?? []).map((n: any, i: number) => renderMdastNode(n, offsetBase, i))}</>;
 }
 
 export function StreamingMarkdown({ content }: { content: string }) {
