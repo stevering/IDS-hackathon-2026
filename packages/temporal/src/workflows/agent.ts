@@ -268,33 +268,192 @@ function resetPipelineFailures(state: AgentWorkflowState): void {
 
 
 // ---------------------------------------------------------------------------
+// Design tokens extraction (Phase 0.1 — cascade: variables → styles → infer)
+// ---------------------------------------------------------------------------
+
+/**
+ * Figma code that extracts design tokens from the current file.
+ * Cascade: local variables → local styles → infer from existing content.
+ * Returns a compact JSON object with the discovered tokens.
+ */
+const DESIGN_TOKENS_EXTRACTION_CODE = `
+// Helper: convert Figma RGBA (0-1) to hex
+function rgbaToHex(c) {
+  const r = Math.round((c.r || 0) * 255);
+  const g = Math.round((c.g || 0) * 255);
+  const b = Math.round((c.b || 0) * 255);
+  return '#' + [r, g, b].map(x => x.toString(16).padStart(2, '0')).join('');
+}
+
+const tokens = { source: '', colors: {}, typography: {}, spacing: [], radius: [] };
+
+// Step 1: Local variables (best case — user has a design system)
+try {
+  const collections = figma.variables.getLocalVariableCollections();
+  if (collections.length > 0) {
+    const vars = figma.variables.getLocalVariables();
+    for (const v of vars) {
+      const val = Object.values(v.valuesByMode)[0];
+      if (v.resolvedType === 'COLOR' && val && typeof val === 'object' && 'r' in val) {
+        tokens.colors[v.name] = rgbaToHex(val);
+      } else if (v.resolvedType === 'FLOAT' && typeof val === 'number') {
+        const name = v.name.toLowerCase();
+        if (name.includes('radius') || name.includes('corner')) tokens.radius.push(val);
+        else if (name.includes('space') || name.includes('gap') || name.includes('padding') || name.includes('margin')) tokens.spacing.push(val);
+      }
+    }
+    if (Object.keys(tokens.colors).length > 0) { tokens.source = 'variables'; return JSON.stringify(tokens); }
+  }
+} catch(e) { /* variables API may not be available */ }
+
+// Step 2: Local styles (legacy design system)
+try {
+  const paintStyles = figma.getLocalPaintStyles();
+  for (const s of paintStyles) {
+    if (s.paints.length > 0 && s.paints[0].type === 'SOLID') {
+      tokens.colors[s.name] = rgbaToHex(s.paints[0].color);
+    }
+  }
+  const textStyles = figma.getLocalTextStyles();
+  for (const s of textStyles) {
+    tokens.typography[s.name] = s.fontSize + 'px ' + (s.fontName?.style || 'Regular');
+  }
+  if (Object.keys(tokens.colors).length > 0 || Object.keys(tokens.typography).length > 0) {
+    tokens.source = 'styles';
+    return JSON.stringify(tokens);
+  }
+} catch(e) { /* best-effort */ }
+
+// Step 3: Infer from existing content on the page
+try {
+  const colorFreq = {};
+  const fontSizes = new Set();
+  const radii = new Set();
+  const spacings = new Set();
+
+  function walk(node) {
+    if ('fills' in node && Array.isArray(node.fills)) {
+      for (const f of node.fills) {
+        if (f.type === 'SOLID' && f.visible !== false) {
+          const hex = rgbaToHex(f.color);
+          colorFreq[hex] = (colorFreq[hex] || 0) + 1;
+        }
+      }
+    }
+    if (node.type === 'TEXT' && 'fontSize' in node && typeof node.fontSize === 'number') {
+      fontSizes.add(node.fontSize);
+    }
+    if ('cornerRadius' in node && typeof node.cornerRadius === 'number' && node.cornerRadius > 0) {
+      radii.add(node.cornerRadius);
+    }
+    if ('itemSpacing' in node && typeof node.itemSpacing === 'number' && node.itemSpacing > 0) {
+      spacings.add(node.itemSpacing);
+    }
+    if ('paddingTop' in node && typeof node.paddingTop === 'number' && node.paddingTop > 0) {
+      spacings.add(node.paddingTop);
+    }
+    if ('children' in node) { for (const c of node.children) walk(c); }
+  }
+  for (const child of figma.currentPage.children) walk(child);
+
+  // Take top colors by frequency
+  const sortedColors = Object.entries(colorFreq).sort((a, b) => b[1] - a[1]).slice(0, 12);
+  for (const [hex, count] of sortedColors) tokens.colors['color_' + sortedColors.indexOf([hex, count])] = hex;
+  // Deduplicate: rebuild from sorted
+  tokens.colors = {};
+  sortedColors.forEach(([hex], i) => { tokens.colors['inferred_' + (i + 1)] = hex; });
+
+  tokens.typography = {};
+  [...fontSizes].sort((a, b) => b - a).slice(0, 6).forEach((s, i) => { tokens.typography['size_' + (i + 1)] = s + 'px'; });
+  tokens.radius = [...radii].sort((a, b) => a - b).slice(0, 5);
+  tokens.spacing = [...spacings].sort((a, b) => a - b).slice(0, 8);
+
+  if (Object.keys(tokens.colors).length > 0) { tokens.source = 'inferred'; return JSON.stringify(tokens); }
+} catch(e) { /* best-effort */ }
+
+// Step 4: Empty file — no tokens to extract
+return JSON.stringify({ source: 'none' });
+`;
+
+/**
+ * Extracts design tokens from a Figma file via a single plugin call.
+ * Returns a compact token description string for the agent prompt, or undefined if no tokens found.
+ */
+async function extractDesignTokens(clientId: string, userId: string, workflowId: string): Promise<string | undefined> {
+  try {
+    const result = await executeFigmaCode({
+      pluginClientId: clientId,
+      userId,
+      code: DESIGN_TOKENS_EXTRACTION_CODE,
+      workflowId,
+    });
+    if (!result.success || !result.result) return undefined;
+    const tokens = JSON.parse(String(result.result));
+    if (tokens.source === "none") return undefined;
+
+    // Format tokens as a compact readable string for the agent prompt
+    const parts: string[] = [];
+    parts.push("Source: " + tokens.source);
+
+    if (tokens.colors && Object.keys(tokens.colors).length > 0) {
+      const colorList = Object.entries(tokens.colors).map(([name, hex]) => "  " + name + ": " + hex).join("\n");
+      parts.push("Colors:\n" + colorList);
+    }
+    if (tokens.typography && Object.keys(tokens.typography).length > 0) {
+      const typoList = Object.entries(tokens.typography).map(([name, val]) => "  " + name + ": " + val).join("\n");
+      parts.push("Typography:\n" + typoList);
+    }
+    if (tokens.spacing?.length > 0) {
+      parts.push("Spacing scale: " + tokens.spacing.join(", "));
+    }
+    if (tokens.radius?.length > 0) {
+      parts.push("Border radius: " + tokens.radius.join(", "));
+    }
+    return parts.join("\n");
+  } catch {
+    return undefined;
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Shared canvas capture helpers (used by both handleReviewAndExecute and handleExecuteExternalTool)
 // ---------------------------------------------------------------------------
 
-const SNAPSHOT_CODE = `return JSON.stringify(figma.currentPage.children.map(n => ({
+// Base64 encoding helper (inlined in generated Figma code to avoid external deps)
+const BASE64_ENCODE_SNIPPET = `const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+function toB64(bytes) {
+  let r = '';
+  for (let i = 0; i < bytes.length; i += 3) {
+    const a = bytes[i], b = bytes[i+1] || 0, c = bytes[i+2] || 0;
+    r += chars[a >> 2] + chars[((a & 3) << 4) | (b >> 4)] + (i+1 < bytes.length ? chars[((b & 15) << 2) | (c >> 6)] : '=') + (i+2 < bytes.length ? chars[c & 63] : '=');
+  }
+  return r;
+}`;
+
+// Combined snapshot + screenshot in a single plugin call (was 2 separate calls)
+function buildSnapshotAndScreenshotCode(screenshotTargetExpr: string): string {
+  return `${BASE64_ENCODE_SNIPPET}
+const nodes = figma.currentPage.children.map(n => ({
   id: n.id, name: n.name,
   childCount: 'children' in n ? n.children.length : 0,
   width: Math.round(n.width), height: Math.round(n.height),
   fillHash: 'fills' in n ? JSON.stringify(n.fills).slice(0, 100) : '',
-})));`;
-
-function buildScreenshotCode(targetExpr: string): string {
-  return `const target = ${targetExpr};
-if (!target) return null;
-const bytes = await target.exportAsync({ format: 'PNG', constraint: { type: 'SCALE', value: 0.25 } });
-const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
-let r = '';
-for (let i = 0; i < bytes.length; i += 3) {
-  const a = bytes[i], b = bytes[i+1] || 0, c = bytes[i+2] || 0;
-  r += chars[a >> 2] + chars[((a & 3) << 4) | (b >> 4)] + (i+1 < bytes.length ? chars[((b & 15) << 2) | (c >> 6)] : '=') + (i+2 < bytes.length ? chars[c & 63] : '=');
+}));
+let screenshot = null;
+const target = ${screenshotTargetExpr};
+if (target) {
+  const bytes = await target.exportAsync({ format: 'PNG', constraint: { type: 'SCALE', value: 0.25 } });
+  screenshot = toB64(bytes);
 }
-return r;`;
+return JSON.stringify({ nodes, screenshot });`;
 }
 
-function buildDiffCode(beforeIds: string[], beforeNodeProps: Record<string, unknown>): string {
+// Combined diff + screenshot in a single plugin call (was 2 separate calls)
+function buildDiffAndScreenshotCode(beforeIds: string[], beforeNodeProps: Record<string, unknown>, screenshotTargetExpr: string): string {
   const beforeSet = JSON.stringify(beforeIds);
   const prevProps = JSON.stringify(beforeNodeProps);
-  return `const before = new Set(${beforeSet});
+  return `${BASE64_ENCODE_SNIPPET}
+const before = new Set(${beforeSet});
 const prevProps = ${prevProps};
 const children = figma.currentPage.children;
 const added = children.filter(n => !before.has(n.id));
@@ -303,7 +462,14 @@ const describe = n => ({ id: n.id, name: n.name, type: n.type, x: Math.round(n.x
 const modified = [];
 for (const n of children) { if (!before.has(n.id)) continue; const prev = prevProps[n.id]; if (!prev) continue; const changes = []; const cc = 'children' in n ? n.children.length : 0; if (cc !== prev.childCount) changes.push('children: '+prev.childCount+'→'+cc); if (n.name !== prev.name) changes.push('name: '+prev.name+'→'+n.name); if (Math.round(n.width) !== prev.width || Math.round(n.height) !== prev.height) changes.push('size: '+prev.width+'x'+prev.height+'→'+Math.round(n.width)+'x'+Math.round(n.height)); const currFillHash = 'fills' in n ? JSON.stringify(n.fills).slice(0,100) : ''; if (currFillHash !== prev.fillHash) changes.push('fills changed'); if (changes.length > 0) modified.push({ id: n.id, name: n.name, changes }); }
 const removed = ${beforeSet}.filter(id => !children.find(n => n.id === id));
-return JSON.stringify({ added: added.map(describe), modified, removedCount: removed.length, totalChildren: children.length });`;
+const diff = { added: added.map(describe), modified, removedCount: removed.length, totalChildren: children.length };
+let screenshot = null;
+const target = ${screenshotTargetExpr};
+if (target) {
+  const bytes = await target.exportAsync({ format: 'PNG', constraint: { type: 'SCALE', value: 0.25 } });
+  screenshot = toB64(bytes);
+}
+return JSON.stringify({ diff, screenshot });`;
 }
 
 type CanvasSnapshot = {
@@ -312,32 +478,35 @@ type CanvasSnapshot = {
   screenshot?: string;
 };
 
+// Single plugin call: captures node list + screenshot (was 2 calls)
 async function captureCanvasSnapshot(clientId: string, userId: string, workflowId: string, screenshotTargetExpr?: string): Promise<CanvasSnapshot> {
   const snap: CanvasSnapshot = { ids: [], nodeProps: {} };
   try {
-    const result = await executeFigmaCode({ pluginClientId: clientId, userId, code: SNAPSHOT_CODE, workflowId });
+    const code = buildSnapshotAndScreenshotCode(screenshotTargetExpr ?? "figma.currentPage");
+    const result = await executeFigmaCode({ pluginClientId: clientId, userId, code, workflowId });
     if (result.success && result.result) {
       const parsed = JSON.parse(String(result.result));
-      snap.ids = parsed.map((n: { id: string }) => n.id);
-      snap.nodeProps = Object.fromEntries(parsed.map((n: { id: string; name: string; childCount: number; width: number; height: number; fillHash: string }) =>
+      const nodes = parsed.nodes ?? [];
+      snap.ids = nodes.map((n: { id: string }) => n.id);
+      snap.nodeProps = Object.fromEntries(nodes.map((n: { id: string; name: string; childCount: number; width: number; height: number; fillHash: string }) =>
         [n.id, { name: n.name, childCount: n.childCount, width: n.width, height: n.height, fillHash: n.fillHash }]));
+      if (parsed.screenshot) snap.screenshot = String(parsed.screenshot).slice(0, 500_000);
     }
-    const ssCode = buildScreenshotCode(screenshotTargetExpr ?? "figma.currentPage");
-    const ssResult = await executeFigmaCode({ pluginClientId: clientId, userId, code: ssCode, workflowId });
-    if (ssResult.success && ssResult.result) snap.screenshot = String(ssResult.result).slice(0, 500_000);
   } catch { /* best-effort */ }
   return snap;
 }
 
+// Single plugin call: computes diff + captures screenshot (was 2 calls)
 async function captureCanvasDiff(clientId: string, userId: string, workflowId: string, before: CanvasSnapshot, screenshotTargetExpr?: string): Promise<{ diff?: string; screenshot?: string }> {
   const result: { diff?: string; screenshot?: string } = {};
   try {
-    const diffCode = buildDiffCode(before.ids, before.nodeProps);
-    const diffResult = await executeFigmaCode({ pluginClientId: clientId, userId, code: diffCode, workflowId });
-    if (diffResult.success && diffResult.result) result.diff = String(diffResult.result).slice(0, 2000);
-    const ssCode = buildScreenshotCode(screenshotTargetExpr ?? "figma.currentPage");
-    const ssResult = await executeFigmaCode({ pluginClientId: clientId, userId, code: ssCode, workflowId });
-    if (ssResult.success && ssResult.result) result.screenshot = String(ssResult.result).slice(0, 500_000);
+    const code = buildDiffAndScreenshotCode(before.ids, before.nodeProps, screenshotTargetExpr ?? "figma.currentPage");
+    const execResult = await executeFigmaCode({ pluginClientId: clientId, userId, code, workflowId });
+    if (execResult.success && execResult.result) {
+      const parsed = JSON.parse(String(execResult.result));
+      if (parsed.diff) result.diff = JSON.stringify(parsed.diff).slice(0, 2000);
+      if (parsed.screenshot) result.screenshot = String(parsed.screenshot).slice(0, 500_000);
+    }
   } catch { /* best-effort */ }
   return result;
 }
@@ -1066,7 +1235,16 @@ export async function agentWorkflow(input: AgentWorkflowInput): Promise<void> {
     }
   }
 
-  // ── Inject system prompt (includes task context) ────────────────────────
+  // ── Extract design tokens from Figma file (Phase 0.1) ─────────────────
+  let designTokens: string | undefined;
+  if (input.agent.pluginClientId) {
+    designTokens = await extractDesignTokens(input.agent.pluginClientId, input.userId, state.orchestratorWorkflowId);
+    if (designTokens) {
+      state.designTokens = designTokens;
+    }
+  }
+
+  // ── Inject system prompt (includes task context + design tokens) ───────
   const peerAgents = Array.from(state.agentDirectory.values());
   const hasExternalFigmaTools = input.mcpServerIds?.includes("figma_console_local") || input.mcpServerIds?.includes("figma_console");
   const systemPrompt = buildAgentSystemPrompt(
@@ -1074,7 +1252,7 @@ export async function agentWorkflow(input: AgentWorkflowInput): Promise<void> {
     "orchestrator",
     peerAgents,
     input.task,
-    { hasExternalFigmaTools },
+    { hasExternalFigmaTools, designTokens },
     state.metadataFormat
   );
   state.messageHistory.push({

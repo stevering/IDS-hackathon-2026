@@ -321,3 +321,44 @@ The supplement (~80 lines) is injected as a `role: "user"` message with `event="
 When `figmaconsole_figma_execute` is in `state.externalTools`:
 - Engine-built `figma_plugin_execute` is **not added** (avoids duplicate raw code capability)
 - `lookup_figma_docs` is always available (for on-demand full API docs)
+
+## Design Quality — Phase 0 (Orchestration V2)
+
+Improvements to output quality without changing the multi-agent architecture.
+
+### Design Tokens Resolution (agent.ts → extractDesignTokens)
+
+At agent startup (before system prompt injection), Figma agents extract design tokens from the file via a single `executeFigmaCode` call. Cascade (stops at first hit):
+
+1. **Local variables** — `figma.variables.getLocalVariableCollections()` / `getLocalVariables()` → COLOR, FLOAT (spacing/radius)
+2. **Local styles** — `figma.getLocalPaintStyles()`, `getLocalTextStyles()`, `getLocalEffectStyles()`
+3. **Infer from content** — walk page nodes, sample dominant colors, font sizes, spacing, radius
+4. **None** — empty file, no tokens extracted
+
+Extracted tokens are stored in `state.designTokens` and injected into the agent system prompt via `buildAgentSystemPrompt(options.designTokens)`.
+
+### Screenshots in Agent Tool Results (llm.ts)
+
+Tool result messages (`role: "tool"`) with attached images (before/after screenshots from `figma_plugin_execute`) now inject a synthetic `role: "user"` message with the screenshots immediately after the tool result. This allows the agent LLM to see its visual output and self-correct.
+
+### Pipeline Overhead Reduction (agent.ts)
+
+The `figma_plugin_execute` pipeline was optimized from 5 to 3 `executeFigmaCode` calls per execution:
+
+| Before | After |
+|---|---|
+| 1. Snapshot (node list) | 1. Snapshot + screenshot (combined) |
+| 2. Screenshot (before) | 2. Execute code |
+| 3. Execute code | 3. Diff + screenshot (combined) |
+| 4. Diff (after) | |
+| 5. Screenshot (after) | |
+
+Combined via `buildSnapshotAndScreenshotCode()` and `buildDiffAndScreenshotCode()` — each returns a JSON object with both the structured data and base64 screenshot.
+
+### Orchestrator as Creative Director (system-prompts.ts)
+
+The orchestrator prompt was rewritten to give **design intentions** instead of pixel-perfect specs:
+- Good: "Add a Hero section with the product name, tagline, and a CTA"
+- Bad: "Create frame 1440x1024, fill #0A0F1C, vertical auto-layout, 40px gap"
+
+Agents have design tokens + API reference + vision (screenshots) and decide implementation details autonomously.

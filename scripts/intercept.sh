@@ -5,8 +5,10 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 export $(grep -v '^#' "$SCRIPT_DIR/.env.local" | grep STORAGE_SUPABASE_SERVICE_ROLE_KEY | xargs)
 KEY="$STORAGE_SUPABASE_SERVICE_ROLE_KEY"
-USER_ID="6285962c-02a9-4c20-92e0-9d144de99630"
-BASE="https://ookghxkvzdnqicjdslej.supabase.co/rest/v1/intercept_queue"
+USER_ID="0b2a7257-14f3-4098-9554-9e65e66bf2b3"
+# Use local Supabase if STORAGE_SUPABASE_URL is set, otherwise cloud
+export $(grep -v '^#' "$SCRIPT_DIR/.env.local" | grep STORAGE_SUPABASE_URL= | xargs) 2>/dev/null || true
+BASE="${STORAGE_SUPABASE_URL:-https://ookghxkvzdnqicjdslej.supabase.co}/rest/v1/intercept_queue"
 STREAM="http://localhost:3000/api/intercept/stream"
 HDRS=(-H "apikey: $KEY" -H "Authorization: Bearer $KEY")
 

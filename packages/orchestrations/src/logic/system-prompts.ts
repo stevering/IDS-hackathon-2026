@@ -18,14 +18,25 @@ import { FIGMA_API_QUICK_REFERENCE, FIGMA_HIGHLEVEL_TOOLS_SUPPLEMENT } from "./f
  * without coupling the generic orchestration logic to any domain.
  */
 const FIGMA_PLUGIN_ORCHESTRATOR_HINTS = `
-### Figma plugin agents
-- These agents create visual elements in Figma step by step. Each step may return a node ID (e.g., "123:456").
-- Include SPECIFIC visual values in directives: dimensions, colors (hex), spacing, font sizes — do not leave visual decisions to the agent.
+### Figma plugin agents — you are the creative director
+- These agents create visual elements in Figma. They have their own design knowledge, API reference, and extracted design tokens from the file.
+- Give DESIGN INTENTIONS, not pixel-perfect specs. The agent decides dimensions, exact spacing, and layout implementation.
+- Focus on WHAT and WHY: the section's purpose, its content, and the visual mood — not HOW to implement it.
 - Reference node IDs from previous reports in follow-up directives so the agent can build on existing work.
 - NEVER write or execute Figma code yourself — agents do the work.
-- Example directive sequence:
-  1. "Create the root container frame: 1200x900, white, vertical auto-layout, 40px spacing"
-  2. (after report with ID) "Add a color palette to container 123:456 with Primary #2563EB, Secondary #7C3AED"`;
+- If the agent has design tokens from the file, trust it to use them. Only specify colors/fonts if the task requires specific values not in the existing design system.
+
+Good directive examples (design intent):
+  1. "Create the main container for a dark premium SaaS dashboard. It should feel spacious and modern."
+  2. (after report with ID) "Add a Hero section to container 123:456 with the product name 'Guardian', a tagline about AI-powered design, and a primary CTA button."
+  3. "Add a stats overview section with 4 KPI cards (Users, Revenue, Orders, Conversion) showing sample data."
+  4. "Add a sidebar navigation with icons for Dashboard, Projects, Settings, and Help."
+
+Bad directive examples (micro-managing — avoid these):
+  ✗ "Create frame 1440x1024, fill #0A0F1C, vertical auto-layout, 40px gap, padding 48px"
+  ✗ "Add text node: Inter Bold 64px #FFFFFF, characters='Guardian'"
+  ✗ "Create rectangle 200x48 corner-radius 12 fill #3B82F6"`;
+
 
 // Future: add WEB_ORCHESTRATOR_HINTS, CLOUD_ORCHESTRATOR_HINTS, etc.
 
@@ -79,8 +90,9 @@ For complex tasks, use SEQUENTIAL directives:
 4. Continue this pattern for each step
 
 Key principles:
-- Be SPECIFIC in directives: include concrete values, not vague instructions
-- One directive = one verifiable deliverable
+- Describe the DESIGN INTENT: what the section should contain, its purpose, and the visual feel
+- Let agents handle implementation details — they have design tokens and API knowledge
+- One directive = one verifiable deliverable (one complete section)
 - If the agent reports failure, send a SIMPLER version — do NOT repeat the same directive
 ${typeHintsSection}
 
@@ -121,7 +133,7 @@ export function buildAgentSystemPrompt(
   orchestratorShortId: string,
   peerAgents: AgentId[],
   task?: string,
-  options?: { hasExternalFigmaTools?: boolean },
+  options?: { hasExternalFigmaTools?: boolean; designTokens?: string },
   metadataFormat: "xml" | "bracket" = "xml"
 ): string {
   const peerList = peerAgents
@@ -181,12 +193,14 @@ Write a numbered plan. For each step, state:
 - What inputs it needs (e.g., "none" or "container ID from step 1")
 - What it returns (e.g., "frame node ID via return node.id")
 
-SIZING RULES:
+SIZING RULES (CRITICAL — follow these exactly):
 - Step 1 ALWAYS creates the root container and returns its ID
-- Each subsequent step adds ONE section to the container
+- Each subsequent step adds ONE COMPLETE section to the container — including ALL children (text, shapes, sub-frames)
 - Target 30-80 lines per call (max 150 — hard limit enforced)
 - Create a parent frame AND all its children in the SAME call
-- NEVER split a visual group (e.g., a row of swatches) across two calls
+- NEVER split a visual group (e.g., a row of swatches, a card with its contents) across two calls
+- Load ALL fonts you need at the top of each call, before creating any text nodes
+- See the "Complete section example" in the API reference for the expected code structure
 
 ### Phase 2: EXECUTE step by step
 After each call, the system returns:
@@ -218,6 +232,14 @@ If a step fails:
 
 ### Figma API Quick Reference
 ${FIGMA_API_QUICK_REFERENCE}`)
+    : "";
+
+  // Design tokens section (extracted from the Figma file at agent startup)
+  const designTokensSection = options?.designTokens
+    ? `
+## Design tokens (from file)
+The following design tokens were extracted from the Figma file. Use these values — do NOT invent colors, spacing, or typography that contradicts this token set.
+${options.designTokens}`
     : "";
 
   // Ensure shortIds display with exactly one "#" prefix
@@ -258,7 +280,7 @@ ${taskSection}
 - broadcast_message: Send a message to all agents (use sparingly)
 - start_sub_conversation: Open a scoped discussion with specific agents
 - close_sub_conversation: Close an active sub-conversation
-${figmaSection}
+${figmaSection}${designTokensSection}
 
 ## Rules
 - WORK AUTONOMOUSLY on your assigned task once you receive a directive

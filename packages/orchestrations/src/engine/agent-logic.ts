@@ -91,6 +91,8 @@ export type AgentWorkflowState = {
   metadataFormat?: MetadataFormat;
   /** Whether the Figma API supplement has been lazy-injected (on first figma_execute call) */
   figmaApiDocsInjected?: boolean;
+  /** Design tokens extracted from the Figma file at startup (compact JSON string) */
+  designTokens?: string;
 };
 
 // ---------------------------------------------------------------------------

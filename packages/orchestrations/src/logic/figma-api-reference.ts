@@ -190,6 +190,42 @@ child.layoutPositioning = "ABSOLUTE";    // "AUTO" | "ABSOLUTE" (absolute within
 | .clone() | node | Duplicate |
 | .exportAsync(settings?) | Promise<Uint8Array> | Export as image |
 
+### Variables API (design tokens)
+\`\`\`js
+// Read local variables
+const collections = figma.variables.getLocalVariableCollections();
+const vars = figma.variables.getLocalVariables();
+
+// Create variable collection
+const collection = figma.variables.createVariableCollection("Colors");
+const mode = collection.modes[0];
+
+// Create and set variable
+const colorVar = figma.variables.createVariable("primary", collection, "COLOR");
+colorVar.setValueForMode(mode.modeId, { r: 0.15, g: 0.39, b: 0.92 });
+
+// Bind variable to node property
+node.setBoundVariable("fills", 0, colorVar);    // bind fill[0] to variable
+node.setBoundVariable("itemSpacing", colorVar);  // bind spacing
+
+// Read variable values
+const val = variable.valuesByMode[modeId];       // returns color/float/string value
+\`\`\`
+
+### ComponentNode
+\`\`\`js
+// Create component
+const comp = figma.createComponent();
+comp.name = "Button";
+comp.resize(140, 44);
+// Add children to component, then create instances:
+const instance = comp.createInstance();
+
+// Variants: create multiple components, then combine
+const variants = [primaryBtn, secondaryBtn];
+const componentSet = figma.combineAsVariants(variants, parent);
+\`\`\`
+
 ### CRITICAL GOTCHAS
 1. Colors: Solid fills/strokes use { r, g, b } in 0-1 range. NO 'a' key. Use paint-level opacity instead.
 2. Effects colors: Effects (shadows) DO use { r, g, b, a }. Always include blendMode and visible.
@@ -208,6 +244,91 @@ child.layoutPositioning = "ABSOLUTE";    // "AUTO" | "ABSOLUTE" (absolute within
 15. Only Frame, Group, Component, ComponentSet support .appendChild(). Rectangle does NOT.
 16. figma object is sealed: Access mutable properties through figma.currentPage or node references
 17. Triangles: Use figma.createPolygon() with .pointCount = 3, NOT figma.createStar()
+
+### Complete section example (target: 30-80 lines per call)
+\`\`\`js
+// Create a Stats section with 4 KPI cards — ALL in one call
+await figma.loadFontAsync({ family: "Inter", style: "Regular" });
+await figma.loadFontAsync({ family: "Inter", style: "Bold" });
+
+const parent = await figma.getNodeByIdAsync("CONTAINER_ID");
+
+// Section wrapper
+const section = figma.createFrame();
+section.name = "Stats Overview";
+section.layoutMode = "VERTICAL";
+section.itemSpacing = 16;
+section.paddingTop = 24; section.paddingRight = 24;
+section.paddingBottom = 24; section.paddingLeft = 24;
+section.primaryAxisSizingMode = "AUTO";
+section.counterAxisSizingMode = "AUTO";
+section.layoutSizingHorizontal = "FILL";
+section.fills = [];
+
+// Section title
+const title = figma.createText();
+title.characters = "Performance Overview";
+title.fontSize = 20;
+title.fontName = { family: "Inter", style: "Bold" };
+title.fills = [{ type: 'SOLID', color: { r: 1, g: 1, b: 1 } }];
+section.appendChild(title);
+
+// Cards row
+const row = figma.createFrame();
+row.name = "Cards";
+row.layoutMode = "HORIZONTAL";
+row.itemSpacing = 16;
+row.primaryAxisSizingMode = "AUTO";
+row.counterAxisSizingMode = "AUTO";
+row.fills = [];
+
+const stats = [
+  { label: "Users", value: "12,458", delta: "+12%" },
+  { label: "Revenue", value: "$84.2K", delta: "+8%" },
+  { label: "Orders", value: "1,234", delta: "+23%" },
+  { label: "Conversion", value: "3.2%", delta: "-2%" },
+];
+
+for (const s of stats) {
+  const card = figma.createFrame();
+  card.name = s.label;
+  card.layoutMode = "VERTICAL";
+  card.itemSpacing = 8;
+  card.paddingTop = 16; card.paddingRight = 20;
+  card.paddingBottom = 16; card.paddingLeft = 20;
+  card.primaryAxisSizingMode = "AUTO";
+  card.counterAxisSizingMode = "AUTO";
+  card.cornerRadius = 12;
+  card.fills = [{ type: 'SOLID', color: { r: 0.12, g: 0.16, b: 0.24 } }];
+
+  const lbl = figma.createText();
+  lbl.characters = s.label;
+  lbl.fontSize = 12;
+  lbl.fills = [{ type: 'SOLID', color: { r: 0.6, g: 0.6, b: 0.7 } }];
+  card.appendChild(lbl);
+
+  const val = figma.createText();
+  val.characters = s.value;
+  val.fontSize = 28;
+  val.fontName = { family: "Inter", style: "Bold" };
+  val.fills = [{ type: 'SOLID', color: { r: 1, g: 1, b: 1 } }];
+  card.appendChild(val);
+
+  const delta = figma.createText();
+  delta.characters = s.delta;
+  delta.fontSize = 14;
+  delta.fills = [{ type: 'SOLID', color: s.delta.startsWith('+')
+    ? { r: 0.2, g: 0.8, b: 0.4 }
+    : { r: 0.9, g: 0.3, b: 0.3 } }];
+  card.appendChild(delta);
+
+  row.appendChild(card);
+}
+
+section.appendChild(row);
+parent.appendChild(section);
+return section.id;
+\`\`\`
 `;
 
 // ---------------------------------------------------------------------------

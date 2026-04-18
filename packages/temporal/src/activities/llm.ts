@@ -436,6 +436,19 @@ async function callLLMDirect(params: LLMCallParams): Promise<LLMCallResult> {
         role: "tool",
         content: [{ type: "tool-result", toolCallId: tcId, toolName: toolCallNames.get(tcId) ?? "unknown", output: { type: "text", value: m.content } }],
       });
+      // If tool result has images (e.g. before/after screenshots from figma_plugin_execute),
+      // inject a synthetic user message so the model can see the visual result.
+      if (m.images?.length) {
+        const imgParts: Array<{ type: "text"; text: string } | { type: "image"; image: string }> = [
+          { type: "text", text: m.images.length === 2
+            ? "Screenshots from execution — first image is BEFORE, second image is AFTER:"
+            : "Screenshot from execution:" },
+        ];
+        for (const img of m.images) {
+          imgParts.push({ type: "image", image: img });
+        }
+        messages.push({ role: "user", content: imgParts });
+      }
       continue;
     }
     // Multimodal: if the message has images, use content parts array
