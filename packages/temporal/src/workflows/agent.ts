@@ -193,6 +193,155 @@ function parseFileReviewResponse(content: string): { status: "verified" | "issue
   return { status: "verified", verdict: content.trim().slice(0, 200) };
 }
 
+// ---------------------------------------------------------------------------
+// Designer review — vision LLM evaluates canvas screenshot (Phase 1)
+// ---------------------------------------------------------------------------
+
+const DESIGNER_REVIEW_SYSTEM_PROMPT = `You are a senior visual designer reviewing a Figma canvas screenshot.
+
+Your job is to evaluate the visual quality against the directive and design tokens. Focus on:
+- Layout structure (alignment, spacing rhythm, visual hierarchy)
+- Typography (sizes, weights, readability, contrast)
+- Color usage (consistency with tokens, contrast, accessibility)
+- Completeness (all requested elements present)
+
+Categorize each issue:
+- "must": Visually broken — illegible text, color clash, missing element, broken alignment
+- "nice": Aesthetic preference — shadow softness, spacing fine-tuning, color shade adjustment
+
+Respond with ONLY valid JSON (no markdown, no code fences):
+{"approved": true} if the design is acceptable
+{"approved": false, "corrections": [{"priority": "must", "description": "..."}, {"priority": "nice", "description": "..."}]} if issues found
+
+Rules:
+- Accept "good enough" — perfection is the enemy of delivery
+- Max 5 corrections total
+- Only flag "must" if something is truly broken or illegible
+- If the overall structure is correct and readable, approve it`;
+
+function parseDesignerResponse(content: string): { approved: boolean; corrections: Array<{ priority: "must" | "nice"; description: string }> } {
+  try {
+    // Try to extract JSON from the response (may be wrapped in markdown fences)
+    const jsonMatch = content.match(/\{[\s\S]*\}/);
+    if (jsonMatch) {
+      const parsed = JSON.parse(jsonMatch[0]);
+      return {
+        approved: parsed.approved ?? true,
+        corrections: parsed.corrections ?? [],
+      };
+    }
+  } catch { /* parsing failed */ }
+  // Default to approved if parsing fails
+  return { approved: true, corrections: [] };
+}
+
+async function handleConsultDesigner(
+  state: AgentWorkflowState,
+  effect: Extract<AgentEffect, { type: "consult_designer" }>,
+  userId: string,
+  callLLM: LLMActivities["callLLM"],
+  model?: string
+): Promise<void> {
+  const clientId = effect.pluginClientId;
+
+  // Capture current canvas screenshot
+  let screenshot: string | undefined;
+  try {
+    const ssCode = buildSnapshotAndScreenshotCode("figma.currentPage");
+    const ssResult = await executeFigmaCode({ pluginClientId: clientId, userId, code: ssCode, workflowId: state.orchestratorWorkflowId });
+    if (ssResult.success && ssResult.result) {
+      const parsed = JSON.parse(String(ssResult.result));
+      screenshot = parsed.screenshot ? String(parsed.screenshot).slice(0, 500_000) : undefined;
+    }
+  } catch { /* best-effort */ }
+
+  // Build the review prompt with context
+  const contextParts: string[] = [];
+  if (state.lastDirectiveContent) {
+    contextParts.push("Directive: " + state.lastDirectiveContent);
+  }
+  if (state.designTokens) {
+    contextParts.push("Design tokens:\n" + state.designTokens);
+  }
+  contextParts.push("Evaluate the screenshot against the directive. Return JSON with approved + corrections.");
+
+  const userContent = contextParts.join("\n\n");
+  const images = screenshot ? [screenshot] : [];
+
+  // Call a separate vision-capable LLM (not the same as the agent model)
+  // Use purpose "file_review" to route through the same model resolution path
+  const tracing = {
+    conversationType: "orchestration" as const,
+    orchestrationId: state.orchestratorWorkflowId,
+    agentShortId: state.agent.shortId,
+    currentDirective: state.lastDirectiveContent,
+    stepCount: state.stepCount,
+    execStats: state.execStats,
+    devLLMDelegation: state.devLLMDelegation,
+    devSlowDelegation: state.devSlowDelegation,
+  };
+
+  try {
+    const reviewResult = await callLLM({
+      messages: [
+        { role: "system", content: DESIGNER_REVIEW_SYSTEM_PROMPT },
+        { role: "user", content: userContent, images: images.length > 0 ? images : undefined },
+      ],
+      userId,
+      model, // Uses the same model for now; Phase 4.3 will add dedicated designer model
+      maxTokens: 1024,
+      purpose: "file_review",
+      tracing,
+    });
+
+    // Emit designer review activity
+    await executeEffect(state, {
+      type: "emit_activity",
+      activities: [{
+        action: "guardian_message" as const,
+        recipient: `agent ${state.agent.shortId}`,
+        message: `[designer_review] ${reviewResult.content}`,
+      }],
+    }, userId);
+
+    const review = parseDesignerResponse(reviewResult.content);
+
+    // Separate must vs nice corrections
+    const mustCorrections = review.corrections.filter(c => c.priority === "must");
+    const niceCorrections = review.corrections.filter(c => c.priority === "nice");
+
+    // Store nice corrections for future polish pass (Phase 2)
+    if (niceCorrections.length > 0) {
+      state.niceCorrections = [
+        ...(state.niceCorrections ?? []),
+        ...niceCorrections.map(c => c.description),
+      ];
+    }
+
+    // Build tool result
+    const result = {
+      approved: review.approved || mustCorrections.length === 0,
+      corrections: mustCorrections,
+      niceCorrectionsDeferred: niceCorrections.length,
+      message: review.approved
+        ? "Design approved. Proceed to signal_task_complete."
+        : mustCorrections.length > 0
+          ? "Must-fix corrections found. Apply them with figma_plugin_execute, then signal_task_complete (no re-review needed)."
+          : "Minor suggestions deferred to polish pass. Proceed to signal_task_complete.",
+    };
+
+    injectToolResult(state, effect.toolCallId, JSON.stringify(result), images.length > 0 ? images : undefined);
+  } catch (err) {
+    // Designer review is best-effort — if it fails, approve by default
+    console.error("[consult_designer] LLM call failed:", err);
+    injectToolResult(state, effect.toolCallId, JSON.stringify({
+      approved: true,
+      corrections: [],
+      message: "Designer review unavailable. Proceeding.",
+    }));
+  }
+}
+
 function parseReviewResponse(content: string): { approved: boolean; reason?: string } {
   const lines = content.trim().split("\n");
   let reason: string | undefined;
@@ -1332,6 +1481,9 @@ export async function agentWorkflow(input: AgentWorkflowInput): Promise<void> {
           if (rEffect.type === "review_and_execute_figma_code") {
             await handleReviewAndExecute(state, rEffect, input.userId, callLLM, input.model);
             didExecTool = true;
+          } else if (rEffect.type === "consult_designer") {
+            await handleConsultDesigner(state, rEffect, input.userId, callLLM, input.model);
+            didExecTool = true;
           } else if (rEffect.type === "fetch_figma_docs") {
             await handleFetchFigmaDocs(state, rEffect);
             didExecTool = true;
@@ -1404,6 +1556,10 @@ async function executeLLMLoop(
       if (effect.type === "emit_activity") continue;
       if (effect.type === "review_and_execute_figma_code") {
         await handleReviewAndExecute(state, effect, userId, callLLM, model);
+        didExecuteTool = true;
+        needsContinue = true;
+      } else if (effect.type === "consult_designer") {
+        await handleConsultDesigner(state, effect, userId, callLLM, model);
         didExecuteTool = true;
         needsContinue = true;
       } else if (effect.type === "execute_external_tool") {

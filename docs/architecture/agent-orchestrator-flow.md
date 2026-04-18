@@ -362,3 +362,29 @@ The orchestrator prompt was rewritten to give **design intentions** instead of p
 - Bad: "Create frame 1440x1024, fill #0A0F1C, vertical auto-layout, 40px gap"
 
 Agents have design tokens + API reference + vision (screenshots) and decide implementation details autonomously.
+
+## Design Quality — Phase 1 (consult_designer tool)
+
+After completing all executions for a directive, the agent can call `consult_designer` to get a visual quality review before signaling completion.
+
+### How it works
+
+1. Agent calls `consult_designer` (no parameters needed)
+2. The workflow captures a screenshot of the current canvas
+3. A separate vision-capable LLM reviews the screenshot against the directive and design tokens
+4. Returns JSON with `approved` + `corrections[]` (each with `priority: "must" | "nice"`)
+5. Agent applies "must" corrections with one more execution, then calls `signal_task_complete`
+6. "Nice" corrections are stored in `state.niceCorrections` for a future polish pass (Phase 2)
+
+### Anti-loop safeguards
+
+- Max 2 `consult_designer` calls per directive (hard limit in `getAgentTools`)
+- After corrections: NO re-review (trust the fix)
+- "Nice" corrections are deferred, not applied immediately
+- If the designer LLM fails, the tool returns `approved: true` (graceful degradation)
+
+### Files
+
+- `agent-logic.ts`: tool definition in `getAgentTools()`, dispatch in `processToolCall()`, state fields `designerConsultCount` and `niceCorrections`
+- `agent.ts`: `DESIGNER_REVIEW_SYSTEM_PROMPT`, `handleConsultDesigner()`, `parseDesignerResponse()`
+- `system-prompts.ts`: agent prompt updated with "Phase 3: REVIEW before completing"

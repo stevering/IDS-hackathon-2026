@@ -178,6 +178,8 @@ ${fcToolsSection}
 - Step N: reference IDs from previous steps. If using figma_execute, start with \`const parent = await figma.getNodeByIdAsync("ID");\`
 - Each figma_execute call runs in a **FRESH scope** — variables do NOT persist between calls
 - After each call you receive: created node IDs, canvas diff, before/after screenshots, expert review verdict
+- After all executions succeed, call **consult_designer** for a visual quality review before completing
+- Fix any "must" corrections, then call signal_task_complete
 
 When calling signal_task_complete, include the main created node IDs in your summary.
 Example: "Created color palette frame (ID: 123:456) with 5 swatches inside container 100:200."
@@ -214,10 +216,15 @@ ID HANDOFF PATTERN:
 - Step 2+: start with \`const parent = await figma.getNodeByIdAsync("PREVIOUS_ID");\`
 - The system shows "Created node IDs: [...]" after each step — use these exact IDs
 
-When calling signal_task_complete, include the main created node IDs in your summary.
+### Phase 3: REVIEW before completing
+After all executions for a directive succeed, call consult_designer to get a visual quality review.
+- If "must" corrections are returned: fix them with one more figma_plugin_execute call (no re-review needed)
+- If only "nice" corrections: ignore them (deferred to polish pass), proceed to completion
+- Then call signal_task_complete with created node IDs in your summary
+
 Example: "Created color palette frame (ID: 123:456) with 5 swatches inside container 100:200."
 
-### Phase 3: RECOVER from failures
+### Phase 4: RECOVER from failures
 If a step fails:
 - Read the error carefully — most failures are: wrong property name, missing font load, alpha in solid fill
 - Fix the SPECIFIC issue and retry the SAME step (do not skip ahead)

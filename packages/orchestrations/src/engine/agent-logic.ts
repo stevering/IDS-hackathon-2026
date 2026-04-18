@@ -93,6 +93,10 @@ export type AgentWorkflowState = {
   figmaApiDocsInjected?: boolean;
   /** Design tokens extracted from the Figma file at startup (compact JSON string) */
   designTokens?: string;
+  /** Number of consult_designer calls since the last directive (anti-loop, max 2) */
+  designerConsultCount?: number;
+  /** Accumulated "nice" corrections from consult_designer (for future polish pass) */
+  niceCorrections?: string[];
 };
 
 // ---------------------------------------------------------------------------
@@ -112,6 +116,7 @@ export type AgentEffect =
   | { type: "send_sub_conv_close"; targetWorkflowIds: string[]; close: SubConvClosePayload }
   | { type: "notify_orchestrator_sub_conv"; event: "opened" | "closed"; subConvId: string; participantIds: string[]; topic?: string; reason?: "completed" | "timeout" | "cancelled" }
   | { type: "execute_external_tool"; toolName: string; arguments: Record<string, unknown>; toolCallId: string }
+  | { type: "consult_designer"; toolCallId: string; pluginClientId: string }
   | { type: "emit_activity"; activities: AgentActivity[] }
   | { type: "wait_for_input" }
   | { type: "complete" };
@@ -155,6 +160,8 @@ export function handleDirective(state: AgentWorkflowState, directive: DirectiveP
   // Store the latest directive content — used by file review instead of the global task
   // so the reviewer judges against what THIS agent was asked to do, not the full orchestration task
   state.lastDirectiveContent = directive.content;
+  // Reset designer consultation counter per directive (Phase 1 anti-loop)
+  state.designerConsultCount = 0;
 }
 
 export function handlePeerMessage(state: AgentWorkflowState, message: PeerMessagePayload): void {
@@ -1226,6 +1233,31 @@ function processToolCall(
       break;
     }
 
+    case "consult_designer": {
+      activities.push({ action: "tool_call", toolName: tc.name, summary: "Requesting design review" });
+
+      // Anti-loop guard: max 2 consultations per directive
+      const consultCount = (state.designerConsultCount ?? 0) + 1;
+      state.designerConsultCount = consultCount;
+
+      if (consultCount > 2) {
+        injectToolResult(state, tc.id, JSON.stringify({
+          approved: true,
+          corrections: [],
+          message: "Max consultations reached (2). Proceeding without further review.",
+        }));
+        break;
+      }
+
+      // Delegate to workflow adapter — it will capture screenshot, call vision LLM, return corrections
+      effects.push({
+        type: "consult_designer",
+        toolCallId: tc.id,
+        pluginClientId: state.agent.pluginClientId ?? "",
+      });
+      break;
+    }
+
     case "lookup_figma_docs": {
       const args = tc.arguments as { topic?: string; mode?: string };
       const mode = args.mode ?? "quick";
@@ -1366,6 +1398,22 @@ function getAgentTools(state: AgentWorkflowState): LLMToolDefinition[] {
             code: { type: "string", description: "JavaScript code to execute in the Figma Plugin API" },
           },
           required: ["code"],
+        },
+      });
+    }
+
+    // Add consult_designer tool (Phase 1) — only if under the per-directive limit
+    if ((state.designerConsultCount ?? 0) < 2) {
+      tools.push({
+        name: "consult_designer",
+        description:
+          "Request a design review of the current canvas state. A separate vision-capable AI will examine the " +
+          "latest screenshot and compare it against the directive and design tokens. Returns corrections categorized " +
+          "as 'must' (fix now) or 'nice' (defer to polish pass). Call this ONCE after completing all executions for " +
+          "a directive, before calling signal_task_complete. Max 2 calls per directive.",
+        parameters: {
+          type: "object",
+          properties: {},
         },
       });
     }
