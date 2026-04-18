@@ -15,7 +15,7 @@ import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http"
 import { randomUUID } from "node:crypto"
 import { createGuardianServer } from "./server.js"
-import { handleOAuthDiscovery, handleOAuthProxy, verifyRequest, send401 } from "./auth.js"
+import { handleOAuthDiscovery, handleProtectedResourceMetadata, handleOAuthProxy, verifyRequest, send401 } from "./auth.js"
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js"
 
 const MODE = process.env.GUARDIAN_MCP_MODE ?? "stdio"
@@ -77,6 +77,16 @@ async function startHttpServer(port: number): Promise<void> {
        req.url === "/.well-known/oauth-authorization-server/mcp")
     ) {
       handleOAuthDiscovery(req, res, port)
+      return
+    }
+
+    // RFC 9728 Protected Resource Metadata — required by MCP spec 2025-06-18+
+    if (
+      req.method === "GET" &&
+      (req.url === "/.well-known/oauth-protected-resource" ||
+       req.url === "/.well-known/oauth-protected-resource/mcp")
+    ) {
+      handleProtectedResourceMetadata(req, res, port)
       return
     }
 

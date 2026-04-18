@@ -46,6 +46,19 @@ The server supports two transport modes via the `GUARDIAN_MCP_MODE` env variable
 
 HTTP mode is **session-based**: each client connection gets a unique `mcp-session-id` header, with its own server instance.
 
+## Authentication (HTTP mode)
+
+Every `/mcp` request must carry a Supabase JWT as a Bearer token. Two code paths produce valid tokens:
+
+| Caller | Flow | Token source |
+|---|---|---|
+| Internal (Temporal worker, webapp) | `service_role` key bypass with `X-Guardian-User-Id` header | `SUPABASE_SERVICE_ROLE_KEY` env var |
+| External MCP client (Claude Code, Cursor, VS Code…) | OAuth 2.1 with Dynamic Client Registration — discovery via `.well-known/oauth-protected-resource` (RFC 9728) | Supabase gotrue (user-scoped JWT) |
+
+`stdio` mode skips auth entirely (single local process).
+
+The OAuth flow, endpoints and Supabase config requirements are documented in [`docs/architecture/mcp-oauth.md`](../../docs/architecture/mcp-oauth.md).
+
 ## Tools
 
 ### Investigation tools (playbook-based)

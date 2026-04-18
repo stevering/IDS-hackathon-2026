@@ -224,7 +224,7 @@ This starts **everything**:
 | Supabase (API) | 54321 | - (Docker, started separately) |
 | Supabase (DB) | 54322 | - (Docker, started separately) |
 | Next.js webapp | 3000 | `@guardian/web` |
-| MCP server (HTTP) | 3847 | `@guardian/mcp-server` |
+| MCP server (HTTP) | 3847 | `@guardian/mcp-server` — external MCP clients (Claude Code, Cursor…) authenticate via OAuth 2.1 + DCR, see [`docs/architecture/mcp-oauth.md`](docs/architecture/mcp-oauth.md) |
 | Temporal dev server | 7233 | - |
 | Temporal worker | - | `@guardian/temporal` |
 | Figma plugin | - | `@guardian/figma-plugin` |

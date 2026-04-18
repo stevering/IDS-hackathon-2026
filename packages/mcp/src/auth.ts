@@ -98,6 +98,37 @@ export function handleOAuthDiscovery(req: IncomingMessage, res: ServerResponse, 
 }
 
 // ---------------------------------------------------------------------------
+// Protected Resource Metadata (RFC 9728) — required by MCP spec 2025-06-18+.
+// The MCP server advertises itself as a protected resource and points clients
+// to this server as the authorization server (the /.well-known/oauth-authorization-server
+// endpoint above handles the follow-up discovery).
+// ---------------------------------------------------------------------------
+
+export function buildProtectedResourceMetadata(localOrigin: string): Record<string, unknown> {
+  return {
+    resource: `${localOrigin}/mcp`,
+    authorization_servers: [localOrigin],
+    bearer_methods_supported: ["header"],
+    scopes_supported: ["openid", "email", "profile"],
+  }
+}
+
+/**
+ * Handle GET /.well-known/oauth-protected-resource
+ */
+export function handleProtectedResourceMetadata(req: IncomingMessage, res: ServerResponse, port: number): void {
+  const host = req.headers.host ?? `127.0.0.1:${port}`
+  const protocol = host.startsWith("localhost") || host.startsWith("127.0.0.1") ? "http" : "https"
+  const localOrigin = `${protocol}://${host}`
+  const metadata = buildProtectedResourceMetadata(localOrigin)
+  res.writeHead(200, {
+    "Content-Type": "application/json",
+    "Cache-Control": "public, max-age=3600",
+  })
+  res.end(JSON.stringify(metadata))
+}
+
+// ---------------------------------------------------------------------------
 // OAuth proxy — forwards requests to Supabase with the apikey header
 // ---------------------------------------------------------------------------
 
@@ -247,10 +278,10 @@ export function send401(req: IncomingMessage, res: ServerResponse, port: number)
   const host = req.headers.host ?? `127.0.0.1:${port}`
   const protocol = host.startsWith("localhost") || host.startsWith("127.0.0.1") ? "http" : "https"
   const localOrigin = `${protocol}://${host}`
-  const metadata = buildOAuthMetadata(localOrigin)
+  const resourceMetadataUrl = `${localOrigin}/.well-known/oauth-protected-resource`
   res.writeHead(401, {
     "Content-Type": "application/json",
-    "WWW-Authenticate": `Bearer resource_metadata="${metadata.issuer}"`,
+    "WWW-Authenticate": `Bearer resource_metadata="${resourceMetadataUrl}"`,
   })
   res.end(JSON.stringify({ error: "Unauthorized", message: "Valid Bearer token required." }))
 }

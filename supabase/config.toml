@@ -1,5 +1,12 @@
 # For detailed configuration reference documentation, visit:
 # https://supabase.com/docs/guides/local-development/cli/config
+#
+# SCOPE: local Docker development only. This file is NOT pushed to the cloud
+# project `ookghxkvzdnqicjdslej` — cloud auth/OAuth settings are managed via
+# the Supabase Dashboard. When you change anything here that should also apply
+# in prod (e.g. OAuth server, redirect URL allow-list), mirror it manually in
+# the Dashboard. See docs/architecture/mcp-oauth.md.
+#
 # A string used to distinguish different Supabase projects on the same host. Defaults to the
 # working directory name when running `supabase init`.
 project_id = "IDS-hackathon-2026"
@@ -152,8 +159,26 @@ enabled = true
 # The base URL of your website. Used as an allow-list for redirects and for constructing URLs used
 # in emails.
 site_url = "http://127.0.0.1:3000"
-# A list of *exact* URLs that auth providers are permitted to redirect to post authentication.
-additional_redirect_urls = ["https://127.0.0.1:3000", "http://127.0.0.1:3000/auth/callback"]
+# A list of URL patterns (exact match or glob with `*` / `**`) that auth providers
+# are permitted to redirect to post authentication. Also doubles as the Origin allowlist
+# for OAuth-server endpoints (e.g. /oauth/authorizations/<id>).
+additional_redirect_urls = [
+  "http://localhost:*",
+  "http://localhost:*/**",
+  "http://127.0.0.1:*",
+  "http://127.0.0.1:*/**",
+]
+# NOTE on patterns:
+# - `http://localhost:*` matches the bare Origin header (no trailing slash),
+#   which is what browsers send on CORS fetches from the consent page.
+# - `http://localhost:*/**` matches redirect URIs with a path (Claude Code's
+#   callback is `http://localhost:<port>/oauth/callback`, etc.).
+# - The `127.0.0.1` entries are technically redundant with gotrue's built-in
+#   `IsLoopback()` short-circuit (internal/utilities/request.go:119), but
+#   `localhost` is a DNS name — NOT covered by the shortcut — so we keep
+#   explicit globs for both hostnames.
+# Loopback wildcards are safe: RFC 8252 §7.3 endorses this pattern for native
+# OAuth clients (Claude Code, MCP clients) — loopback is not reachable remotely.
 # How long tokens are valid for, in seconds. Defaults to 3600 (1 hour), maximum 604,800 (1 week).
 jwt_expiry = 3600
 # JWT issuer URL. If not set, defaults to the local API URL (http://127.0.0.1:<port>/auth/v1).
@@ -348,11 +373,11 @@ enabled = false
 # OAuth server configuration
 [auth.oauth_server]
 # Enable OAuth server functionality
-enabled = false
+enabled = true
 # Path for OAuth consent flow UI
 authorization_url_path = "/oauth/consent"
 # Allow dynamic client registration
-allow_dynamic_registration = false
+allow_dynamic_registration = true
 
 [edge_runtime]
 enabled = true
