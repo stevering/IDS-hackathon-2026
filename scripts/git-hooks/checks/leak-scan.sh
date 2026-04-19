@@ -86,7 +86,7 @@ Diff to analyze:
 '
 
 response=$(printf '%s\n%s\n' "$prompt" "$diff_content" \
-  | claude -p --bare --model sonnet --output-format text 2>/dev/null || true)
+  | claude -p --model sonnet --output-format text 2>/dev/null || true)
 
 if [ -z "$response" ]; then
   echo "⚠️  Leak scan: empty response from claude — skipping (network or auth issue?)."
@@ -119,10 +119,12 @@ else
   done
 fi
 
-# Interactive prompt. Needs a TTY; if absent, block by default.
-if [ ! -e /dev/tty ]; then
-  echo "⛔ No TTY available — cannot confirm interactively. Aborting push."
+# Interactive prompt. Needs a real TTY for reads; probe it (on macOS /dev/tty exists
+# as a file even when no controlling terminal is attached, so -e is not enough).
+if ! (: < /dev/tty) 2>/dev/null; then
+  echo "⛔ No interactive TTY — cannot confirm. Aborting push."
   echo "   Bypass once: touch .leak-scan-skip && git push"
+  echo "   Or skip entirely: SKIP_LEAK_SCAN=1 git push"
   exit 1
 fi
 
