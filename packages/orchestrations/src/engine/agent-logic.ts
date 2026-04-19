@@ -1111,7 +1111,8 @@ function processToolCall(
       const args = tc.arguments as { summary?: string; artifacts?: { nodeIds?: string[] } };
 
       // Guard 1: block completion if no executions since the last directive
-      if ((state.directiveExecCount ?? 0) === 0 && state.lastDirectiveContent) {
+      // Skip for designer agents — they review, not execute code
+      if ((state.directiveExecCount ?? 0) === 0 && state.lastDirectiveContent && state.agent.type !== "designer") {
         const warning =
           `BLOCKED: You called signal_task_complete but have not executed any tool (e.g. figma_plugin_execute) ` +
           `since receiving this directive. You must actually execute your plan before signaling completion. ` +

@@ -88,6 +88,19 @@ export async function POST(request: Request) {
       ? 4 * 60 * 60_000  // 4 hours
       : maxDurationMs;
 
+    // Auto-inject a designer agent when figma-plugin agents are present (Phase 2)
+    const hasFigmaAgents = targetAgents.some((a: AgentId) => a.type === "figma-plugin");
+    if (hasFigmaAgents) {
+      const designerShortId = "#Designer-" + Math.random().toString(36).slice(2, 8);
+      targetAgents.push({
+        shortId: designerShortId,
+        workflowId: "",
+        label: "Design Reviewer",
+        type: "designer",
+      });
+      log.info("auto-injected designer agent", { designerShortId });
+    }
+
     const params: StartOrchestrationParams = {
       userId,
       task,
