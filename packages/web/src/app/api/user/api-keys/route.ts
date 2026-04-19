@@ -1,11 +1,31 @@
 import { NextResponse } from "next/server";
+import { cookies } from "next/headers";
 import { createClient } from "@/lib/supabase/server";
 
 /** GET /api/user/api-keys — list the authenticated user's stored keys (no secrets). */
 export async function GET() {
+  const t0 = Date.now();
   const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const userRes = await supabase.auth.getUser();
+  const user = userRes.data.user;
+  if (!user) {
+    // DIAGNOSTIC (temp): when this route returns 401, capture enough to tell
+    // refresh-rotation race apart from cookie-not-yet-propagated apart from
+    // network failures. Remove once the root cause is fixed.
+    const cookieStore = await cookies();
+    const cookieNames = cookieStore.getAll().map((c) => c.name);
+    const sbCookies = cookieNames.filter((n) => n.startsWith("sb-"));
+    console.warn("[api-keys 401] diagnostic", {
+      tookMs: Date.now() - t0,
+      hasUser: false,
+      getUserError: userRes.error
+        ? { message: userRes.error.message, status: userRes.error.status, name: userRes.error.name }
+        : null,
+      cookieCount: cookieNames.length,
+      sbCookies,
+    });
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
 
   const { data, error } = await supabase
     .from("user_api_keys")

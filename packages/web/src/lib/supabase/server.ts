@@ -35,9 +35,12 @@ export async function createClient() {
                 path: "/",
               })
             );
-          } catch {
-            // Ignoré dans les Server Components (cookies en lecture seule).
-            // Le middleware se charge du refresh de session.
+          } catch (err) {
+            // Read-only cookie store (Server Component / RSC render): expected.
+            // The middleware handles session refresh, so this failure is benign
+            // in that context. We still log at debug level so a genuinely
+            // broken cookie write in a Route Handler does not stay silent.
+            console.debug("[supabase/server] setAll skipped (likely RSC render):", err);
           }
         },
       },

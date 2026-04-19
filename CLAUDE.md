@@ -10,12 +10,12 @@ When you need to change the UIs:
 - always use the already developed components and ask for building a new one or update an existing one.
 
 Each time you modify a file, you have to update the documentation in:
-- `docs/architecture/*.md`
+- `<projectRoot>/docs/architecture/*.md`
 
-Each time you modify a file, if something changed and impacts the `README.md`, you have to update the documentation in:
-- `README.md`
+Each time you modify a file, if something changed and impacts the `<projectRoot>/README.md`, you have to update the documentation in:
+- `<projectRoot>/README.md`
 
-Backlog and TODOs are in `internal/docs/backlog/*`.
+Backlog and TODOs are in `<projectRoot>/internal/docs/backlog/*`.
 
 ## Dev environment
 
@@ -77,7 +77,7 @@ When pushing code that includes DB migrations, follow this order:
    - Test the affected features (account page, chat, etc.)
 
 **Important rules**:
-- **NEVER write a `try{} catch{}` without logging the error in the `catch`
+- **NEVER write a `try{} catch{}` without logging** the error in the `catch`
 - **NEVER apply `supabase/local-only/*` to cloud** — those are local Docker workarounds only.
 - **Migration order matters**: if migration N+1 depends on N, apply them sequentially.
 - **Rétrocompatibilité**: prefer `ADD COLUMN IF NOT EXISTS`, `CREATE OR REPLACE`, `DROP IF EXISTS` to avoid errors if re-applied.
@@ -122,7 +122,7 @@ If any answer is "no", split into two migrations (expand, then contract after ol
   2. **Emergency**: manually re-create the old RPCs via `mcp__supabase__apply_migration`.
 - **If both code + DB need rollback**: rollback DB first (re-create old RPCs), then rollback code.
 
-- `pnpm dev` logs are written live to `logs/dev.log` at project root. Always check this file to verify server restarts, hot reloads, or errors — don't ask the user to paste terminal output.
+- `pnpm dev` logs are written live to `<projectRoot>/logs/dev.log` at project root. Always check this file to verify server restarts, hot reloads, or errors — don't ask the user to paste terminal output.
 - The Temporal worker (`@guardian/temporal`) uses `tsx --watch` with two watch paths: `src/` and `../orchestrations/src/`. Changes in either path auto-restart the worker (workflows, activities, and engine logic are all picked up).
   - **Important**: do NOT switch back to `node --watch --import tsx/esm` — it has a bug where `--watch` and `--watch-path` flags are not propagated to the respawned child, so the worker only restarts once then stops watching.
 

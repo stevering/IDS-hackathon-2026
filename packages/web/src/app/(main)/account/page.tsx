@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback, useRef } from "react";
-import { useRouter } from "next/navigation";
+import { createClient as createSupabaseBrowserClient } from "@/lib/supabase/client";
 import { useGuardianPresence } from "@/app/hooks/useGuardianPresence";
 import { ConnectedClients } from "@/components/ConnectedClients";
 import { GlassDropdown } from "@/components/GlassDropdown";
@@ -79,7 +79,6 @@ function capitalize(s: string) {
 }
 
 export default function AccountPage() {
-  const router = useRouter();
   const { clients: presenceClients, loading: presenceLoading, connectionStatus: presenceConnectionStatus } = useGuardianPresence();
   const [keys, setKeys] = useState<StoredKey[]>([]);
   const [usage, setUsage] = useState<{
@@ -256,7 +255,22 @@ export default function AccountPage() {
     setError(null);
     try {
       // Sync OAuth cookies → DB before loading services (popup may have set cookies without DB write)
-      await fetch("/api/user/connected-services/persist", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" }).catch(() => {});
+      await fetch("/api/user/connected-services/persist", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" }).catch((err) => {
+        console.warn("[account] persist connected-services failed:", err);
+      });
+
+      // Pre-refresh the Supabase session BEFORE the parallel fetches.
+      // @supabase/ssr rotates the refresh_token on every use. If five parallel
+      // route handlers each try to refresh with the same (stale) refresh_token,
+      // only one wins — the others get "Invalid Refresh Token" and return 401,
+      // which previously bounced us back to /login. Refreshing once here posts
+      // the new access_token cookie so every handler sees a fresh session.
+      try {
+        const supabase = createSupabaseBrowserClient();
+        await supabase.auth.getSession();
+      } catch (err) {
+        console.warn("[account] pre-refresh getSession failed:", err);
+      }
 
       const [keysRes, usageRes, modelsRes, settingsRes, servicesRes] = await Promise.all([
         fetch("/api/user/api-keys"),
@@ -266,7 +280,15 @@ export default function AccountPage() {
         fetch("/api/user/connected-services"),
       ]);
 
-      if (keysRes.status === 401) { router.push("/login"); return; }
+      // If we still get 401 after a fresh session, let the middleware handle
+      // redirection on the next navigation instead of bouncing the user out
+      // of the page mid-load — a transient API error should not log them out.
+      if (keysRes.status === 401) {
+        console.warn("[account] api-keys returned 401 despite fresh session");
+        setError("Unable to load your API keys. Please reload the page.");
+        setLoading(false);
+        return;
+      }
 
       const keysData = await keysRes.json();
       const usageData = await usageRes.json();
@@ -330,7 +352,7 @@ export default function AccountPage() {
     } finally {
       setLoading(false);
     }
-  }, [router]);
+  }, []);
 
   useEffect(() => { loadData(); }, [loadData]);
 

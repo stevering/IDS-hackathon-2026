@@ -169,6 +169,18 @@ export class GuardianBridge {
   /** Services found by port scan but not yet registered in DB. Keyed by fingerprint. */
   private discoveredServices = new Map<string, DiscoveredService>();
   private running = false;
+  // touch_device_last_seen runs every 5s on the heartbeat. Without guards, a
+  // dead session (JWT expired, refresh token revoked) would generate 12 failed
+  // RPCs/min indefinitely — enough to saturate Kong's worker_connections on
+  // local Supabase and block unrelated traffic (login, etc.).
+  private lastSeenFailureCount = 0;
+  private lastSeenNextAllowedMs = 0;
+  private lastSeenAuthSuspended = false;
+  // Inflight guard: prevents stacking multiple in-flight RPCs while the
+  // previous one hasn't resolved. Without this, the 5s heartbeat would fire
+  // 5 more RPCs in the time it takes a failing call (or a slow network) to
+  // come back, defeating the back-off / suspend logic below.
+  private lastSeenInflight = false;
 
   constructor(config: BridgeConfig) {
     this.config = config;
@@ -221,9 +233,19 @@ export class GuardianBridge {
 
         // Keep Realtime's auth in sync with each refresh, otherwise the WS
         // connection eventually drops with `auth_expired`.
-        this.supabase.auth.onAuthStateChange((_event, session) => {
+        this.supabase.auth.onAuthStateChange((event, session) => {
           if (session?.access_token) {
             this.supabase.realtime.setAuth(session.access_token);
+            // Resume heartbeat RPC now that we have a fresh JWT.
+            if (this.lastSeenAuthSuspended) {
+              console.log("[mcp-bridge] session refreshed, resuming touch_device_last_seen");
+              this.lastSeenAuthSuspended = false;
+              this.lastSeenFailureCount = 0;
+              this.lastSeenNextAllowedMs = 0;
+            }
+          } else if (event === "SIGNED_OUT" || event === "TOKEN_REFRESHED") {
+            // TOKEN_REFRESHED without a session = refresh failed; stay suspended.
+            this.lastSeenAuthSuspended = true;
           }
         });
       } catch (e) {
@@ -647,10 +669,69 @@ export class GuardianBridge {
    */
   private touchLastSeen(): void {
     if (!this.config.accessToken) return; // env-var mode has no session
+    // Auth-suspended: wait for onAuthStateChange to deliver a fresh session.
+    if (this.lastSeenAuthSuspended) return;
+    // Inside back-off window: skip this tick.
+    if (Date.now() < this.lastSeenNextAllowedMs) return;
+    // Previous RPC still in flight: skip — the back-off / suspend flags below
+    // are set in the .then() callback, so racing ticks would otherwise queue
+    // multiple RPCs before the first response could pull the brake.
+    if (this.lastSeenInflight) return;
+
+    this.lastSeenInflight = true;
     this.supabase
       .rpc("touch_device_last_seen", { p_device_fingerprint: this.config.deviceFingerprint })
       .then(({ error }) => {
-        if (error) console.error("[mcp-bridge] touch_device_last_seen failed:", error.message);
+        this.lastSeenInflight = false;
+        if (!error) {
+          if (this.lastSeenFailureCount > 0) {
+            console.log("[mcp-bridge] touch_device_last_seen recovered");
+          }
+          this.lastSeenFailureCount = 0;
+          this.lastSeenNextAllowedMs = 0;
+          return;
+        }
+
+        const message = error.message ?? "";
+        const lower = message.toLowerCase();
+        const isAuthError =
+          lower.includes("jwt expired") ||
+          lower.includes("invalid jwt") ||
+          lower.includes("auth session missing") ||
+          (error as { code?: string }).code === "PGRST301" ||
+          (error as { status?: number }).status === 401;
+
+        if (isAuthError) {
+          // Stop spamming until the next successful session refresh.
+          // onAuthStateChange will flip the flag back to false when a fresh
+          // access_token arrives. Avoids saturating Supabase Kong with 401s
+          // when the refresh_token is revoked or the user re-logged in elsewhere.
+          if (!this.lastSeenAuthSuspended) {
+            console.error(
+              "[mcp-bridge] touch_device_last_seen auth error, suspending RPC until session refresh:",
+              message,
+            );
+            this.lastSeenAuthSuspended = true;
+          }
+          return;
+        }
+
+        // Non-auth transient error: exponential back-off.
+        // 5s, 10s, 20s, 40s, 80s, capped at 120s. Resets on first success.
+        this.lastSeenFailureCount += 1;
+        const delayMs = Math.min(5_000 * 2 ** (this.lastSeenFailureCount - 1), 120_000);
+        this.lastSeenNextAllowedMs = Date.now() + delayMs;
+        console.error(
+          `[mcp-bridge] touch_device_last_seen failed (attempt ${this.lastSeenFailureCount}, retry in ${delayMs}ms):`,
+          message,
+        );
+      })
+      .catch((err: unknown) => {
+        // Defensive: supabase-js .rpc() normally resolves with {error} rather
+        // than rejecting, but a network-level failure can throw. Always clear
+        // the inflight flag so future ticks can run.
+        this.lastSeenInflight = false;
+        console.error("[mcp-bridge] touch_device_last_seen threw:", err);
       });
   }
 
