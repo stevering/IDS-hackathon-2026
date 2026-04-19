@@ -388,8 +388,13 @@ export function processQueues(state: AgentWorkflowState): AgentEffect[] {
   }
 
   // Process broadcast messages
+  // Designer agents ignore broadcasts until they have received at least one directive.
+  // This prevents the designer from waking up on every orchestrator ack and generating
+  // useless LLM calls while the Figma agent is still building.
+  const skipBroadcasts = state.agent.type === "designer" && !state.lastDirectiveContent;
   while (state.broadcastQueue.length > 0) {
     const msg = state.broadcastQueue.shift()!;
+    if (skipBroadcasts) continue; // silently discard
     state.messageHistory.push({
       role: "user",
       content: wrapMessage(msg.content, agentSource(msg.fromAgentId), "all", "orchestrator_broadcast", fmt),

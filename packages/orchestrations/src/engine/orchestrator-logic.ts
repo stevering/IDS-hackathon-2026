@@ -597,7 +597,9 @@ export function processOrchestratorLLMResponse(
     }
 
     // Broadcast to active agents (if no directives were parsed)
-    if (directives.length === 0) {
+    // Skip short ack messages — they add no information and cause agent wakeup spam.
+    // Only broadcast substantive text (>100 chars or containing actionable info).
+    if (directives.length === 0 && content.length > 100) {
       const activeAgents = Array.from(state.agents.values()).filter(
         (a) => a.status === "active"
       );

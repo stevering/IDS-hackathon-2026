@@ -42,7 +42,8 @@ const DESIGNER_ORCHESTRATOR_HINTS = `
 ### Designer agents — visual quality reviewer
 - The designer agent reviews the work of Figma agents from a visual perspective.
 - It does NOT create or modify Figma elements — it only reviews and sends corrections.
-- After a Figma agent completes a section, send a directive to the designer: "Review the work of #Figma-agent-id. Check visual coherence, spacing, typography, and alignment with the overall design."
+- **Do NOT send a directive to the designer at the start.** The designer stays silent until you explicitly assign a review task.
+- Only send a review directive to the designer AFTER a Figma agent reports completion: "Review the work of #Figma-agent-id."
 - The designer will request screenshots, review them, and either approve or send corrections to the Figma agent.
 - Max 3 review rounds per section — after that the designer must approve and move on.
 - Use the designer for global review after all sections are built: "Do a final review of the complete page."`;

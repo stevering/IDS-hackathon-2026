@@ -538,17 +538,23 @@ describe("processOrchestratorLLMResponse", () => {
     expect(state.agents.get("a")?.status).toBe("active");
   });
 
-  it("broadcasts text when no tool calls and no directives", () => {
+  it("broadcasts substantive text (>100 chars) when no tool calls", () => {
     const state = createOrchestratorState(makeParams([makeAgent("a", "wf-a")]));
     state.agents.get("a")!.status = "active";
 
-    const effects = processOrchestratorLLMResponse(
-      state,
-      "Keep up the good work!"
-    );
-
+    const longText = "Here is a detailed update about the orchestration progress. The agent has completed the first section and we need to coordinate the next steps for the remaining work items in the pipeline.";
+    const effects = processOrchestratorLLMResponse(state, longText);
     const broadcasts = effects.filter((e) => e.type === "broadcast_to_agents");
     expect(broadcasts).toHaveLength(1);
+  });
+
+  it("does NOT broadcast short ack text to avoid agent wakeup spam", () => {
+    const state = createOrchestratorState(makeParams([makeAgent("a", "wf-a")]));
+    state.agents.get("a")!.status = "active";
+
+    const effects = processOrchestratorLLMResponse(state, "Keep up the good work!");
+    const broadcasts = effects.filter((e) => e.type === "broadcast_to_agents");
+    expect(broadcasts).toHaveLength(0);
   });
 
   it("handles unknown agent gracefully", () => {
