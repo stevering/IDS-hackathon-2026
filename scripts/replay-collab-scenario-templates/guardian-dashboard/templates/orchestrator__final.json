@@ -1,0 +1,8 @@
+{
+  "_match": { "purpose": "orchestrator", "comment": "All agents done — final ack" },
+  "status": "responded",
+  "response_content": "Guardian Dashboard complete. All sections built.",
+  "response_tool_calls": [],
+  "responded_by": "replay_script",
+  "responded_at": "{{TIMESTAMP}}"
+}

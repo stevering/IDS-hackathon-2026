@@ -12,7 +12,7 @@ BASE="${STORAGE_SUPABASE_URL:-https://ookghxkvzdnqicjdslej.supabase.co}/rest/v1/
 STREAM="http://localhost:3000/api/intercept/stream"
 HDRS=(-H "apikey: $KEY" -H "Authorization: Bearer $KEY")
 
-POLL_SELECT="request_id,purpose,agent_short_id,step_count,current_directive,request_payload,exec_stats"
+POLL_SELECT="request_id,purpose,agent_short_id,step_count,current_directive,request_payload,exec_stats,orchestration_id"
 TMP_DIR="$SCRIPT_DIR/tmp"
 mkdir -p "$TMP_DIR"
 
@@ -33,8 +33,11 @@ for r in data:
     msgs=payload.get("messages") or []
     directive=r.get("current_directive") or ""
     stats=r.get("exec_stats") or {}
-    # Write full payload to file for Claude Code to read
-    payload_file=os.path.join(tmp_dir, f"{rid}.payload.json")
+    # Write full payload to file, organized by orchestration ID
+    orch_id=r.get("orchestration_id") or "unknown"
+    orch_dir=os.path.join(tmp_dir, orch_id)
+    os.makedirs(orch_dir, exist_ok=True)
+    payload_file=os.path.join(orch_dir, f"{rid}.payload.json")
     with open(payload_file,"w") as f:
         json.dump({"purpose":p,"agent":a,"step":st,"directive":directive,"exec_stats":stats,"messages":msgs,"tools":payload.get("tools",[])},f,indent=2)
     # Extract last message summary for stdout preview
@@ -58,7 +61,7 @@ for r in data:
     if last:
         line+=f" | last_msg: {last[:200]}"
     print(line)
-print(f"[PAYLOADS] Full payloads written to {tmp_dir}/<request_id>.payload.json — read these before responding")
+print(f"[PAYLOADS] Full payloads written to {tmp_dir}/<orchestration_id>/<request_id>.payload.json")
 if len(data) > 1:
     print(f"[PERF] {len(data)} pending — Write JSON files in parallel, then: ./scripts/intercept.sh batch \"send id1 tmp/f1.json\" \"ack id2 msg\"")
 '

@@ -1,0 +1,8 @@
+{
+  "_match": { "purpose": "orchestrator", "comment": "Generic ack — short text, no broadcast" },
+  "status": "responded",
+  "response_content": "Waiting for agent report.",
+  "response_tool_calls": [],
+  "responded_by": "replay_script",
+  "responded_at": "{{TIMESTAMP}}"
+}

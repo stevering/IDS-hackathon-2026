@@ -1,0 +1,18 @@
+{
+  "_match": { "purpose": "agent", "role": "A", "comment": "All steps done — signal completion" },
+  "status": "responded",
+  "response_content": "All 7 sections built. Signaling completion.",
+  "response_tool_calls": [
+    {
+      "id": "tc-done",
+      "name": "signal_task_complete",
+      "arguments": {
+        "summary": "Complete Guardian Landing Page built with 7 sections: Hero, Stats, Features, Testimonials, Pricing, CTA Banner, Footer.",
+        "artifacts": { "nodeIds": [] }
+      }
+    }
+  ],
+  "_dynamic": "signal_task_complete_with_node_ids",
+  "responded_by": "replay_script",
+  "responded_at": "{{TIMESTAMP}}"
+}

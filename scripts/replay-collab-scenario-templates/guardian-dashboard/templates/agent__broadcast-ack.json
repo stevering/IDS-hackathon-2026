@@ -1,0 +1,8 @@
+{
+  "_match": { "purpose": "agent", "comment": "Broadcast ack — agent ignores" },
+  "status": "responded",
+  "response_content": "Acknowledged.",
+  "response_tool_calls": [],
+  "responded_by": "replay_script",
+  "responded_at": "{{TIMESTAMP}}"
+}

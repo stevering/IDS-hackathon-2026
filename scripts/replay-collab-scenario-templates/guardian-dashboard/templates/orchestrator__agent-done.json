@@ -1,0 +1,15 @@
+{
+  "_match": { "purpose": "orchestrator", "comment": "Agent reported done — mark it done" },
+  "_dynamic": "mark_agent_done",
+  "status": "responded",
+  "response_content": "Marking agent as done.",
+  "response_tool_calls": [
+    {
+      "id": "tc-done",
+      "name": "mark_agent_done",
+      "arguments": { "agentShortId": "{{DONE_AGENT}}" }
+    }
+  ],
+  "responded_by": "replay_script",
+  "responded_at": "{{TIMESTAMP}}"
+}

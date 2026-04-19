@@ -1,0 +1,17 @@
+{
+  "name": "guardian-dashboard",
+  "description": "Build a complete Guardian Dashboard landing page: Hero, Stats, Features, Testimonials, Pricing, CTA Banner, Footer",
+  "startCollab": {
+    "task": "Create a complete Guardian Dashboard landing page with 7 sections: Hero, Stats, Features, Testimonials, Pricing, CTA Banner, Footer. Dark premium theme.",
+    "model": "google/gemini-2.5-flash"
+  },
+  "agentRoles": {
+    "A": { "label": "Guardian Dashboard (all 7 sections)" }
+  },
+  "agentMapping": "auto",
+  "options": {
+    "autoApproveCodeReview": true,
+    "autoVerifyFileReview": true,
+    "maxRetries": 2
+  }
+}

@@ -69,7 +69,7 @@ def discover_agents(payload, scenario):
             system_msg = m.get("content", "")
             break
 
-    agent_ids = re.findall(r"(#Figma-Desktop-\w+)", system_msg)
+    agent_ids = re.findall(r"(#(?:Figma-Desktop|Designer)-\w+)", system_msg)
     # Deduplicate while preserving order
     seen = set()
     unique_ids = []
@@ -163,14 +163,17 @@ def detect_state(payload):
 
     # Agent states
     if payload["purpose"] == "agent":
-        if "[Broadcast from" in last_content:
+        if "[Broadcast from" in last_content or 'event="orchestrator_broadcast"' in last_content or "orchestrator_broadcast" in last_content:
             return "broadcast"
-        if "[Orchestrator task]" in last_content:
+        if "[Orchestrator task]" in last_content or 'event="orchestrator_directive"' in last_content:
             return "initial-directive"
         if "Execution succeeded" in last_content:
             return "post-execution-success"
         if "Execution failed" in last_content:
             return "post-execution-fail"
+        # Guardian feedback nudges (e.g. "you must call a tool")
+        if 'event="guardian_feedback"' in last_content or "You responded with text" in last_content:
+            return "broadcast"  # treat as ignorable
 
     # Orchestrator states
     if payload["purpose"] == "orchestrator":
@@ -179,7 +182,7 @@ def detect_state(payload):
             return "init"
 
         # Check for agent done reports
-        if "DIRECTIVE DONE" in last_content or "task_complete" in last_content.lower() or "task complete" in last_content.lower():
+        if "DIRECTIVE DONE" in last_content or "directive_done" in last_content or "task_complete" in last_content.lower() or "task complete" in last_content.lower():
             return "agent-report-done"
 
         # Check if all agents are done (look for mark_agent_done results)
@@ -310,12 +313,12 @@ def detect_done_agent(payload):
         content = msg.get("content", "")
         if isinstance(content, str):
             # Pattern: [Agent report from ##Figma-Desktop-XXX — ...]
-            match = re.search(r'#(#Figma-Desktop-\w+)', content)
+            match = re.search(r'#(#(?:Figma-Desktop|Designer)-\w+)', content)
             if match:
                 agent_id = match.group(1)
                 return agent_id
             # Also try without double #
-            match = re.search(r'(#Figma-Desktop-\w+)', content)
+            match = re.search(r'(#(?:Figma-Desktop|Designer)-\w+)', content)
             if match:
                 return match.group(1)
     return "unknown"
@@ -369,16 +372,31 @@ def pollwait():
 
 
 def read_payload(intercept_id):
-    """Read the payload JSON file written by pollwait."""
+    """Read the payload JSON file written by pollwait.
+    Searches in tmp/<orch-id>/<intercept-id>.payload.json (new layout)
+    and falls back to tmp/<intercept-id>.payload.json (legacy layout).
+    """
+    # New layout: search in orchestration subdirectories
+    for subdir in TMP_DIR.iterdir():
+        if subdir.is_dir():
+            payload_file = subdir / f"{intercept_id}.payload.json"
+            if payload_file.exists():
+                try:
+                    with open(payload_file) as f:
+                        return json.load(f)
+                except json.JSONDecodeError as e:
+                    print(f"  [WARN] Corrupt payload for {intercept_id}: {e}")
+                    return None
+
+    # Legacy fallback: flat in tmp/
     payload_file = TMP_DIR / f"{intercept_id}.payload.json"
-    if not payload_file.exists():
-        return None
-    try:
-        with open(payload_file) as f:
-            return json.load(f)
-    except json.JSONDecodeError as e:
-        print(f"  [WARN] Corrupt payload for {intercept_id}: {e}")
-        return None
+    if payload_file.exists():
+        try:
+            with open(payload_file) as f:
+                return json.load(f)
+        except json.JSONDecodeError as e:
+            print(f"  [WARN] Corrupt payload for {intercept_id}: {e}")
+    return None
 
 
 # ─── Main Loop ───────────────────────────────────────────────────────────────
@@ -402,6 +420,99 @@ def main():
     replay_dir = TMP_DIR / replay_id
     replay_dir.mkdir(parents=True, exist_ok=True)
     print(f"  Work dir: {replay_dir}")
+
+    # ── Auto-start collab if scenario defines startCollab ─────────────
+    start_collab_cfg = scenario.get("startCollab")
+    if start_collab_cfg and not dry_run:
+        print(f"\n  [START_COLLAB] Launching orchestration via MCP...")
+        import urllib.request
+
+        cloud_url = os.environ.get("GUARDIAN_CLOUD_URL") or "http://localhost:3000"
+        service_key = os.environ.get("STORAGE_SUPABASE_SERVICE_ROLE_KEY", "")
+        user_id = os.environ.get("REPLAY_USER_ID", "")
+
+        if not service_key or not user_id:
+            print("  [ERROR] STORAGE_SUPABASE_SERVICE_ROLE_KEY and REPLAY_USER_ID must be set")
+            sys.exit(1)
+
+        # Step 1: Discover connected Figma plugins via Temporal local server
+        # The MCP uses getConnectedClients which queries the Temporal worker.
+        # We replicate this by calling the webapp's guardian/status which returns client info.
+        # Simpler: just call the orchestration/start API with empty targetAgents
+        # and let it fail, then parse the error... No, let's use the Supabase plugin_clients table.
+
+        supabase_url = os.environ.get("STORAGE_SUPABASE_URL", "")
+        if not supabase_url:
+            print("  [ERROR] STORAGE_SUPABASE_URL must be set")
+            sys.exit(1)
+
+        try:
+            req = urllib.request.Request(
+                f"{supabase_url}/rest/v1/user_clients?user_id=eq.{user_id}&client_type=eq.figma-plugin&select=client_id,short_id,label,file_key&order=last_seen_at.desc&limit=10",
+                headers={"apikey": service_key, "Authorization": f"Bearer {service_key}"},
+            )
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                clients = json.loads(resp.read())
+        except Exception as e:
+            print(f"  [ERROR] Failed to discover clients: {e}")
+            print(f"  Make sure the Figma plugin is connected.")
+            sys.exit(1)
+
+        if not clients:
+            print("  [ERROR] No Figma plugins connected. Open the plugin in Figma first.")
+            sys.exit(1)
+
+        # Take only the most recent client per file_key
+        seen_files = set()
+        unique_clients = []
+        for c in clients:
+            fk = c.get("file_key", "")
+            if fk and fk in seen_files:
+                continue
+            seen_files.add(fk)
+            unique_clients.append(c)
+        clients = unique_clients
+
+        print(f"  Found {len(clients)} plugin(s):")
+        target_agents = []
+        for c in clients:
+            short_id = c.get("short_id", "")
+            label = c.get("label", "Figma-Desktop")
+            print(f"    {short_id}")
+            target_agents.append({
+                "shortId": short_id,
+                "workflowId": "",
+                "label": label,
+                "type": "figma-plugin",
+                "pluginClientId": c.get("client_id"),
+            })
+
+        # Step 2: Start orchestration
+        body = json.dumps({
+            "task": start_collab_cfg["task"],
+            "targetAgents": target_agents,
+            "model": start_collab_cfg.get("model"),
+        }).encode()
+        try:
+            req = urllib.request.Request(
+                f"{cloud_url}/api/orchestration/start",
+                data=body,
+                headers={
+                    "Content-Type": "application/json",
+                    "x-mcp-service-key": service_key,
+                    "x-mcp-user-id": user_id,
+                },
+                method="POST",
+            )
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                result = json.loads(resp.read())
+                wf_id = result.get("workflowId", "?")
+                print(f"  [START_COLLAB] Orchestration started: {wf_id}")
+        except Exception as e:
+            print(f"  [ERROR] Failed to start collab: {e}")
+            sys.exit(1)
+
+        time.sleep(2)
 
     cycle = 0
     total_intercepts = 0
