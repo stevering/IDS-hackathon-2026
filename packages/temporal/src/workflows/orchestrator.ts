@@ -191,7 +191,7 @@ export async function orchestratorWorkflow(
           task: effect.task,
           context: effect.context,
           userId: params.userId,
-          model: params.model,
+          model: params.agentModel ?? params.model,
           mcpServerIds: params.mcpServerIds,
         }],
         taskQueue: workflowInfo().taskQueue,

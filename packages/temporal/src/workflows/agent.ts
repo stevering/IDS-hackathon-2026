@@ -289,7 +289,7 @@ async function handleConsultDesigner(
         { role: "user", content: userContent, images: images.length > 0 ? images : undefined },
       ],
       userId,
-      model, // Uses the same model for now; Phase 4.3 will add dedicated designer model
+      model: "google/gemini-2.0-flash", // Dedicated vision model for designer reviews (Phase 4.3)
       maxTokens: 1024,
       purpose: "file_review",
       tracing,

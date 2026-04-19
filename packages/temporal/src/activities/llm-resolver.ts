@@ -15,7 +15,7 @@ const FREE_TIER_MODEL = "google/gemini-2.5-flash";
 const FREE_TIER_ALLOWED = ["google/gemini-2.5-flash", "google/gemini-2.5-pro"];
 
 const FAST_VARIANT: Record<string, string> = {
-  "moonshotai/kimi-k2.5": "moonshotai/kimi-k2-turbo",
+  "moonshotai/kimi-k2.5": "google/gemini-2.0-flash", // kimi-k2-turbo has unreliable vision support → fallback to gemini
   "google/gemini-2.5-flash": "google/gemini-2.0-flash",
   "google/gemini-2.5-pro": "google/gemini-2.0-flash",
   "anthropic/claude-sonnet-4.6": "anthropic/claude-haiku-4.5",
@@ -27,8 +27,11 @@ const FAST_VARIANT: Record<string, string> = {
   "openai/gpt-4o": "openai/gpt-4o-mini",
   "xai/grok-3": "xai/grok-3-mini-fast",
   "xai/grok-4-fast-non-reasoning": "xai/grok-4-fast-non-reasoning",
-  "deepseek/deepseek-v3": "deepseek/deepseek-v3.2",
+  "deepseek/deepseek-v3": "google/gemini-2.0-flash", // deepseek-v3.2 has no vision → fallback to gemini
 };
+
+/** Dedicated model for consult_designer vision reviews (Phase 4.3) */
+export const DESIGNER_REVIEW_MODEL = "google/gemini-2.0-flash";
 
 type ResolvedModel = {
   model: LanguageModel;

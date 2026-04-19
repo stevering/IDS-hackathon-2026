@@ -48,12 +48,16 @@ After discovering agents #Figma-Desktop-abc (file: Homepage) and #Figma-Desktop-
       model: z.string().optional().describe(
         "Optional AI model ID for the orchestrator LLM (defaults to platform default)"
       ),
+      agentModel: z.string().optional().describe(
+        "Optional AI model ID for agent LLMs. Agents auto-downgrade to fast vision-capable variants. " +
+        "If omitted, uses the same model as the orchestrator."
+      ),
       conversationId: z.string().optional().describe(
         "Optional parent conversation ID to attach this orchestration to. " +
         "If omitted, a new conversation is created automatically."
       ),
     },
-    async ({ task, agents, model, conversationId }) => {
+    async ({ task, agents, model, agentModel, conversationId }) => {
       const connectedClients = await getConnectedClients(userId)
 
       if (connectedClients.length === 0) {
@@ -145,6 +149,7 @@ After discovering agents #Figma-Desktop-abc (file: Homepage) and #Figma-Desktop-
             task,
             targetAgents,
             model,
+            agentModel,
             conversationId,
             mcpServerIds,
           }),

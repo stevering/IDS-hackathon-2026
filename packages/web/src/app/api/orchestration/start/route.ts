@@ -41,10 +41,11 @@ export async function POST(request: Request) {
   }
 
   const body = await request.json();
-  const { task, targetAgents, model, maxDurationMs, context, conversationId, mcpServerIds } = body as {
+  const { task, targetAgents, model, agentModel, maxDurationMs, context, conversationId, mcpServerIds } = body as {
     task: string;
     targetAgents: AgentId[];
     model?: string;
+    agentModel?: string;
     maxDurationMs?: number;
     context?: Record<string, unknown>;
     conversationId?: string;
@@ -92,6 +93,7 @@ export async function POST(request: Request) {
       task,
       targetAgents,
       model,
+      agentModel,
       maxDurationMs: effectiveMaxDuration,
       context: {
         ...context,

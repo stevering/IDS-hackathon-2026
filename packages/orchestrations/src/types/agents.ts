@@ -52,8 +52,10 @@ export type StartOrchestrationParams = {
   task: string;
   /** Target agents to invite */
   targetAgents: AgentId[];
-  /** AI model identifier (e.g. "moonshotai/kimi-k2.5") — from the user's UI selection */
+  /** AI model identifier for the orchestrator LLM (e.g. "moonshotai/kimi-k2.5") */
   model?: string;
+  /** AI model identifier for agent LLMs (if different from orchestrator). Agents auto-downgrade to fast vision-capable variants. */
+  agentModel?: string;
   /** Maximum duration in ms (default 600_000 = 10 min) */
   maxDurationMs?: number;
   /** Optional context data */
