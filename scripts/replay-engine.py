@@ -513,6 +513,8 @@ def main():
     cycle = 0
     total_intercepts = 0
     discovered = False
+    orchestration_done = False
+    empty_poll_count = 0
 
     print(f"\n{'='*60}")
     print("Starting replay loop... (Ctrl+C to stop)")
@@ -526,9 +528,14 @@ def main():
             # Poll for intercepts
             intercept_ids = pollwait()
             if not intercept_ids:
+                empty_poll_count += 1
+                if empty_poll_count >= 15:  # 15 × 2s = 30s with no intercepts → assume done
+                    print("  No intercepts for 30s — assuming orchestration finished.")
+                    break
                 print("  No pending intercepts. Waiting...")
                 time.sleep(2)
                 continue
+            empty_poll_count = 0  # reset on activity
 
             print(f"  {len(intercept_ids)} pending intercept(s)")
 
@@ -557,6 +564,8 @@ def main():
                 # Match template
                 template, state = match_template(payload, templates, scenario)
                 tag = f"{purpose}/{role}/step{step}/{state}"
+                if state == "all-done":
+                    orchestration_done = True
 
                 if template == "APPROVE":
                     print(f"  [{rid[:30]}] {tag} -> APPROVE")
@@ -598,20 +607,21 @@ def main():
             elif dry_run:
                 print(f"\n  [DRY RUN] Would send: {batch_cmds}")
 
-            # Check if orchestration is complete
-            if len(agents_done) >= len(agent_suffix_map) and len(agent_suffix_map) > 0:
-                # Give a few more cycles for the final orchestrator summary
-                pass
-
             print(f"  Node IDs: {dict(node_id_registry)}")
             print(f"  Steps: {dict(agent_step_tracker)}")
 
+            # Check if orchestration is complete
+            if orchestration_done:
+                break
+
     except KeyboardInterrupt:
-        print(f"\n\n{'='*60}")
-        print(f"Replay stopped after {cycle} cycles, {total_intercepts} intercepts")
-        print(f"Agent mapping: {agent_suffix_map}")
-        print(f"Node IDs: {node_id_registry}")
-        print(f"{'='*60}")
+        pass
+
+    print(f"\n{'='*60}")
+    print(f"Replay complete: {cycle} cycles, {total_intercepts} intercepts")
+    print(f"Agent mapping: {agent_suffix_map}")
+    print(f"Node IDs: {node_id_registry}")
+    print(f"{'='*60}")
 
 
 if __name__ == "__main__":
