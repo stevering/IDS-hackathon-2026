@@ -17,7 +17,7 @@ export type AgentId = {
   /** Label shown in the UI (e.g. "Button Component - main.fig") */
   label: string;
   /** Agent type */
-  type: "figma-plugin" | "web" | "cloud";
+  type: "figma-plugin" | "web" | "cloud" | "designer";
   /** Figma file name if applicable */
   fileName?: string;
   /** Figma client ID for plugin transport */

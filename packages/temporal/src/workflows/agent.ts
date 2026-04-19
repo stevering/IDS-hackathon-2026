@@ -343,6 +343,50 @@ async function handleConsultDesigner(
   }
 }
 
+// ---------------------------------------------------------------------------
+// Screenshot request — designer agent captures a Figma agent's canvas (Phase 2)
+// ---------------------------------------------------------------------------
+
+async function handleRequestScreenshot(
+  state: AgentWorkflowState,
+  effect: Extract<AgentEffect, { type: "request_screenshot" }>,
+  userId: string
+): Promise<void> {
+  try {
+    const ssCode = buildSnapshotAndScreenshotCode("figma.currentPage");
+    const result = await executeFigmaCode({
+      pluginClientId: effect.targetPluginClientId,
+      userId,
+      code: ssCode,
+      workflowId: state.orchestratorWorkflowId,
+    });
+
+    if (result.success && result.result) {
+      const parsed = JSON.parse(String(result.result));
+      const screenshot = parsed.screenshot ? String(parsed.screenshot).slice(0, 500_000) : undefined;
+      const nodeCount = parsed.nodes?.length ?? 0;
+
+      const images = screenshot ? [screenshot] : [];
+      injectToolResult(
+        state,
+        effect.toolCallId,
+        JSON.stringify({ success: true, nodeCount, message: "Screenshot captured. Analyze the attached image." }),
+        images.length > 0 ? images : undefined
+      );
+    } else {
+      injectToolResult(state, effect.toolCallId, JSON.stringify({
+        success: false,
+        error: result.error ?? "Screenshot capture failed",
+      }));
+    }
+  } catch (err) {
+    injectToolResult(state, effect.toolCallId, JSON.stringify({
+      success: false,
+      error: "Screenshot request failed: " + String(err),
+    }));
+  }
+}
+
 function parseReviewResponse(content: string): { approved: boolean; reason?: string } {
   const lines = content.trim().split("\n");
   let reason: string | undefined;
@@ -1485,6 +1529,9 @@ export async function agentWorkflow(input: AgentWorkflowInput): Promise<void> {
           } else if (rEffect.type === "consult_designer") {
             await handleConsultDesigner(state, rEffect, input.userId, callLLM, input.model);
             didExecTool = true;
+          } else if (rEffect.type === "request_screenshot") {
+            await handleRequestScreenshot(state, rEffect, input.userId);
+            didExecTool = true;
           } else if (rEffect.type === "fetch_figma_docs") {
             await handleFetchFigmaDocs(state, rEffect);
             didExecTool = true;
@@ -1561,6 +1608,10 @@ async function executeLLMLoop(
         needsContinue = true;
       } else if (effect.type === "consult_designer") {
         await handleConsultDesigner(state, effect, userId, callLLM, model);
+        didExecuteTool = true;
+        needsContinue = true;
+      } else if (effect.type === "request_screenshot") {
+        await handleRequestScreenshot(state, effect, userId);
         didExecuteTool = true;
         needsContinue = true;
       } else if (effect.type === "execute_external_tool") {

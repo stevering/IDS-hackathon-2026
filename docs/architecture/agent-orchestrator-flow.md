@@ -437,3 +437,46 @@ Replaces `[...state.messageHistory]` in all orchestrator LLM calls. Injects the 
 ### Files
 
 - `orchestrator-logic.ts`: `buildOrchestratorMessages()`, `updatePlanFromResponse()`, `updatePlanFromReport()`, `state.plan` field
+
+## Designer Peer Agent — Phase 2
+
+### Agent type: `"designer"`
+
+A new agent type that reviews the visual work of Figma agents. It does NOT create or modify Figma elements — it only reviews screenshots and sends corrections.
+
+The designer reuses the existing `agentWorkflow` (same Temporal workflow). The difference is in tools, system prompt, and the absence of `pluginClientId`.
+
+### Designer tools
+
+| Tool | Description |
+|---|---|
+| `request_screenshot` | Captures a screenshot from a Figma agent's canvas (uses target agent's `pluginClientId` from the agent directory) |
+| `approve_section` | Sends approval or corrections to a Figma agent via peer message. Corrections categorized as `must` or `nice` |
+| `send_peer_message` | Direct message to any agent (inherited) |
+| `signal_task_complete` | Signal review completion (inherited) |
+
+### Orchestration flow with designer
+
+```
+Orchestrator:
+  → Sends build directive to Figma agent
+  → Figma agent builds + consult_designer (local check)
+  → Sends review directive to Designer agent
+  → Designer calls request_screenshot → reviews → approve_section
+  → If corrections: Figma agent applies → Designer re-reviews (max 3 rounds)
+  → After all sections: Designer does global review
+  → Orchestrator marks all agents done
+```
+
+### Anti-loop: peer review budget
+
+- `state.peerReviewCount` tracks review rounds per directive (max 3)
+- After max rounds, `approve_section` auto-approves with a note
+- "Nice" corrections are deferred to `state.niceCorrections`
+
+### Files
+
+- `signals.ts`: `AgentId.type` union includes `"designer"`
+- `agent-logic.ts`: `request_screenshot` + `approve_section` in `getAgentTools()` and `processToolCall()`. New effect `request_screenshot`. State field `peerReviewCount`
+- `agent.ts`: `handleRequestScreenshot()` — executes screenshot code on target agent's plugin
+- `system-prompts.ts`: `DESIGNER_ORCHESTRATOR_HINTS` + designer section in `buildAgentSystemPrompt()`

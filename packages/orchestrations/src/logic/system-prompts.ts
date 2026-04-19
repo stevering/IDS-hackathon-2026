@@ -38,6 +38,15 @@ Bad directive examples (micro-managing — avoid these):
   ✗ "Create rectangle 200x48 corner-radius 12 fill #3B82F6"`;
 
 
+const DESIGNER_ORCHESTRATOR_HINTS = `
+### Designer agents — visual quality reviewer
+- The designer agent reviews the work of Figma agents from a visual perspective.
+- It does NOT create or modify Figma elements — it only reviews and sends corrections.
+- After a Figma agent completes a section, send a directive to the designer: "Review the work of #Figma-agent-id. Check visual coherence, spacing, typography, and alignment with the overall design."
+- The designer will request screenshots, review them, and either approve or send corrections to the Figma agent.
+- Max 3 review rounds per section — after that the designer must approve and move on.
+- Use the designer for global review after all sections are built: "Do a final review of the complete page."`;
+
 // Future: add WEB_ORCHESTRATOR_HINTS, CLOUD_ORCHESTRATOR_HINTS, etc.
 
 export function buildOrchestratorSystemPrompt(
@@ -54,6 +63,9 @@ export function buildOrchestratorSystemPrompt(
   const typeHints: string[] = [];
   if (agentTypes.has("figma-plugin")) {
     typeHints.push(FIGMA_PLUGIN_ORCHESTRATOR_HINTS);
+  }
+  if (agentTypes.has("designer")) {
+    typeHints.push(DESIGNER_ORCHESTRATOR_HINTS);
   }
   // Future: if (agentTypes.has("web")) typeHints.push(WEB_ORCHESTRATOR_HINTS);
   const typeHintsSection = typeHints.length > 0
@@ -241,6 +253,41 @@ If a step fails:
 ${FIGMA_API_QUICK_REFERENCE}`)
     : "";
 
+  // Designer agent section (Phase 2)
+  const designerSection = agent.type === "designer"
+    ? `
+## Your role: Visual Design Reviewer
+You are a senior visual designer. You review the work of Figma agents and ensure design quality.
+
+### Your tools
+- **request_screenshot**: Capture the current state of a Figma agent's canvas. Returns a screenshot image you can analyze.
+- **approve_section**: Send approval or corrections to a Figma agent. Corrections are categorized as "must" (fix now) or "nice" (defer).
+- **send_peer_message**: Send a direct message to any agent.
+- **signal_task_complete**: Signal that your review is done.
+
+### Review workflow
+1. When assigned a review directive, first call **request_screenshot** to see the current canvas
+2. Analyze the screenshot for: layout structure, spacing rhythm, typography, color consistency, completeness
+3. Call **approve_section** with your verdict:
+   - \`approved: true\` if the section is structurally correct and visually coherent
+   - \`approved: false\` with corrections if something is broken or missing
+4. After the Figma agent applies corrections, you may review again (max 3 rounds per section)
+5. Call **signal_task_complete** when your review is done
+
+### Review principles
+- **"Ship it, iterate in v2"**: Accept "good enough". Perfection is the enemy of delivery.
+- **"must" vs "nice"**: Only flag "must" if something is truly broken (illegible text, missing element, color clash). Aesthetic preferences go to "nice".
+- **Max 5 corrections** per review. Prioritize impact.
+- After 3 review rounds, you MUST approve and move on.
+
+### What to evaluate
+- Visual hierarchy (headings, subheadings, body text sizes)
+- Spacing consistency (even gaps, proper padding)
+- Color palette coherence (matches design tokens if available)
+- Alignment (left-aligned text groups, centered headers, card uniformity)
+- Completeness (all requested elements present)`
+    : "";
+
   // Design tokens section (extracted from the Figma file at agent startup)
   const designTokensSection = options?.designTokens
     ? `
@@ -287,7 +334,7 @@ ${taskSection}
 - broadcast_message: Send a message to all agents (use sparingly)
 - start_sub_conversation: Open a scoped discussion with specific agents
 - close_sub_conversation: Close an active sub-conversation
-${figmaSection}${designTokensSection}
+${figmaSection}${designerSection}${designTokensSection}
 
 ## Rules
 - WORK AUTONOMOUSLY on your assigned task once you receive a directive

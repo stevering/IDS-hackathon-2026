@@ -97,6 +97,8 @@ export type AgentWorkflowState = {
   designerConsultCount?: number;
   /** Accumulated "nice" corrections from consult_designer (for future polish pass) */
   niceCorrections?: string[];
+  /** Number of peer review rounds since last directive (anti-loop for designer, max 3) */
+  peerReviewCount?: number;
 };
 
 // ---------------------------------------------------------------------------
@@ -117,6 +119,7 @@ export type AgentEffect =
   | { type: "notify_orchestrator_sub_conv"; event: "opened" | "closed"; subConvId: string; participantIds: string[]; topic?: string; reason?: "completed" | "timeout" | "cancelled" }
   | { type: "execute_external_tool"; toolName: string; arguments: Record<string, unknown>; toolCallId: string }
   | { type: "consult_designer"; toolCallId: string; pluginClientId: string }
+  | { type: "request_screenshot"; targetPluginClientId: string; toolCallId: string }
   | { type: "emit_activity"; activities: AgentActivity[] }
   | { type: "wait_for_input" }
   | { type: "complete" };
@@ -162,6 +165,8 @@ export function handleDirective(state: AgentWorkflowState, directive: DirectiveP
   state.lastDirectiveContent = directive.content;
   // Reset designer consultation counter per directive (Phase 1 anti-loop)
   state.designerConsultCount = 0;
+  // Reset peer review counter per directive (Phase 2 anti-loop)
+  state.peerReviewCount = 0;
 }
 
 export function handlePeerMessage(state: AgentWorkflowState, message: PeerMessagePayload): void {
@@ -1321,6 +1326,75 @@ function processToolCall(
       break;
     }
 
+    case "request_screenshot": {
+      const args = tc.arguments as { targetAgentId: string };
+      activities.push({ action: "tool_call", toolName: tc.name, summary: "Screenshot from " + args.targetAgentId });
+
+      const target = state.agentDirectory.get(args.targetAgentId);
+      if (target?.pluginClientId) {
+        effects.push({
+          type: "request_screenshot",
+          targetPluginClientId: target.pluginClientId,
+          toolCallId: tc.id,
+        });
+      } else {
+        injectToolResult(state, tc.id, JSON.stringify({
+          success: false,
+          error: "Agent " + args.targetAgentId + " not found or has no Figma plugin.",
+        }));
+      }
+      break;
+    }
+
+    case "approve_section": {
+      const args = tc.arguments as { targetAgentId: string; approved: boolean; corrections?: Array<{ priority: string; description: string }> };
+      const verdict = args.approved ? "APPROVED" : "CORRECTIONS NEEDED";
+      activities.push({ action: "tool_call", toolName: tc.name, summary: verdict + " for " + args.targetAgentId });
+
+      // Track peer review rounds (anti-loop: max 3)
+      state.peerReviewCount = (state.peerReviewCount ?? 0) + 1;
+
+      const target = state.agentDirectory.get(args.targetAgentId);
+      if (target?.workflowId) {
+        // Send corrections or approval as peer message to the Figma agent
+        const mustCorrections = (args.corrections ?? []).filter(c => c.priority === "must");
+        const niceCorrections = (args.corrections ?? []).filter(c => c.priority === "nice");
+
+        // Store nice corrections for later
+        if (niceCorrections.length > 0) {
+          state.niceCorrections = [
+            ...(state.niceCorrections ?? []),
+            ...niceCorrections.map(c => c.description),
+          ];
+        }
+
+        let messageContent: string;
+        if (args.approved) {
+          messageContent = "DESIGN APPROVED. Your section passes review. Proceed to signal_task_complete.";
+        } else if ((state.peerReviewCount ?? 0) >= 3) {
+          messageContent = "DESIGN APPROVED (max review rounds reached). Minor issues remain but proceeding. " +
+            mustCorrections.map(c => "- " + c.description).join("\n");
+        } else {
+          messageContent = "CORRECTIONS NEEDED:\n" +
+            mustCorrections.map(c => "- [MUST] " + c.description).join("\n") +
+            (niceCorrections.length > 0 ? "\n(Nice-to-have deferred: " + niceCorrections.length + ")" : "");
+        }
+
+        effects.push({
+          type: "send_peer_message",
+          targetWorkflowId: target.workflowId,
+          message: {
+            fromAgentId: state.agent.shortId,
+            content: messageContent,
+          },
+        });
+        injectToolResult(state, tc.id, JSON.stringify({ success: true, verdict, peerReviewRound: state.peerReviewCount }));
+      } else {
+        injectToolResult(state, tc.id, JSON.stringify({ success: false, error: "Agent " + args.targetAgentId + " not found." }));
+      }
+      break;
+    }
+
     case "consult_designer": {
       activities.push({ action: "tool_call", toolName: tc.name, summary: "Requesting design review" });
 
@@ -1526,6 +1600,61 @@ function getAgentTools(state: AgentWorkflowState): LLMToolDefinition[] {
           },
         },
         required: ["topic"],
+      },
+    });
+  }
+
+  // Designer-specific tools (Phase 2)
+  if (state.agent.type === "designer") {
+    tools.push({
+      name: "request_screenshot",
+      description:
+        "Request a full-page screenshot from a Figma agent to review their work visually. " +
+        "The screenshot will be returned as an image you can analyze. " +
+        "Call this when you need to see the current state of a Figma agent's canvas.",
+      parameters: {
+        type: "object",
+        properties: {
+          targetAgentId: {
+            type: "string",
+            description: "Short ID of the Figma agent to screenshot (e.g. '#Figma-Desktop-abc')",
+          },
+        },
+        required: ["targetAgentId"],
+      },
+    });
+
+    tools.push({
+      name: "approve_section",
+      description:
+        "Approve or send corrections for a section created by a Figma agent. " +
+        "If approved, the Figma agent can proceed. If corrections are needed, " +
+        "send specific must-fix issues. Max 3 review rounds per section.",
+      parameters: {
+        type: "object",
+        properties: {
+          targetAgentId: {
+            type: "string",
+            description: "Short ID of the Figma agent whose work you are reviewing",
+          },
+          approved: {
+            type: "boolean",
+            description: "true if the section passes review, false if corrections needed",
+          },
+          corrections: {
+            type: "array",
+            items: {
+              type: "object",
+              properties: {
+                priority: { type: "string", enum: ["must", "nice"], description: "must = fix now, nice = defer" },
+                description: { type: "string", description: "What needs to be changed" },
+              },
+              required: ["priority", "description"],
+            },
+            description: "List of corrections (only when approved=false)",
+          },
+        },
+        required: ["targetAgentId", "approved"],
       },
     });
   }
