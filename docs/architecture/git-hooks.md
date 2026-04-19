@@ -36,7 +36,13 @@ line per issue. On findings, the script prompts on `/dev/tty`:
 **Bypass**:
 - `SKIP_LEAK_SCAN=1 git push` — skip for this invocation
 - `touch .leak-scan-skip && git push` — one-shot bypass (file is auto-deleted after use)
-- Missing `claude` CLI or empty model response → scan is skipped with a warning, push proceeds
+
+**Fail-open policy** (never block a push because of a scanner malfunction):
+- Missing `claude` CLI → skip with warning, push proceeds
+- Empty response → skip with warning, push proceeds
+- Non-empty but unparseable response (auth error, rate limit, quota, network) → warn
+  with first 20 lines of output, push proceeds
+- Only a clear `FINDING|...` output actually prompts / blocks
 
 **Lockfiles / binaries / `dist/` / `node_modules/` / `.next/`** are filtered from the diff.
 The diff is capped at 120 KB before being sent to the model.

@@ -101,23 +101,26 @@ fi
 
 findings=$(echo "$response" | grep '^FINDING|' || true)
 if [ -z "$findings" ]; then
-  # Claude answered something unparseable — show it and ask the user.
+  # No NO_LEAKS, no FINDING lines → claude errored (auth, quota, network).
+  # Fail open: warn and let the push through. Don't block on scanner issues.
   echo ""
-  echo "⚠️  Leak scan returned an unparseable response:"
+  echo "⚠️  Leak scan could not run (unexpected claude response). Push NOT blocked."
   echo "---"
-  echo "$response"
+  echo "$response" | head -20
   echo "---"
-else
-  echo ""
-  echo "⚠️  Potential leaks detected:"
-  echo ""
-  echo "$findings" | while IFS='|' read -r _ sev file what suggestion; do
-    echo "  [$sev] $file"
-    echo "    $what"
-    echo "    → $suggestion"
-    echo ""
-  done
+  echo "   Re-run manually: bash scripts/git-hooks/checks/leak-scan.sh"
+  exit 0
 fi
+
+echo ""
+echo "⚠️  Potential leaks detected:"
+echo ""
+echo "$findings" | while IFS='|' read -r _ sev file what suggestion; do
+  echo "  [$sev] $file"
+  echo "    $what"
+  echo "    → $suggestion"
+  echo ""
+done
 
 # Interactive prompt. Needs a real TTY for reads; probe it (on macOS /dev/tty exists
 # as a file even when no controlling terminal is attached, so -e is not enough).
