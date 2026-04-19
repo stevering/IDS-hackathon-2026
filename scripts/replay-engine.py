@@ -350,25 +350,21 @@ def parse_intercept_ids(stdout):
 
 
 def pollwait():
-    """Run pollwait with 15s timeout, fallback to poll if SSE blocks."""
-    stdout, stderr, rc = run_intercept("pollwait", timeout=15)
-
-    if rc == -1:  # timeout — SSE blocked, fallback to instant poll
-        print("  [SSE timeout] Falling back to poll...")
-        stdout, stderr, rc = run_intercept("poll")
-        if rc != 0:
-            return []
+    """Fast poll loop — check every 2s instead of blocking on SSE (which has 15s timeout)."""
+    # Try instant poll first
+    stdout, stderr, rc = run_intercept("poll")
+    if rc == 0:
         ids = parse_intercept_ids(stdout)
-        if not ids:
-            # Nothing pending even after timeout — wait a bit and retry
-            time.sleep(2)
-        return ids
+        if ids:
+            return ids
 
-    if rc != 0:
-        print(f"  [WARN] pollwait exited {rc}: {stderr}")
-        return []
+    # Nothing yet — wait briefly and retry (pipeline takes ~5-15s for Figma execution)
+    time.sleep(2)
+    stdout, stderr, rc = run_intercept("poll")
+    if rc == 0:
+        return parse_intercept_ids(stdout)
 
-    return parse_intercept_ids(stdout)
+    return []
 
 
 def read_payload(intercept_id):
