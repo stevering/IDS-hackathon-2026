@@ -1,15 +1,22 @@
 #!/bin/bash
-# Pre-push hook: BLOCK if migration files in the push haven't been applied
-# to the Supabase environment matching the target branch.
-#
-# feat/preview, main → cloud Supabase (checked via `supabase db query --linked`)
-# other branches     → no check (no Vercel deploy triggered)
+# Pre-push hook chain:
+#   1. Leak scan (all branches) — Claude reviews the diff for secrets / PII / internal IDs.
+#   2. Migration check (deploy branches only) — ensures Supabase migrations are applied.
 
 remote="$1"
 REPO_ROOT="$(git rev-parse --show-toplevel)"
 current_branch=$(git rev-parse --abbrev-ref HEAD)
 
-# Only check branches that trigger a Vercel deploy
+# ----------------------------------------------------------------------------
+# Phase 1: leak scan (runs on every push, regardless of branch)
+# ----------------------------------------------------------------------------
+if [ -x "$REPO_ROOT/scripts/git-hooks/checks/leak-scan.sh" ]; then
+  "$REPO_ROOT/scripts/git-hooks/checks/leak-scan.sh" "$remote" || exit $?
+fi
+
+# ----------------------------------------------------------------------------
+# Phase 2: migration check (only branches that trigger a Vercel deploy)
+# ----------------------------------------------------------------------------
 case "$current_branch" in
   feat/preview|main|master) ;;
   *)
