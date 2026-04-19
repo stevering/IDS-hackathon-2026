@@ -169,7 +169,7 @@ def detect_state(payload):
             return "initial-directive"
         if "Execution succeeded" in last_content:
             return "post-execution-success"
-        if "Execution failed" in last_content:
+        if "Execution failed" in last_content or "NOTHING CHANGED" in last_content:
             return "post-execution-fail"
         # Guardian feedback nudges (e.g. "you must call a tool")
         if 'event="guardian_feedback"' in last_content or "You responded with text" in last_content:
