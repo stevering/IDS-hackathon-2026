@@ -414,3 +414,26 @@ This is deterministic (no LLM summarization call needed), so it adds zero latenc
 
 - `agent-logic.ts`: `buildContextMessages()` function (exported)
 - `agent.ts`: all `[...state.messageHistory]` replaced with `buildContextMessages(state)`
+
+## Orchestrator Plan Persistence — Phase 3.3-3.4
+
+### buildOrchestratorMessages(state) — plan injection + prefix cache
+
+Replaces `[...state.messageHistory]` in all orchestrator LLM calls. Injects the persisted plan as a system message right after the main system prompt.
+
+```
+[system prompt]              ← stable prefix for cache
+[plan message]               ← stable prefix for cache (updated but same position)
+[conversation messages...]   ← varies per call
+```
+
+### Plan lifecycle
+
+1. **Created** in `processOrchestratorLLMResponse` when the first `send_agent_directive` tool calls are processed → `state.plan = "Directives assigned: ..."` via `updatePlanFromResponse()`
+2. **Updated** when agents report back → `updatePlanFromReport()` appends report status
+3. **Updated** when `mark_agent_done` is called → appends "DONE" marker
+4. **Injected** into every LLM call via `buildOrchestratorMessages()` — survives context truncation
+
+### Files
+
+- `orchestrator-logic.ts`: `buildOrchestratorMessages()`, `updatePlanFromResponse()`, `updatePlanFromReport()`, `state.plan` field

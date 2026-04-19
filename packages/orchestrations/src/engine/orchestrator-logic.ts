@@ -33,6 +33,79 @@ export const IDLE_NUDGE_MS = 30_000; // 30s before nudging
 export const GRACE_PERIOD_MS = 5_000; // 5s grace after all agents done
 
 // ---------------------------------------------------------------------------
+// Context engineering — build optimized messages for orchestrator LLM calls (Phase 3.3-3.4)
+// ---------------------------------------------------------------------------
+
+/**
+ * Build optimized message array for orchestrator LLM calls.
+ *
+ * Injects the persisted plan (if any) as a system message right after
+ * the main system prompt. This ensures:
+ * 1. The plan survives context truncation (re-injected each call)
+ * 2. System prompt + plan form a stable prefix for KV cache hits (Phase 3.4)
+ */
+function buildOrchestratorMessages(state: OrchestratorState): LLMMessage[] {
+  const messages = [...state.messageHistory];
+
+  // Inject plan after system prompt (index 1) if present
+  if (state.plan) {
+    const planMessage: LLMMessage = {
+      role: "system",
+      content: `## Your current plan\n${state.plan}\n\nUpdate this plan as agents report progress. When an agent completes, note what was done and what remains.`,
+    };
+    // Insert after the first system prompt
+    const systemIdx = messages.findIndex(m => m.role === "system");
+    if (systemIdx >= 0) {
+      messages.splice(systemIdx + 1, 0, planMessage);
+    } else {
+      messages.unshift(planMessage);
+    }
+  }
+
+  return messages;
+}
+
+/**
+ * Extract or update the orchestrator's plan from its LLM response.
+ * The plan is the orchestrator's understanding of what each agent should do
+ * and the current progress state.
+ */
+function updatePlanFromResponse(state: OrchestratorState, content: string, toolCalls?: LLMToolCall[]): void {
+  if (!toolCalls?.length) return;
+
+  // Build plan from the directives being sent
+  const directives = toolCalls.filter(tc => tc.name === "send_agent_directive");
+  const markDones = toolCalls.filter(tc => tc.name === "mark_agent_done");
+
+  if (directives.length > 0 && !state.plan) {
+    // First directives — create the initial plan
+    const planParts: string[] = [];
+    for (const d of directives) {
+      const args = d.arguments as { agentShortId?: string; content?: string };
+      planParts.push(`- ${args.agentShortId}: ${(args.content ?? "").slice(0, 150)}`);
+    }
+    state.plan = "Directives assigned:\n" + planParts.join("\n");
+  } else if (markDones.length > 0 && state.plan) {
+    // Agent marked done — update plan
+    for (const md of markDones) {
+      const args = md.arguments as { agentShortId?: string };
+      if (args.agentShortId) {
+        state.plan += `\n- ${args.agentShortId}: DONE`;
+      }
+    }
+  }
+}
+
+/**
+ * Update the plan with agent report information.
+ */
+function updatePlanFromReport(state: OrchestratorState, report: AgentReportPayload): void {
+  if (!state.plan) return;
+  const status = report.status === "directive_done" ? "directive completed" : report.status;
+  state.plan += `\n- ${report.agentShortId} reported: ${status} — ${(report.summary ?? "").slice(0, 100)}`;
+}
+
+// ---------------------------------------------------------------------------
 // Orchestrator state
 // ---------------------------------------------------------------------------
 
@@ -66,6 +139,8 @@ export type OrchestratorState = {
   model?: string;
   /** Message metadata format — "xml" (default) or "bracket" (per-model config) */
   metadataFormat?: MetadataFormat;
+  /** Orchestrator plan — persisted across LLM calls, injected after system prompt (Phase 3.3) */
+  plan?: string;
 };
 
 // ---------------------------------------------------------------------------
@@ -179,7 +254,7 @@ export function generatePlanningCall(state: OrchestratorState): OrchestratorEffe
 
   return {
     type: "call_llm",
-    messages: [...state.messageHistory],
+    messages: buildOrchestratorMessages(state),
   };
 }
 
@@ -392,7 +467,7 @@ export function generateBriefAndFirstCall(state: OrchestratorState): Orchestrato
   // 4. Return call_llm with tools
   effects.push({
     type: "call_llm",
-    messages: [...state.messageHistory],
+    messages: buildOrchestratorMessages(state),
     tools: getOrchestratorTools(state),
   });
 
@@ -420,6 +495,9 @@ export function processOrchestratorLLMResponse(
   modelId?: string
 ): OrchestratorEffect[] {
   state.messageHistory.push({ role: "assistant", content, toolCalls });
+
+  // Update plan from orchestrator's response (Phase 3.3)
+  updatePlanFromResponse(state, content, toolCalls);
 
   const effects: OrchestratorEffect[] = [];
   let usageAttached = false;
@@ -456,7 +534,7 @@ export function processOrchestratorLLMResponse(
       effects.push({ type: "emit_event", event: fbEvent });
       state.eventLog.push(fbEvent);
       // Retry LLM — don't broadcast the broken text to agents
-      effects.push({ type: "call_llm", messages: [...state.messageHistory], tools: getOrchestratorTools(state) });
+      effects.push({ type: "call_llm", messages: buildOrchestratorMessages(state), tools: getOrchestratorTools(state) });
       return effects;
     }
 
@@ -764,7 +842,7 @@ export function processOrchestratorLLMResponse(
   // Signal continuation — LLM needs to see tool results
   effects.push({
     type: "call_llm",
-    messages: [...state.messageHistory],
+    messages: buildOrchestratorMessages(state),
     tools: getOrchestratorTools(state),
   });
 
@@ -782,6 +860,9 @@ export function processReports(state: OrchestratorState): OrchestratorEffect[] {
   const reports = state.pendingReports.splice(0);
 
   for (const report of reports) {
+    // Update plan with report information (Phase 3.3)
+    updatePlanFromReport(state, report);
+
     const agentState = state.agents.get(report.agentShortId);
     if (!agentState) continue;
 
@@ -852,7 +933,7 @@ export function processReports(state: OrchestratorState): OrchestratorEffect[] {
   // Ask LLM to evaluate reports (with tools for follow-up directives)
   effects.push({
     type: "call_llm",
-    messages: [...state.messageHistory],
+    messages: buildOrchestratorMessages(state),
     tools: getOrchestratorTools(state),
   });
 
@@ -943,7 +1024,7 @@ export function processUserInput(state: OrchestratorState): OrchestratorEffect[]
   // Let LLM process user input (with tools for directives)
   effects.push({
     type: "call_llm",
-    messages: [...state.messageHistory],
+    messages: buildOrchestratorMessages(state),
     tools: getOrchestratorTools(state),
   });
 
