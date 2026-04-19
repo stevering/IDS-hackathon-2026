@@ -256,6 +256,94 @@ export function handleSubConvClose(state: AgentWorkflowState, close: SubConvClos
 }
 
 // ---------------------------------------------------------------------------
+// Context engineering — build optimized messages for LLM calls (Phase 3.1)
+// ---------------------------------------------------------------------------
+
+const CONTEXT_MAX_MESSAGES = 30;
+const CONTEXT_MAX_BYTES = 30_000;
+const CONTEXT_TAIL_KEEP = 5;
+
+/**
+ * Build an optimized message array for LLM calls.
+ *
+ * Instead of dumping the full messageHistory (which grows without bound),
+ * this function:
+ * 1. Preserves the system prompt (message[0]) for prefix cache hits
+ * 2. Injects a structured context summary when history is large
+ * 3. Keeps the last N messages for conversational continuity
+ *
+ * For small histories (< CONTEXT_MAX_MESSAGES and < CONTEXT_MAX_BYTES),
+ * returns the full history unchanged (no overhead).
+ */
+export function buildContextMessages(state: AgentWorkflowState): LLMMessage[] {
+  const history = state.messageHistory;
+
+  // Measure current size
+  const historySize = history.reduce((acc, m) => acc + m.content.length, 0);
+  const needsCompression = history.length > CONTEXT_MAX_MESSAGES || historySize > CONTEXT_MAX_BYTES;
+
+  if (!needsCompression) {
+    return [...history];
+  }
+
+  // --- Compression needed ---
+  const messages: LLMMessage[] = [];
+
+  // 1. System prompt (always first — prefix cache)
+  if (history.length > 0 && history[0].role === "system") {
+    messages.push(history[0]);
+  }
+
+  // 2. Build structured context summary from the middle messages
+  const summaryParts: string[] = [];
+
+  if (state.lastDirectiveContent) {
+    summaryParts.push("## Current directive\n" + state.lastDirectiveContent);
+  }
+
+  // Execution history summary
+  const execSummary: string[] = [];
+  let executionCount = 0;
+  for (const m of history) {
+    if (m.role === "tool" && m.content.includes("Execution succeeded")) {
+      executionCount++;
+      // Extract key info from tool results
+      const nodeIdMatch = m.content.match(/Created node IDs?:\s*\[([^\]]+)\]/);
+      if (nodeIdMatch) execSummary.push("Created nodes: " + nodeIdMatch[1]);
+    }
+  }
+  if (executionCount > 0) {
+    summaryParts.push("## Execution history\n" + executionCount + " successful execution(s) so far." +
+      (execSummary.length > 0 ? "\n" + execSummary.join("\n") : ""));
+  }
+  summaryParts.push("Stats: " + state.execStats.success + " success, " + state.execStats.fail + " fail, step " + state.stepCount);
+
+  if (state.designTokens) {
+    summaryParts.push("## Design tokens\n" + state.designTokens);
+  }
+
+  if (state.niceCorrections?.length) {
+    summaryParts.push("## Deferred corrections (nice)\n" + state.niceCorrections.map(c => "- " + c).join("\n"));
+  }
+
+  // Inject summary as a user message
+  messages.push({
+    role: "user",
+    content: "[Context summary — " + (history.length - CONTEXT_TAIL_KEEP) + " earlier messages compressed]\n\n" + summaryParts.join("\n\n"),
+  });
+
+  // 3. Keep the last N messages (conversational continuity)
+  const tail = history.slice(-CONTEXT_TAIL_KEEP);
+  // Skip if tail[0] is the system prompt (already added)
+  for (const m of tail) {
+    if (m.role === "system" && m === history[0]) continue;
+    messages.push(m);
+  }
+
+  return messages;
+}
+
+// ---------------------------------------------------------------------------
 // Process all queued inputs and generate LLM call
 // ---------------------------------------------------------------------------
 
@@ -344,7 +432,7 @@ export function processQueues(state: AgentWorkflowState): AgentEffect[] {
   // Generate LLM call with agent tools
   effects.push({
     type: "call_llm",
-    messages: [...state.messageHistory],
+    messages: buildContextMessages(state),
     tools: getAgentTools(state),
   });
 
@@ -497,7 +585,7 @@ export function processLLMResponse(
       if (!state.completed && state.stepCount < MAX_STEPS) {
         effects.push({
           type: "call_llm",
-          messages: [...state.messageHistory],
+          messages: buildContextMessages(state),
           tools: getAgentTools(state),
         });
       }
@@ -520,7 +608,7 @@ export function processLLMResponse(
       }
       // Don't count as idle — the agent tried, just used the wrong mechanism
       if (!state.completed && state.stepCount < MAX_STEPS) {
-        effects.push({ type: "call_llm", messages: [...state.messageHistory], tools: getAgentTools(state) });
+        effects.push({ type: "call_llm", messages: buildContextMessages(state), tools: getAgentTools(state) });
       }
       return effects;
     }
@@ -536,7 +624,7 @@ export function processLLMResponse(
       }
       // Don't count as idle
       if (!state.completed && state.stepCount < MAX_STEPS) {
-        effects.push({ type: "call_llm", messages: [...state.messageHistory], tools: getAgentTools(state) });
+        effects.push({ type: "call_llm", messages: buildContextMessages(state), tools: getAgentTools(state) });
       }
       return effects;
     }
@@ -606,7 +694,7 @@ export function processLLMResponse(
       effects.push({ type: "emit_activity", activities });
     }
     if (!state.completed && state.stepCount < MAX_STEPS) {
-      effects.push({ type: "call_llm", messages: [...state.messageHistory], tools: getAgentTools(state) });
+      effects.push({ type: "call_llm", messages: buildContextMessages(state), tools: getAgentTools(state) });
     }
     return effects;
   }
@@ -640,7 +728,7 @@ export function processLLMResponse(
   } else if (!state.completed && state.stepCount < MAX_STEPS) {
     effects.push({
       type: "call_llm",
-      messages: [...state.messageHistory],
+      messages: buildContextMessages(state),
       tools: getAgentTools(state),
     });
   } else if (state.stepCount >= MAX_STEPS && !state.completed) {

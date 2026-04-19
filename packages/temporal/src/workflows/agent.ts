@@ -28,6 +28,7 @@ import {
   processLLMResponse,
   injectToolResult,
   recordExecResult,
+  buildContextMessages,
   type AgentWorkflowState,
   type AgentEffect,
   buildAgentSystemPrompt,
@@ -1496,7 +1497,7 @@ export async function agentWorkflow(input: AgentWorkflowInput): Promise<void> {
 
         // Continue LLM loop with correct messages (including tool results)
         if (pendingLLM) {
-          const msgs = didExecTool ? [...state.messageHistory] : pendingLLM.messages;
+          const msgs = didExecTool ? buildContextMessages(state) : pendingLLM.messages;
           await executeLLMLoop(state, msgs, pendingLLM.tools, input.userId, callLLM, input.model, input.mcpServerIds);
         }
       } else if (effect.type === "wait_for_input") {
@@ -1574,7 +1575,7 @@ async function executeLLMLoop(
         if (!didExecuteTool) {
           messages = effect.messages;
         } else {
-          messages = [...state.messageHistory];
+          messages = buildContextMessages(state);
         }
         tools = effect.tools;
         needsContinue = true;
@@ -1585,7 +1586,7 @@ async function executeLLMLoop(
 
     // If tools were executed but no call_llm effect, still continue
     if (didExecuteTool && !needsContinue) {
-      messages = [...state.messageHistory];
+      messages = buildContextMessages(state);
       needsContinue = true;
     }
 

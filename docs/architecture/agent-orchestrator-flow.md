@@ -388,3 +388,29 @@ After completing all executions for a directive, the agent can call `consult_des
 - `agent-logic.ts`: tool definition in `getAgentTools()`, dispatch in `processToolCall()`, state fields `designerConsultCount` and `niceCorrections`
 - `agent.ts`: `DESIGNER_REVIEW_SYSTEM_PROMPT`, `handleConsultDesigner()`, `parseDesignerResponse()`
 - `system-prompts.ts`: agent prompt updated with "Phase 3: REVIEW before completing"
+
+## Context Engineering — Phase 3.1-3.2
+
+### buildContextMessages(state) — deterministic context compression
+
+Replaces `[...state.messageHistory]` in all agent LLM calls. When the history is small (< 30 messages, < 30KB), returns it unchanged. When it grows beyond those limits, compresses automatically:
+
+```
+[system prompt]              ← preserved for prefix cache
+[context summary]            ← structured: directive, execution history, tokens, corrections
+[last 5 messages]            ← conversational continuity (includes recent tool results)
+```
+
+This is deterministic (no LLM summarization call needed), so it adds zero latency and zero cost.
+
+### What the summary includes
+
+- Current directive content
+- Execution history (success/fail counts, created node IDs)
+- Design tokens (if extracted at startup)
+- Deferred "nice" corrections from consult_designer
+
+### Files
+
+- `agent-logic.ts`: `buildContextMessages()` function (exported)
+- `agent.ts`: all `[...state.messageHistory]` replaced with `buildContextMessages(state)`

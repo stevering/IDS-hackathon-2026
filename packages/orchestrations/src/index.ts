@@ -48,6 +48,7 @@ export {
   injectToolResult,
   reviewFigmaCode,
   recordExecResult,
+  buildContextMessages,
   MAX_STEPS,
   type AgentWorkflowState,
   type AgentEffect,
