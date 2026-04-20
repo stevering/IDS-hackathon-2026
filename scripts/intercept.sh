@@ -5,7 +5,14 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 export $(grep -v '^#' "$SCRIPT_DIR/.env.local" | grep STORAGE_SUPABASE_SERVICE_ROLE_KEY | xargs)
 KEY="$STORAGE_SUPABASE_SERVICE_ROLE_KEY"
-USER_ID="0b2a7257-14f3-4098-9554-9e65e66bf2b3"
+# Read INTERCEPT_USER_ID from .env.local (one-line `INTERCEPT_USER_ID=<your-supabase-user-uuid>`).
+# Each developer has a different user UUID — never hardcode.
+export $(grep -v '^#' "$SCRIPT_DIR/.env.local" | grep '^INTERCEPT_USER_ID=' | xargs) 2>/dev/null || true
+USER_ID="${INTERCEPT_USER_ID:-}"
+if [ -z "$USER_ID" ]; then
+    echo "Error: INTERCEPT_USER_ID is not set. Add it to .env.local — see .env.example." >&2
+    exit 1
+fi
 # Use local Supabase if STORAGE_SUPABASE_URL is set, otherwise cloud
 export $(grep -v '^#' "$SCRIPT_DIR/.env.local" | grep STORAGE_SUPABASE_URL= | xargs) 2>/dev/null || true
 BASE="${STORAGE_SUPABASE_URL:-https://ookghxkvzdnqicjdslej.supabase.co}/rest/v1/intercept_queue"

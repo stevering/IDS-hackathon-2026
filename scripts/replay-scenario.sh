@@ -22,8 +22,15 @@ SCRIPT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 # Export env vars needed by the replay engine for auto-start
 export $(grep -v '^#' "$SCRIPT_DIR/.env.local" | grep STORAGE_SUPABASE_SERVICE_ROLE_KEY | xargs) 2>/dev/null || true
 export $(grep -v '^#' "$SCRIPT_DIR/.env.local" | grep STORAGE_SUPABASE_URL= | xargs) 2>/dev/null || true
-# USER_ID must match intercept.sh — used by the replay engine to call the start API
-export REPLAY_USER_ID="0b2a7257-14f3-4098-9554-9e65e66bf2b3"
+# REPLAY_USER_ID must match intercept.sh's INTERCEPT_USER_ID — used by the
+# replay engine to call the start API. Read from .env.local; never hardcode
+# (each developer has a different Supabase user UUID).
+export $(grep -v '^#' "$SCRIPT_DIR/.env.local" | grep -E '^(REPLAY_USER_ID|INTERCEPT_USER_ID)=' | xargs) 2>/dev/null || true
+export REPLAY_USER_ID="${REPLAY_USER_ID:-${INTERCEPT_USER_ID:-}}"
+if [ -z "$REPLAY_USER_ID" ]; then
+    echo "Error: REPLAY_USER_ID (or INTERCEPT_USER_ID) is not set in .env.local — see .env.example." >&2
+    exit 1
+fi
 SCENARIO_NAME="${1:-}"
 shift || true
 
