@@ -653,6 +653,11 @@
     const isCloudMode = _guardianIframeSrc.startsWith('https://');
     if (isCloudMode) console.log('[Guardian] Cloud mode detected — skipping local WS scans');
 
+    // Trusted origin for the webapp iframe — used to validate postMessage sources
+    // and restrict outgoing messages. Derived from the iframe src set at build time.
+    var guardianOrigin;
+    try { guardianOrigin = new URL(_guardianIframeSrc).origin; } catch(e) { guardianOrigin = '*'; }
+
     const mainAvatar = document.getElementById('main-avatar');
     const selectionStats = document.getElementById('selection-stats');
     const statusEl = document.getElementById('status');
@@ -1070,7 +1075,7 @@
 
     function sendToWebview(data) {
         try {
-            webviewIframe.contentWindow.postMessage(data, '*');
+            webviewIframe.contentWindow.postMessage(data, guardianOrigin);
         } catch (e) {
             console.log('Webview not ready:', e);
         }
@@ -1290,6 +1295,8 @@
     mainAvatar.style.backgroundImage = '';
 
     window.addEventListener('message', (event) => {
+        // Only accept messages from the trusted webapp origin
+        if (guardianOrigin !== '*' && event.origin !== guardianOrigin) return;
         if (event.data && event.data.source === 'figpal-webapp') {
             if (event.data.type === 'AUTH_STATE') {
                 applyAuthState(!!event.data.authenticated);

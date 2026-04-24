@@ -91,7 +91,7 @@ export async function GET(request: NextRequest) {
 <script>
 var token = ${JSON.stringify(accessToken ?? null)};
 if(token){localStorage.setItem('southleft_access_token',token);}
-if(window.opener){try{window.opener.postMessage({type:'southleft-oauth-complete',accessToken:token},'*');}catch(e){}}
+if(window.opener){try{window.opener.postMessage({type:'southleft-oauth-complete',accessToken:token},${JSON.stringify(origin)});}catch(e){}}
 window.close();
 setTimeout(function(){document.getElementById('close-hint').style.display='block';},200);
 </script></body></html>`;
@@ -197,7 +197,7 @@ setTimeout(function(){document.getElementById('close-hint').style.display='block
 <style>*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}body{min-height:100vh;display:flex;align-items:center;justify-content:center;background:#0d0d0d;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#fff}.card{text-align:center;padding:48px 40px;background:#161616;border:1px solid rgba(255,255,255,.08);border-radius:16px;max-width:360px;width:100%}.icon{width:56px;height:56px;border-radius:50%;background:rgba(239,68,68,.12);border:1px solid rgba(239,68,68,.3);display:flex;align-items:center;justify-content:center;margin:0 auto 20px;font-size:24px}h1{font-size:20px;font-weight:600;margin-bottom:8px}.subtitle{font-size:14px;color:rgba(255,255,255,.5);line-height:1.5}</style></head>
 <body><div class="card"><div class="icon">✗</div><h1>Connection failed</h1><p class="subtitle">Figma Console authentication failed.<br>Please close this window and try again.</p></div>
 <script>
-if(window.opener){try{window.opener.postMessage({type:'southleft-oauth-complete',error:true},'*');}catch(e){}}
+if(window.opener){try{window.opener.postMessage({type:'southleft-oauth-complete',error:true},${JSON.stringify(origin)});}catch(e){}}
 setTimeout(function(){window.close();},3000);
 </script></body></html>`;
 

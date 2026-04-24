@@ -11,6 +11,6 @@ export async function POST(request: Request) {
   return proxyToSupabaseOAuth(request, "/token");
 }
 
-export async function OPTIONS() {
-  return corsOptions();
+export async function OPTIONS(request: Request) {
+  return corsOptions(request);
 }

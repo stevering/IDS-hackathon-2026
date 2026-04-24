@@ -154,6 +154,10 @@ export function useFigmaPlugin() {
     }
 
     const handleMessage = (event: MessageEvent) => {
+      // Only accept messages from: the plugin sandbox (origin "null" for data: URL)
+      // or self (HMR, React DevTools — filtered out below anyway)
+      if (event.origin !== "null" && event.origin !== window.location.origin) return;
+
       const d = event.data;
       if (!d || typeof d !== "object") return;
 

@@ -1266,7 +1266,7 @@ export default function Home() {
       const accessToken = localStorage.getItem('southleft_access_token');
       if (accessToken && window.opener) {
         try {
-          window.opener.postMessage({ type: 'southleft-oauth-complete', accessToken }, '*');
+          window.opener.postMessage({ type: 'southleft-oauth-complete', accessToken }, window.location.origin);
         } catch (e) {
           console.warn('[southleft popup] postMessage to opener failed:', e);
         }

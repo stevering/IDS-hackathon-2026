@@ -69,7 +69,7 @@ export async function GET(request: NextRequest) {
       }
     }
     writeOAuthResult(session, { type: "github-mcp-auth", success: true, tokens: tokensFromCookie ? { github_mcp_tokens: tokensFromCookie } : undefined });
-    return new NextResponse(alreadyConnectedHtml(tokensFromCookie ?? null), { headers: { "Content-Type": "text/html" } });
+    return new NextResponse(alreadyConnectedHtml(tokensFromCookie ?? null, baseUrl), { headers: { "Content-Type": "text/html" } });
   } catch (error) {
     if (error instanceof RedirectError) {
       const url = new URL(error.url);
@@ -100,21 +100,21 @@ export async function GET(request: NextRequest) {
     const msg = error instanceof Error ? error.message : String(error);
     console.error("[GitHub MCP OAuth] Auth error:", msg);
     writeOAuthResult(session, { type: "github-mcp-auth", success: false });
-    return new NextResponse(errorPopupHtml(`Init failed: ${msg}`), { headers: { "Content-Type": "text/html" } });
+    return new NextResponse(errorPopupHtml(`Init failed: ${msg}`, baseUrl), { headers: { "Content-Type": "text/html" } });
   }
 }
 
-function alreadyConnectedHtml(tokensJson: string | null): string {
+function alreadyConnectedHtml(tokensJson: string | null, targetOrigin: string): string {
   return `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>GitHub — Connected</title></head><body>
   <script>
     var tokensJson = ${JSON.stringify(tokensJson)};
-    if (window.opener) { try { window.opener.postMessage({ type: 'github-oauth-complete', success: true, tokensJson: tokensJson }, '*'); } catch(e) {} }
+    if (window.opener) { try { window.opener.postMessage({ type: 'github-oauth-complete', success: true, tokensJson: tokensJson }, ${JSON.stringify(targetOrigin)}); } catch(e) {} }
     window.close();
   </script>
   </body></html>`;
 }
 
-function errorPopupHtml(reason: string): string {
+function errorPopupHtml(reason: string, targetOrigin: string): string {
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -137,7 +137,7 @@ function errorPopupHtml(reason: string): string {
   </div>
   <script>
     if (window.opener) {
-      try { window.opener.postMessage({ type: 'github-oauth-error', error: ${JSON.stringify(reason)} }, '*'); } catch(e) {}
+      try { window.opener.postMessage({ type: 'github-oauth-error', error: ${JSON.stringify(reason)} }, ${JSON.stringify(targetOrigin)}); } catch(e) {}
     }
     window.close();
   </script>

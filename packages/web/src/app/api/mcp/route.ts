@@ -41,19 +41,40 @@ async function extractUserId(request: Request): Promise<string | undefined> {
 }
 
 // ---------------------------------------------------------------------------
-// CORS headers
+// CORS headers — restrict to known browser origins; non-browser MCP clients
+// (Claude Desktop, VS Code, curl) don't send an Origin header and get "*".
 // ---------------------------------------------------------------------------
 
-const CORS_HEADERS = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS",
-  "Access-Control-Allow-Headers": "Content-Type, Authorization, mcp-session-id, mcp-protocol-version",
-  "Access-Control-Max-Age": "86400",
-};
+const ALLOWED_ORIGINS = new Set(
+  [process.env.NEXT_PUBLIC_BASE_URL, "http://localhost:3000", "http://127.0.0.1:3000"]
+    .filter(Boolean) as string[]
+);
 
-function addCorsHeaders(response: Response): Response {
+function getCorsHeaders(request: Request): Record<string, string> {
+  const origin = request.headers.get("origin");
+  const base: Record<string, string> = {
+    "Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS",
+    "Access-Control-Allow-Headers": "Content-Type, Authorization, mcp-session-id, mcp-protocol-version",
+    "Access-Control-Max-Age": "86400",
+  };
+  if (!origin) {
+    // Non-browser MCP client — no CORS restriction needed
+    base["Access-Control-Allow-Origin"] = "*";
+  } else if (ALLOWED_ORIGINS.has(origin)) {
+    base["Access-Control-Allow-Origin"] = origin;
+    base["Vary"] = "Origin";
+  } else {
+    // Unknown browser origin — deny cross-origin access
+    base["Access-Control-Allow-Origin"] = "null";
+    base["Vary"] = "Origin";
+  }
+  return base;
+}
+
+function addCorsHeaders(request: Request, response: Response): Response {
+  const corsHeaders = getCorsHeaders(request);
   const headers = new Headers(response.headers);
-  for (const [k, v] of Object.entries(CORS_HEADERS)) {
+  for (const [k, v] of Object.entries(corsHeaders)) {
     headers.set(k, v);
   }
   return new Response(response.body, {
@@ -66,8 +87,8 @@ function addCorsHeaders(response: Response): Response {
 // Route handlers
 // ---------------------------------------------------------------------------
 
-export async function OPTIONS() {
-  return new Response(null, { status: 204, headers: CORS_HEADERS });
+export async function OPTIONS(request: Request) {
+  return new Response(null, { status: 204, headers: getCorsHeaders(request) });
 }
 
 export async function GET(request: Request) {
@@ -97,7 +118,7 @@ async function handleMcpRequest(request: Request): Promise<Response> {
         {
           status: 401,
           headers: {
-            ...CORS_HEADERS,
+            ...getCorsHeaders(request),
             "WWW-Authenticate": `Bearer resource_metadata="${resourceUrl}"`,
           },
         },
@@ -115,12 +136,12 @@ async function handleMcpRequest(request: Request): Promise<Response> {
     // Let the transport handle the request natively (Web Standard Request → Response)
     const response = await transport.handleRequest(request);
 
-    return addCorsHeaders(response);
+    return addCorsHeaders(request, response);
   } catch (error) {
     console.error("[MCP Route] Error:", error instanceof Error ? error.message : error);
     return Response.json(
       { jsonrpc: "2.0", error: { code: -32000, message: "Internal MCP server error" }, id: null },
-      { status: 500, headers: CORS_HEADERS }
+      { status: 500, headers: getCorsHeaders(request) }
     );
   }
 }

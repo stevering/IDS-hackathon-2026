@@ -23,6 +23,7 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: "Missing code or state" }, { status: 400 });
   }
 
+  const baseUrl = await getBaseUrl();
   const cookieStore = await cookies();
   const session = cookieStore.get(COOKIE_OAUTH_SESSION)?.value || "shared-dev-session";
   const savedState = cookieStore.get(GITHUB_COOKIE_STATE)?.value;
@@ -34,7 +35,7 @@ export async function GET(request: NextRequest) {
       host: request.headers.get("host"),
     });
     writeOAuthResult(session, { type: "github-mcp-auth", success: false });
-    return new NextResponse(errorHtml("State mismatch — please retry"), { headers: { "Content-Type": "text/html" } });
+    return new NextResponse(errorHtml("State mismatch — please retry", baseUrl), { headers: { "Content-Type": "text/html" } });
   }
 
   const pendingCookies: Array<{ name: string; value: string; options: Record<string, unknown> }> = [];
@@ -52,8 +53,6 @@ export async function GET(request: NextRequest) {
       authorizationCode: code,
       scope: "repo",
     });
-
-    const baseUrl = await getBaseUrl();
 
     // Extract tokens JSON from pending cookies to relay to the opener via localStorage
     let tokensJson: string | undefined;
@@ -128,7 +127,7 @@ export async function GET(request: NextRequest) {
       try { localStorage.setItem('github_mcp_tokens', tokensJson); } catch(e) {}
     }
     if (window.opener) {
-      try { window.opener.postMessage({ type: 'github-oauth-complete', success: true, tokensJson: tokensJson }, '*'); } catch(e) {}
+      try { window.opener.postMessage({ type: 'github-oauth-complete', success: true, tokensJson: tokensJson }, ${JSON.stringify(baseUrl)}); } catch(e) {}
     }
     window.close();
     setTimeout(function() {
@@ -155,11 +154,11 @@ export async function GET(request: NextRequest) {
     const msg = error instanceof Error ? error.message : String(error);
     console.error("[GitHub MCP OAuth Callback] Error:", msg);
     writeOAuthResult(session, { type: "github-mcp-auth", success: false });
-    return new NextResponse(errorHtml(`Auth failed: ${msg}`), { headers: { "Content-Type": "text/html" } });
+    return new NextResponse(errorHtml(`Auth failed: ${msg}`, baseUrl), { headers: { "Content-Type": "text/html" } });
   }
 }
 
-function errorHtml(reason: string): string {
+function errorHtml(reason: string, targetOrigin: string): string {
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -190,7 +189,7 @@ function errorHtml(reason: string): string {
   </div>
   <script>
     if (window.opener) {
-      try { window.opener.postMessage({ type: 'github-oauth-error', error: ${JSON.stringify(reason)} }, '*'); } catch(e) {}
+      try { window.opener.postMessage({ type: 'github-oauth-error', error: ${JSON.stringify(reason)} }, ${JSON.stringify(targetOrigin)}); } catch(e) {}
     }
     window.close();
     setTimeout(function() { document.getElementById('hint').textContent = 'You can close this window.'; }, 500);

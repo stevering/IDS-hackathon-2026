@@ -41,19 +41,36 @@ function getBaseUrl(request: Request): string {
 // CORS
 // ---------------------------------------------------------------------------
 
-const CORS_HEADERS: Record<string, string> = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-  "Access-Control-Allow-Headers": "Content-Type, Authorization",
-  "Access-Control-Max-Age": "86400",
-};
+const ALLOWED_ORIGINS = new Set(
+  [process.env.NEXT_PUBLIC_BASE_URL, "http://localhost:3000", "http://127.0.0.1:3000"]
+    .filter(Boolean) as string[]
+);
 
-export function corsOptions(): Response {
-  return new Response(null, { status: 204, headers: CORS_HEADERS });
+function getCorsHeaders(request: Request): Record<string, string> {
+  const origin = request.headers.get("origin");
+  const base: Record<string, string> = {
+    "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+    "Access-Control-Allow-Headers": "Content-Type, Authorization",
+    "Access-Control-Max-Age": "86400",
+  };
+  if (!origin) {
+    base["Access-Control-Allow-Origin"] = "*";
+  } else if (ALLOWED_ORIGINS.has(origin)) {
+    base["Access-Control-Allow-Origin"] = origin;
+    base["Vary"] = "Origin";
+  } else {
+    base["Access-Control-Allow-Origin"] = "null";
+    base["Vary"] = "Origin";
+  }
+  return base;
 }
 
-function addCors(headers: Record<string, string>): Record<string, string> {
-  return { ...headers, ...CORS_HEADERS };
+export function corsOptions(request: Request): Response {
+  return new Response(null, { status: 204, headers: getCorsHeaders(request) });
+}
+
+function addCors(request: Request, headers: Record<string, string>): Record<string, string> {
+  return { ...headers, ...getCorsHeaders(request) };
 }
 
 // ---------------------------------------------------------------------------
@@ -141,13 +158,13 @@ export async function proxyToSupabaseOAuth(
 
     return new Response(responseBody, {
       status: response.status,
-      headers: addCors(responseHeaders),
+      headers: addCors(request, responseHeaders),
     });
   } catch (err) {
     console.error("[MCP OAuth] Proxy error:", err instanceof Error ? err.message : String(err));
     return Response.json(
       { error: "OAuth proxy error" },
-      { status: 502, headers: CORS_HEADERS },
+      { status: 502, headers: getCorsHeaders(request) },
     );
   }
 }

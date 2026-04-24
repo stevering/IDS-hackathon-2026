@@ -12,6 +12,6 @@ export async function GET(request: Request) {
   return proxyToSupabaseOAuth(request, "/authorize");
 }
 
-export async function OPTIONS() {
-  return corsOptions();
+export async function OPTIONS(request: Request) {
+  return corsOptions(request);
 }
