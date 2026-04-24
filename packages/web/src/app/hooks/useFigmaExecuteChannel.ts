@@ -248,6 +248,14 @@ export function useFigmaExecuteChannel(
 
     channelRef.current = channel;
 
+    // Keep Realtime auth in sync with token refreshes.
+    // Without this, the JWT expires after ~1h and the channel silently dies.
+    const { data: { subscription: authSub } } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (session?.access_token) {
+        supabase.realtime.setAuth(session.access_token);
+      }
+    });
+
     // Fallback: if no Realtime presence sync arrives within PRESENCE_SYNC_TIMEOUT_MS,
     // just end the connecting state. We do NOT inject fake presence clients —
     // only Realtime determines who is truly online.
@@ -291,6 +299,7 @@ export function useFigmaExecuteChannel(
     return () => {
       clearTimeout(fallbackTimer);
       clearInterval(keepaliveTimer);
+      authSub.unsubscribe();
       channelRef.current = null;
       channel.unsubscribe();
     };

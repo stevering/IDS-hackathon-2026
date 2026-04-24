@@ -12,7 +12,7 @@ import type { CookieOptions } from "@supabase/ssr";
 export async function createClient() {
   const cookieStore = await cookies();
 
-  return createServerClient(
+  const client = createServerClient(
     process.env.NEXT_PUBLIC_STORAGE_SUPABASE_URL!,
     process.env.NEXT_PUBLIC_STORAGE_SUPABASE_ANON_KEY!,
     {
@@ -46,4 +46,23 @@ export async function createClient() {
       },
     }
   );
+
+  // Wrap auth.getUser() with retries on transient fetch errors.
+  // Docker Supabase (Kong) drops connections when Next.js makes many parallel
+  // requests during page load. Retry with increasing delays to spread the load.
+  const originalGetUser = client.auth.getUser.bind(client.auth);
+  client.auth.getUser = async (...args: Parameters<typeof originalGetUser>) => {
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const result = await originalGetUser(...args);
+      const errName = (result.error as { name?: string } | null)?.name;
+      if (!result.error || (errName !== "AuthRetryableFetchError" && errName !== "AuthUnknownError")) {
+        return result;
+      }
+      // Spread retries with jitter to avoid thundering herd
+      await new Promise((r) => setTimeout(r, 150 * (attempt + 1) + Math.random() * 100));
+    }
+    return originalGetUser(...args);
+  };
+
+  return client;
 }
