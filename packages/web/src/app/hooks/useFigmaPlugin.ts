@@ -154,9 +154,11 @@ export function useFigmaPlugin() {
     }
 
     const handleMessage = (event: MessageEvent) => {
-      // Only accept messages from: the plugin sandbox (origin "null" for data: URL)
-      // or self (HMR, React DevTools — filtered out below anyway)
-      if (event.origin !== "null" && event.origin !== window.location.origin) return;
+      // Accept messages from:
+      // - plugin sandbox: origin "null" (data: URL in Figma Web) or "https://www.figma.com" (Figma Desktop)
+      // - self: HMR, React DevTools (filtered out below anyway)
+      const trustedOrigins = ["null", window.location.origin, "https://www.figma.com", "https://figma.com"];
+      if (!trustedOrigins.includes(event.origin)) return;
 
       const d = event.data;
       if (!d || typeof d !== "object") return;
