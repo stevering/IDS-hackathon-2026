@@ -334,6 +334,16 @@ Embeds the Next.js Guardian webapp (chat AI, auth, MCP tools).
 | ui.html → Webapp | figma-context, selection-changed, VARIABLES_DATA, EXECUTE_CODE_RESULT, set-theme, figpal-init |
 | Webapp → ui.html | AUTH_STATE, request-figma-context, EXECUTE_CODE, GET_VARIABLES, HIGHLIGHT_NODE, notify |
 
+#### postMessage origin validation
+
+The iframe chain is: Figma (`https://www.figma.com`) → plugin UI (origin `null`, data: URL) → webapp iframe (`https://guardian.figdesys.com`). Because the plugin UI has a `null` origin (Figma sandbox), CSP `frame-ancestors` cannot be used to restrict framing.
+
+Instead, origin validation is enforced at the application level:
+
+- **ui.html** derives `guardianOrigin` from the iframe `src` attribute (set at build time via `__GUARDIAN_URL__`). Incoming messages from the webapp iframe are rejected unless `event.origin === guardianOrigin`. Outgoing messages to the webapp via `sendToWebview()` use `guardianOrigin` as targetOrigin instead of `'*'`.
+- **useFigmaPlugin.ts** filters incoming messages to accept only `event.origin === "null"` (plugin sandbox parent) or `event.origin === window.location.origin` (self/HMR).
+- **webapp → plugin UI** (`window.parent.postMessage`) must use `'*'` as targetOrigin because the parent's origin is `null`. This is a Figma platform constraint — the messages contain no secrets (AUTH_STATE is a boolean, EXECUTE_CODE is Figma JS code).
+
 ### Message Router (window.onmessage)
 
 Routes all messages from code.ts to the appropriate destination:

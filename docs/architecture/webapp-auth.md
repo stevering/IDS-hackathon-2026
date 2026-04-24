@@ -103,6 +103,12 @@ The shell of the chat UI fires many parallel requests on mount (`useGuardianPres
 2. A global gate would block the whole app render until session refresh completes — a UX cost.
 3. We may instead consolidate into a single `/api/user/bootstrap` endpoint that returns all the shell data in one response — that removes the parallelism entirely.
 
+## OAuth callback postMessage security
+
+All OAuth callback routes (Figma MCP, GitHub MCP, Southleft MCP) return HTML pages that notify the opener window via `window.opener.postMessage()`. The `targetOrigin` parameter is set to the server-computed base URL (`getBaseUrl()` or `requestOrigin(request)`) — never `'*'`. This prevents a malicious site from opening the callback URL and intercepting OAuth tokens via `window.opener`.
+
+Files: `api/auth/{figma-mcp,github-mcp,southleft-mcp}/{route,callback/route}.ts`, `page.tsx`.
+
 ## Other defenses (kept regardless of root cause)
 
 ### Don't redirect on a single API 401 (`account/page.tsx`)

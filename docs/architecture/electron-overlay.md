@@ -92,6 +92,10 @@ The back-off and suspend logic above prevents the resulting spam, but the proper
 
 This is tracked separately and not yet implemented.
 
+## BrowserWindow security
+
+The overlay window is created with `contextIsolation: true`, `nodeIntegration: false`, and `sandbox: true`. The preload script (`preload/index.ts`) uses `contextBridge.exposeInMainWorld()` to expose a controlled API surface — only IPC handlers for hover state, bridge messages, system status, and panel resize. No direct access to `require()`, `process`, or the filesystem from the renderer.
+
 ## Tray-icon and macOS UI gotchas
 
 These are unrelated to the bridge but live in the same package and are useful context when touching the overlay:

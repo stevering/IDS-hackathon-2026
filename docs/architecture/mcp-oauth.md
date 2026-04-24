@@ -88,7 +88,17 @@ Claude Code                       Guardian MCP (:3847)              Supabase got
 | `.well-known/oauth-protected-resource/api/mcp/route.ts` | PRM for the webapp's own MCP endpoint at `/api/mcp` |
 | `api/mcp/oauth/{register,authorize,token}/route.ts` | OAuth proxy (mirrors the standalone MCP server's proxy logic) |
 | `oauth/consent/page.tsx` | User-facing consent UI — calls `supabase.auth.oauth.getAuthorizationDetails()` then approve/deny |
-| `lib/mcp-oauth.ts` | Shared proxy helpers |
+| `lib/mcp-oauth.ts` | Shared proxy helpers (CORS, base URL derivation) |
+
+### CORS policy
+
+Both the MCP route (`/api/mcp`) and the OAuth proxy routes use **dynamic CORS** instead of `Access-Control-Allow-Origin: *`:
+
+- **No `Origin` header** (non-browser MCP clients like Claude Desktop, VS Code, curl): returns `*`.
+- **Known origins** (`NEXT_PUBLIC_BASE_URL`, `http://localhost:3000`, `http://127.0.0.1:3000`): reflects the request origin + `Vary: Origin`.
+- **Unknown browser origins**: returns `"null"` (effectively denies cross-origin access).
+
+This prevents browser-based CSRF from arbitrary websites while preserving compatibility with desktop MCP clients that don't send CORS headers. The `Vary: Origin` header ensures CDN caches don't serve a cached `Access-Control-Allow-Origin` for the wrong origin.
 
 ### Two separate MCP entry points
 
