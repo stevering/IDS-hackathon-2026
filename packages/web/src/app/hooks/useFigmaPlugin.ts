@@ -153,15 +153,13 @@ export function useFigmaPlugin() {
       sendToPlugin("request-figma-context");
     }
 
-    const isInIframe = window.parent !== window;
-
     const handleMessage = (event: MessageEvent) => {
-      // Accept messages from:
-      // - when inside an iframe (Figma plugin): accept all origins from parent
-      //   (the plugin ui.html sends with the webapp origin, but Figma Desktop
-      //   may use internal origins that are hard to predict)
-      // - when standalone: only accept from self (HMR, React DevTools)
-      if (!isInIframe && event.origin !== window.location.origin) return;
+      // Security: validate message source, not origin.
+      // Figma plugin UIs run in null-origin iframes, making event.origin
+      // unreliable ("null", internal Figma URLs, etc.). Instead, we check
+      // event.source which is the window reference — cannot be spoofed.
+      // Accept messages from: parent window (plugin ui.html) or self (HMR).
+      if (event.source !== window.parent && event.source !== window) return;
 
       const d = event.data;
       if (!d || typeof d !== "object") return;
