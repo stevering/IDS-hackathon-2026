@@ -19,6 +19,18 @@ Backlog and TODOs are in `<projectRoot>/internal/docs/backlog/*`.
 
 ## Dev environment
 
+### Always test what you just did before committing
+
+Never commit (or propose a commit) without exercising the change first. The exact form depends on what was touched:
+
+- **Code that runs locally** → start `pnpm dev` (or the relevant filter) and exercise the affected flow. Read `logs/dev.log` to confirm it restarted cleanly and did what you expected.
+- **UI changes** → drive them in a real browser (Playwright via MCP or manual). Type checking and unit tests verify code, not feature behaviour.
+- **API / RPC / DB changes** → call the new endpoint or RPC end-to-end (curl, Playwright, or a test) on the right environment (local Docker for `pnpm dev`, cloud preview for `pnpm dev:preview`). Confirm the response, the DB state, and any side-effects.
+- **Build / tooling / scripts (turbo, dev-preview.sh, etc.)** → run the script or build at least once to confirm it still launches without errors. A "should work" reading of the diff is not enough.
+- **Docs only** → grep cross-references and read the rendered output to make sure links resolve.
+
+If you genuinely cannot test (no creds, no environment, blocked by a hardware dependency the user owns), say so explicitly *before* offering the commit — don't claim "tested" or "ready to commit" otherwise. Ask the user to test the part you cannot.
+
 ### Two Supabase environments — don't confuse them
 
 | | Local (Docker) | Cloud (prod/preview) |

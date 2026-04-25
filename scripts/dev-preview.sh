@@ -4,12 +4,12 @@
 # What runs:
 #   - Figma plugin + desktop-plugin + widget (watch, iframe → preview.guardian.figdesys.com)
 #   - bridge (shared types, tsc watch)
+#   - electron-overlay (Electron app, polls preview /api/guardian/status)
 #
 # What does NOT run (served by cloud):
 #   - @guardian/web (webapp is on preview.guardian.figdesys.com)
 #   - @guardian/mcp-server (MCP is on Vercel)
 #   - @guardian/temporal (worker runs on Railway)
-#   - @guardian/electron-overlay (not needed for preview testing)
 #   - Temporal dev server (using Temporal Cloud)
 #   - Supabase local (using Supabase Cloud)
 #
@@ -36,6 +36,9 @@ fi
 
 # 3. Preview-specific
 export GUARDIAN_URL="${GUARDIAN_URL:-https://preview.guardian.figdesys.com}"
+# Electron overlay reads GUARDIAN_CLOUD_URL — alias it to GUARDIAN_URL so a single
+# variable controls both the plugin iframe target and the overlay status poll.
+export GUARDIAN_CLOUD_URL="${GUARDIAN_CLOUD_URL:-$GUARDIAN_URL}"
 export FORCE_COLOR=1
 
 mkdir -p logs
@@ -45,10 +48,12 @@ TURBO_FILTERS="\
     --filter=@guardian/figma-plugin \
     --filter=@guardian/figma-desktop-plugin \
     --filter=@guardian/figma-widget \
-    --filter=@guardian/bridge"
+    --filter=@guardian/bridge \
+    --filter=@guardian/electron-overlay"
 
-echo "☁  Preview mode (plugin build only — worker runs on Railway)"
+echo "☁  Preview mode (plugins + overlay watch — worker runs on Railway)"
 echo "   Plugin URL:  $GUARDIAN_URL"
+echo "   Overlay URL: $GUARDIAN_CLOUD_URL"
 echo ""
 
 FORCE_COLOR=1 turbo run dev $TURBO_FILTERS \

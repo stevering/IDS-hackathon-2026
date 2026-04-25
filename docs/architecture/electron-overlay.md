@@ -106,6 +106,9 @@ These are unrelated to the bridge but live in the same package and are useful co
 
 ## Operational notes
 
+- **Running locally vs against preview.** The overlay reads `GUARDIAN_CLOUD_URL` (default `http://localhost:3000`) to decide where to poll `/api/guardian/status` from.
+  - `pnpm dev` → overlay points at the local webapp.
+  - `pnpm dev:preview` → overlay (and plugins) point at `https://preview.guardian.figdesys.com`. The script aliases `GUARDIAN_CLOUD_URL` onto `GUARDIAN_URL` so a single env controls both targets.
 - **Single-instance lock.** If a stale Electron process holds the lock, `requestSingleInstanceLock()` returns `false` and the new instance exits silently after ~1 s. Kill stale processes:
   ```bash
   ps aux | grep "[E]lectron" | grep -v Helper | awk '{print $2}' | xargs kill

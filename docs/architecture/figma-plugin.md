@@ -625,6 +625,8 @@ GUARDIAN_URL=https://preview.guardian.figdesys.com pnpm --filter @guardian/figma
 GUARDIAN_URL=https://guardian.figdesys.com pnpm --filter @guardian/figma-plugin build
 ```
 
+For an end-to-end preview test (plugins + widget + Electron overlay all pointed at `preview.guardian.figdesys.com` in watch mode), use `pnpm dev:preview` from the repo root. The script also aliases `GUARDIAN_CLOUD_URL=$GUARDIAN_URL` so the overlay's status poll lands on the same environment.
+
 `ui.html` contains the placeholder `__GUARDIAN_URL__` which is replaced at build time → `dist/ui.html`. The manifest points to `dist/ui.html` (not the source `ui.html`). Both the plugin and widget builds perform this substitution.
 
 `bridge.ts` is imported by both plugin `code.ts` and widget `widget-src/code.tsx`, bundled by esbuild into each.

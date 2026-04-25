@@ -41,7 +41,7 @@
         "NEXT_PUBLIC_TEMPORAL_ENABLED"
       ]
     },
-    "dev": { "cache": false, "persistent": true, "env": ["GUARDIAN_URL"] },
+    "dev": { "cache": false, "persistent": true, "env": ["GUARDIAN_URL", "GUARDIAN_CLOUD_URL"] },
     "dev:proxy": { "cache": false, "persistent": true },
     "lint": { "dependsOn": ["^lint"] },
     "typecheck": { "dependsOn": ["^typecheck"] }

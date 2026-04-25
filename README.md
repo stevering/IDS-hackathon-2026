@@ -317,6 +317,7 @@ pnpm dev:preview      # lean preview stack (see below)
 | Desktop plugin (watch) | `@guardian/figma-desktop-plugin` | Copy from plugin build |
 | Widget (watch) | `@guardian/figma-widget` | Copy from plugin build |
 | Bridge (tsc watch) | `@guardian/bridge` | Shared types |
+| Electron overlay | `@guardian/electron-overlay` | Polls `preview.guardian.figdesys.com/api/guardian/status` (via `GUARDIAN_CLOUD_URL`) |
 
 ##### What runs in the cloud
 
