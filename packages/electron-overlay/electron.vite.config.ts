@@ -19,10 +19,19 @@ export default defineConfig({
     },
   },
   preload: {
+    // The renderer runs with sandbox:true, so the preload script MUST be CommonJS —
+    // Electron uses require() to load it inside the sandbox and cannot evaluate ESM
+    // (`import` statements throw "Cannot use import statement outside a module").
+    // package.json sets "type":"module" globally, so we override with .js + cjs
+    // format here only for the preload bundle.
     plugins: [externalizeDepsPlugin({ exclude: ["@guardian/orchestrations"] })],
     build: {
       rollupOptions: {
         input: resolve(__dirname, "src/preload/index.ts"),
+        output: {
+          format: "cjs",
+          entryFileNames: "[name].js",
+        },
       },
     },
   },

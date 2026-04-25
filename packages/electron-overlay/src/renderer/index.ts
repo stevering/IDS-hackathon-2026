@@ -459,17 +459,18 @@ async function checkCloudStatus(): Promise<void> {
       cloudFailCount = 0;
       cloudDot.classList.add("connected");
       cloudDot.classList.remove("reconnecting", "failed");
-      window.electronAPI.reportCloudStatus(true);
+      window.electronAPI?.reportCloudStatus(true);
     } else {
       throw new Error(`HTTP ${res.status}`);
     }
-  } catch {
+  } catch (err) {
+    console.error(`[guardian] Cloud status check failed (${CLOUD_STATUS_URL}):`, err);
     cloudFailCount++;
     cloudDot.classList.remove("connected");
     if (cloudFailCount >= CLOUD_FAIL_AFTER) {
       cloudDot.classList.add("failed");
       cloudDot.classList.remove("reconnecting");
-      window.electronAPI.reportCloudStatus(false);
+      window.electronAPI?.reportCloudStatus(false);
     } else {
       cloudDot.classList.add("reconnecting");
       cloudDot.classList.remove("failed");
