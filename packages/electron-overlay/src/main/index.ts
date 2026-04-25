@@ -452,8 +452,9 @@ function createOverlay(): void {
     focusable: true,
 
     webPreferences: {
-      // electron-vite outputs .mjs when package.json has "type":"module"
-      preload: join(__dirname, "../preload/index.mjs"),
+      // Preload is forced to CommonJS in electron.vite.config.ts (sandbox:true
+      // can't load ESM via require). Output goes to out/preload/index.js.
+      preload: join(__dirname, "../preload/index.js"),
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
