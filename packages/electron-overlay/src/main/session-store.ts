@@ -89,3 +89,21 @@ export function isAccessTokenExpired(session: StoredSession, skewSeconds = 60): 
   const now = Math.floor(Date.now() / 1000);
   return now + skewSeconds >= session.access_token_expires_at;
 }
+
+/**
+ * Best-effort extraction of the user email from the Supabase JWT payload.
+ * Parses the unverified JWT body — no signature check is needed because we
+ * only display the value in our own menus, never trust it for authorisation.
+ */
+export function getSessionEmail(session: StoredSession): string | null {
+  try {
+    const payload = session.access_token.split(".")[1];
+    if (!payload) return null;
+    const decoded = JSON.parse(Buffer.from(payload, "base64url").toString("utf-8"));
+    const email = decoded?.email;
+    return typeof email === "string" && email.length > 0 ? email : null;
+  } catch (e) {
+    console.error("[session-store] Failed to decode JWT email:", e);
+    return null;
+  }
+}

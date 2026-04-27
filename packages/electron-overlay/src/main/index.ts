@@ -25,6 +25,7 @@ import {
 } from "./oauth.js";
 import {
   clearSession,
+  getSessionEmail,
   isAccessTokenExpired,
   loadSession,
   saveSession,
@@ -595,8 +596,14 @@ figma.viewport.scrollAndZoomIntoView([f]);`,
       ? `● MCP Bridge — ${mcpStatus.instances.filter(i => i.online).length}/${mcpStatus.instances.length} online`
       : `○ MCP Bridge — stopped`;
 
+  const ctxSession = loadSession(app.getPath("userData"));
+  const ctxEmail = ctxSession ? getSessionEmail(ctxSession) : null;
+
   return Menu.buildFromTemplate([
     { label: "DS AI Guardian", enabled: false },
+    ...(ctxSession
+      ? [{ label: ctxEmail ? `Signed in as ${ctxEmail}` : "Signed in", enabled: false }]
+      : [{ label: "Not signed in", enabled: false }]),
     { type: "separator" },
     { label: "Servers:", enabled: false },
     { label: cloudLabel, enabled: false },
@@ -682,6 +689,10 @@ function buildTrayMenu(): Menu {
       : `○ MCP Bridge — stopped`;
 
   const session = loadSession(app.getPath("userData"));
+  const sessionEmail = session ? getSessionEmail(session) : null;
+  const accountItem: Electron.MenuItemConstructorOptions | null = session
+    ? { label: sessionEmail ? `Signed in as ${sessionEmail}` : "Signed in", enabled: false }
+    : null;
   const authItem: Electron.MenuItemConstructorOptions = session
     ? { label: "Sign out of Guardian", click: () => { signOut().catch(() => {}); } }
     : { label: "Connect to Guardian…", click: () => { runPairing().catch(() => {}); } };
@@ -704,6 +715,7 @@ function buildTrayMenu(): Menu {
       },
     },
     { type: "separator" },
+    ...(accountItem ? [accountItem] : []),
     authItem,
     { type: "separator" },
     { label: "Servers:", enabled: false },
