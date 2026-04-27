@@ -1,0 +1,18 @@
+{
+  "$schema": "https://unpkg.com/@changesets/config@3.0.0/schema.json",
+  "changelog": [
+    "@changesets/changelog-github",
+    { "repo": "stevering/IDS-hackathon-2026" }
+  ],
+  "commit": false,
+  "fixed": [],
+  "linked": [
+    ["@guardian/figma-plugin", "@guardian/figma-widget", "@guardian/bridge"],
+    ["@guardian/orchestrations", "@guardian/temporal"]
+  ],
+  "access": "restricted",
+  "baseBranch": "main",
+  "updateInternalDependencies": "patch",
+  "ignore": [],
+  "privatePackages": { "version": true, "tag": true }
+}
