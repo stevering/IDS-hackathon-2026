@@ -51,13 +51,18 @@ export class BridgeServer {
               return;
             }
 
-            // Regular Figma plugin / widget client
+            // Regular Figma plugin / widget client. The plugin re-sends REGISTER
+            // when its file context becomes available (fileKey + fileName), so we
+            // upsert by tempId and re-fire onConnect — listeners just refresh
+            // their snapshot of the client list, which is idempotent.
+            const existing = this.clients.get(tempId)?.info;
             const info: ClientInfo = {
               id: tempId,
               clientType: msg['clientType'] as ClientInfo['clientType'],
               widgetId: msg['widgetId'] as string | undefined,
               fileKey: msg['fileKey'] as string | undefined,
-              connectedAt: Date.now(),
+              fileName: msg['fileName'] as string | undefined,
+              connectedAt: existing?.connectedAt ?? Date.now(),
             };
             this.clients.set(tempId, { ws, info });
             ws.send(JSON.stringify({ type: 'REGISTERED', clientId: tempId }));

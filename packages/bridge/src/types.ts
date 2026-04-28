@@ -11,6 +11,8 @@ export interface ClientInfo {
   widgetId?: string;
   /** Figma file key — may be undefined until the plugin loads the file context */
   fileKey?: string;
+  /** Human-readable Figma file name — same lifecycle as fileKey */
+  fileName?: string;
   connectedAt: number;
 }
 
@@ -21,6 +23,7 @@ export interface RegisterMessage {
   clientType: ClientType;
   widgetId?: string;
   fileKey?: string;
+  fileName?: string;
 }
 
 export interface SelectionChangedMessage {

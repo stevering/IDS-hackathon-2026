@@ -1221,6 +1221,9 @@
             if (configPanel.classList.contains('open')) updateContextDisplay();
             // Broadcast FILE_INFO to FC MCP servers so they recognize the connection
             if (typeof _fcBroadcast === 'function') _fcBroadcast({ type: 'FILE_INFO', data: cachedFigmaContext });
+            // Refresh the bridge registration with the now-known fileKey/fileName
+            // so the Electron overlay menu can show a proper file label.
+            try { window.__guardianBridgeReRegister?.(); } catch (e) { /* ignore */ }
             return;
         }
 
@@ -2080,6 +2083,7 @@
                     clientType: guardianClientType,
                     widgetId: guardianWidgetId,
                     fileKey: cachedFigmaContext?.fileKey ?? undefined,
+                    fileName: cachedFigmaContext?.fileName ?? undefined,
                 }));
                 // Persist connection status so the widget canvas can display it
                 parent.postMessage({ pluginMessage: {
@@ -2221,6 +2225,21 @@
         document.addEventListener('guardian-auth-state', function (e) {
             send({ type: 'AUTH_STATE', authenticated: e.detail.authenticated });
         });
+
+        // Expose a re-register hook so the rest of the UI can push file context
+        // updates (fileKey + fileName) once they become available — the initial
+        // REGISTER fires when the WS opens, often before figma-context-init has
+        // populated cachedFigmaContext.
+        window.__guardianBridgeReRegister = function () {
+            if (!ws || ws.readyState !== WebSocket.OPEN || !clientId) return;
+            ws.send(JSON.stringify({
+                type: 'REGISTER',
+                clientType: guardianClientType,
+                widgetId: guardianWidgetId,
+                fileKey: cachedFigmaContext?.fileKey ?? undefined,
+                fileName: cachedFigmaContext?.fileName ?? undefined,
+            }));
+        };
 
         connect();
     })();

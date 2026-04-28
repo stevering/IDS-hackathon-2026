@@ -553,9 +553,15 @@ function formatFigmaPluginItems(): Electron.MenuItemConstructorOptions[] {
       const id = c.widgetId ? c.widgetId.slice(-6) : "?";
       return { label: `● Figma widget #${id}`, enabled: false };
     }
-    const fileSuffix = c.fileKey
-      ? ` · ${c.fileKey.slice(0, 8)}`
-      : " (loading…)";
+    // The plugin re-REGISTERs with fileName/fileKey once its file context is
+    // available. Prefer the human-readable fileName; fall back to a truncated
+    // fileKey, then to a plain "connected" if the manifest doesn't expose
+    // either (the public Figma plugin manifest hides figma.fileKey).
+    const fileSuffix = c.fileName
+      ? ` · ${c.fileName}`
+      : c.fileKey
+        ? ` · ${c.fileKey.slice(0, 8)}`
+        : " connected";
     return { label: `● Figma plugin${fileSuffix}`, enabled: false };
   });
 }
