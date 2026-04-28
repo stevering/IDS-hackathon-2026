@@ -133,9 +133,6 @@ const badge = document.createElement("div");
 badge.className = "alert-badge hidden";
 badge.textContent = "0";
 
-const figmaDot = document.createElement("div");
-figmaDot.className = "figma-dot";
-
 const cloudDot = document.createElement("div");
 cloudDot.className = "cloud-dot";
 
@@ -146,25 +143,8 @@ statusTooltip.className = "status-tooltip";
 
 mascotWrapper.appendChild(guardian);
 mascotWrapper.appendChild(badge);
-mascotWrapper.appendChild(figmaDot);
 mascotWrapper.appendChild(cloudDot);
 mascotWrapper.appendChild(statusTooltip);
-
-// Dot hover → custom tooltip (native title= doesn't work on transparent overlays)
-figmaDot.addEventListener("mouseenter", () => {
-  if (figmaDot.classList.contains("unauthenticated")) {
-    statusTooltip.textContent = "Figma — sign in to Guardian";
-  } else if (figmaDot.classList.contains("connected")) {
-    const count = figmaClients.length;
-    statusTooltip.textContent = `Figma — ${count} client${count > 1 ? "s" : ""}`;
-  } else if (figmaDot.classList.contains("failed")) {
-    statusTooltip.textContent = "Figma — plugin introuvable";
-  } else {
-    statusTooltip.textContent = "Figma — en attente";
-  }
-  statusTooltip.classList.add("visible");
-});
-figmaDot.addEventListener("mouseleave", () => statusTooltip.classList.remove("visible"));
 
 cloudDot.addEventListener("mouseenter", () => {
   if (cloudDot.classList.contains("connected")) {
@@ -181,7 +161,6 @@ cloudDot.addEventListener("mouseenter", () => {
 cloudDot.addEventListener("mouseleave", () => statusTooltip.classList.remove("visible"));
 
 // Prevent dot clicks from bubbling up to mascotWrapper's onboarding toggle
-figmaDot.addEventListener("click", (e) => e.stopPropagation());
 cloudDot.addEventListener("click", (e) => e.stopPropagation());
 
 // Default layout: [bubble (left)] [mascot (right)] — flipped to row-reverse for bubble-right
@@ -410,36 +389,12 @@ function hideMessage(): void {
   }, 240);
 }
 
-// ── Figma dot state helpers ───────────────────────────────────────────────────
-
-const FIGMA_FAIL_TIMEOUT = 15_000; // 15 s without any plugin → red
-let figmaFailTimer: ReturnType<typeof setTimeout> | null = null;
+// ── Figma plugin auth state ───────────────────────────────────────────────────
+// Plugin presence is shown in the tray/context menu (one row per connected plugin),
+// not in a dedicated dot. We still track auth state so message bubbles can suppress
+// themselves when the plugin user is not signed in.
 
 let figmaAuthenticated = true; // assumed true until plugin reports otherwise
-
-function setFigmaDotState(state: "idle" | "connected" | "failed" | "unauthenticated"): void {
-  figmaDot.classList.toggle("connected",       state === "connected");
-  figmaDot.classList.toggle("failed",          state === "failed");
-  figmaDot.classList.toggle("unauthenticated", state === "unauthenticated");
-}
-
-function scheduleFigmaFail(): void {
-  if (figmaFailTimer !== null) return;
-  figmaFailTimer = setTimeout(() => {
-    figmaFailTimer = null;
-    setFigmaDotState("failed");
-  }, FIGMA_FAIL_TIMEOUT);
-}
-
-function clearFigmaFailTimer(): void {
-  if (figmaFailTimer !== null) {
-    clearTimeout(figmaFailTimer);
-    figmaFailTimer = null;
-  }
-}
-
-// Start counting from page load
-scheduleFigmaFail();
 
 // ── Guardian Cloud HTTP health check ──────────────────────────────────────────
 
@@ -499,8 +454,6 @@ function updateFigmaState(clients: ClientInfo[]): void {
   guardian.classList.toggle("figma-connected", hasClients);
 
   if (hasClients) {
-    clearFigmaFailTimer();
-    setFigmaDotState(figmaAuthenticated ? "connected" : "unauthenticated");
     guardian.style.filter = "drop-shadow(0 4px 20px rgba(34,211,238,0.7))";
     setTimeout(() => { guardian.style.filter = ""; }, 800);
 
@@ -521,8 +474,6 @@ function updateFigmaState(clients: ClientInfo[]): void {
       }
     }
   } else {
-    setFigmaDotState("idle");
-    scheduleFigmaFail();
     step3Done = false;
     updateAllSteps();
     const desc = document.getElementById("step-3-desc");
@@ -554,9 +505,6 @@ if (window.electronAPI) {
   window.electronAPI.onBridgeMessage((clientId, msg) => {
     if (msg.type === "AUTH_STATE") {
       figmaAuthenticated = msg.authenticated;
-      if (figmaClients.length > 0) {
-        setFigmaDotState(figmaAuthenticated ? "connected" : "unauthenticated");
-      }
       return;
     }
 

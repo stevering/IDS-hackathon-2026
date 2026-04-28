@@ -530,20 +530,61 @@ function createOverlay(): void {
   }
 }
 
+// ── Connection-status menu helpers ────────────────────────────────────────────
+// Used by both the right-click context menu and the tray menu so the two stay
+// in sync. One item per Figma plugin, one item per local MCP service.
+
+function formatCloudItem(): Electron.MenuItemConstructorOptions {
+  return {
+    label: isCloudConnected
+      ? "● Guardian Cloud — connected"
+      : "○ Guardian Cloud — offline",
+    enabled: false,
+  };
+}
+
+function formatFigmaPluginItems(): Electron.MenuItemConstructorOptions[] {
+  const clients = bridgeServer.getClients();
+  if (clients.length === 0) {
+    return [{ label: "○ No Figma plugin detected", enabled: false }];
+  }
+  return clients.map((c) => {
+    if (c.clientType === "widget") {
+      const id = c.widgetId ? c.widgetId.slice(-6) : "?";
+      return { label: `● Figma widget #${id}`, enabled: false };
+    }
+    const fileSuffix = c.fileKey
+      ? ` · ${c.fileKey.slice(0, 8)}`
+      : " (loading…)";
+    return { label: `● Figma plugin${fileSuffix}`, enabled: false };
+  });
+}
+
+function formatLocalServiceItems(): Electron.MenuItemConstructorOptions[] {
+  const status = mcpBridge?.getStatus();
+  if (!status || status.instances.length === 0) {
+    return [{ label: "○ No local services detected", enabled: false }];
+  }
+  return status.instances.map((inst) => {
+    if (inst.online) {
+      return {
+        label: `● ${inst.label} — ${inst.toolCount} tool${inst.toolCount === 1 ? "" : "s"}`,
+        enabled: false,
+      };
+    }
+    return {
+      label: inst.error
+        ? `○ ${inst.label} — error`
+        : `○ ${inst.label} — offline`,
+      enabled: false,
+    };
+  });
+}
+
 // ── Context menu (right-click on overlay) ────────────────────────────────────
 
 function buildContextMenu(): Menu {
   const clients = bridgeServer.getClients();
-
-  const figmaItems: Electron.MenuItemConstructorOptions[] =
-    clients.length > 0
-      ? clients.map((c) => ({
-          label: `● ${c.clientType === "widget" ? "Widget" : "Plugin"}${
-            c.widgetId ? " #" + c.widgetId.slice(-6) : ""
-          }${c.fileKey ? "  ·  " + c.fileKey.slice(0, 8) : ""}`,
-          enabled: false,
-        }))
-      : [{ label: "○ No Figma client connected", enabled: false }];
 
   const sendItems: Electron.MenuItemConstructorOptions[] =
     clients.length > 0
@@ -581,21 +622,6 @@ figma.viewport.scrollAndZoomIntoView([f]);`,
         ]
       : [];
 
-  const cloudLabel = isCloudConnected
-    ? `● Guardian Cloud — connected`
-    : `○ Guardian Cloud — offline`;
-
-  const bridgeLabel = clients.length > 0
-    ? `● Bridge  ws:${BRIDGE_PORT}  — ${clients.length} client${clients.length > 1 ? "s" : ""}`
-    : `○ Bridge  ws:${BRIDGE_PORT}  — waiting`;
-
-  const mcpStatus = mcpBridge?.getStatus();
-  const mcpBridgeLabel = !mcpStatus
-    ? `○ MCP Bridge — not configured`
-    : mcpStatus.running
-      ? `● MCP Bridge — ${mcpStatus.instances.filter(i => i.online).length}/${mcpStatus.instances.length} online`
-      : `○ MCP Bridge — stopped`;
-
   const ctxSession = loadSession(app.getPath("userData"));
   const ctxEmail = ctxSession ? getSessionEmail(ctxSession) : null;
 
@@ -605,13 +631,10 @@ figma.viewport.scrollAndZoomIntoView([f]);`,
       ? [{ label: ctxEmail ? `Signed in as ${ctxEmail}` : "Signed in", enabled: false }]
       : [{ label: "Not signed in", enabled: false }]),
     { type: "separator" },
-    { label: "Servers:", enabled: false },
-    { label: cloudLabel, enabled: false },
-    { label: bridgeLabel, enabled: false },
-    { label: mcpBridgeLabel, enabled: false },
-    { type: "separator" },
-    { label: "Figma:", enabled: false },
-    ...figmaItems,
+    { label: "Connections:", enabled: false },
+    formatCloudItem(),
+    ...formatFigmaPluginItems(),
+    ...formatLocalServiceItems(),
     ...(sendItems.length > 0 ? [{ type: "separator" as const }, ...sendItems] : []),
     { type: "separator" },
     {
@@ -661,33 +684,6 @@ function createTray(): void {
 }
 
 function buildTrayMenu(): Menu {
-  const clients = bridgeServer.getClients();
-
-  const figmaItems: Electron.MenuItemConstructorOptions[] =
-    clients.length > 0
-      ? clients.map((c) => ({
-          label: `● ${c.clientType === "widget" ? "Widget" : "Plugin"}${
-            c.widgetId ? " #" + c.widgetId.slice(-6) : ""
-          }`,
-          enabled: false,
-        }))
-      : [{ label: "○ No Figma connected", enabled: false }];
-
-  const cloudLabelTray = isCloudConnected
-    ? `● Guardian Cloud — connected`
-    : `○ Guardian Cloud — offline`;
-
-  const bridgeLabelTray = clients.length > 0
-    ? `● Bridge  ws:${BRIDGE_PORT}  — ${clients.length} client${clients.length > 1 ? "s" : ""}`
-    : `○ Bridge  ws:${BRIDGE_PORT}  — waiting`;
-
-  const mcpStatusTray = mcpBridge?.getStatus();
-  const mcpBridgeLabelTray = !mcpStatusTray
-    ? `○ MCP Bridge — not configured`
-    : mcpStatusTray.running
-      ? `● MCP Bridge — ${mcpStatusTray.instances.filter(i => i.online).length}/${mcpStatusTray.instances.length} online`
-      : `○ MCP Bridge — stopped`;
-
   const session = loadSession(app.getPath("userData"));
   const sessionEmail = session ? getSessionEmail(session) : null;
   const accountItem: Electron.MenuItemConstructorOptions | null = session
@@ -718,13 +714,10 @@ function buildTrayMenu(): Menu {
     ...(accountItem ? [accountItem] : []),
     authItem,
     { type: "separator" },
-    { label: "Servers:", enabled: false },
-    { label: cloudLabelTray, enabled: false },
-    { label: bridgeLabelTray, enabled: false },
-    { label: mcpBridgeLabelTray, enabled: false },
-    { type: "separator" },
-    { label: "Figma:", enabled: false },
-    ...figmaItems,
+    { label: "Connections:", enabled: false },
+    formatCloudItem(),
+    ...formatFigmaPluginItems(),
+    ...formatLocalServiceItems(),
     { type: "separator" },
     {
       label: devToolsOpen ? "✓ DevTools (renderer)" : "DevTools (renderer)",
