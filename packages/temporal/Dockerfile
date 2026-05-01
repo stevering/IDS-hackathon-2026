@@ -13,6 +13,9 @@ WORKDIR /app
 # Copy workspace root files needed for pnpm install
 COPY package.json pnpm-workspace.yaml pnpm-lock.yaml turbo.json ./
 
+# Copy patched dependencies referenced by pnpm.patchedDependencies in package.json
+COPY patches/ patches/
+
 # Copy only the packages the worker needs
 COPY packages/temporal/package.json packages/temporal/
 COPY packages/orchestrations/package.json packages/orchestrations/
