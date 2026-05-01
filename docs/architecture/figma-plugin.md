@@ -344,6 +344,15 @@ Instead, origin validation is enforced at the application level:
 - **useFigmaPlugin.ts** filters incoming messages to accept only `event.origin === "null"` (plugin sandbox parent) or `event.origin === window.location.origin` (self/HMR).
 - **webapp → plugin UI** (`window.parent.postMessage`) must use `'*'` as targetOrigin because the parent's origin is `null`. This is a Figma platform constraint — the messages contain no secrets (AUTH_STATE is a boolean, EXECUTE_CODE is Figma JS code).
 
+#### Orchestration view inside the plugin
+
+The webapp iframe renders the orchestration UI (banner, Chat/Dev toggle, event view, sub-conversations) using the same hooks and components as the standalone Chrome browser. Two minor plugin-specific tweaks live in `packages/web/src/app/page.tsx`:
+
+- `OrchestrationChatView` / `OrchestrationEventLog` receive `agentFilter={myDisplayShortId}` when `isFigmaPlugin === true` so the plugin user only sees events relevant to their agent.
+- `useOrchestrationConversation` is called with `isFigmaPlugin: true`, which suppresses the auto-switch to the orchestration sub-conversation on creation. The user keeps typing in their parent chat and navigates manually via the unified `OrchestrationBanner`.
+
+Live `execute_request` workflowIds postMessaged into the iframe are captured by `orchDetectedRef.current` and pushed into a local `liveDetectedWorkflowId` state. That feeds `useTemporalOrchestration` as `externalWorkflowId`, which in turn lets `useOrchestrationConversation` create the sub-conversation silently (no auto-switch in plugin). The historical hook `usePluginOrchestration` was removed; both contexts now share `useTemporalOrchestration` + `useOrchestrationConversation`.
+
 ### Message Router (window.onmessage)
 
 Routes all messages from code.ts to the appropriate destination:

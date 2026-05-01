@@ -32,7 +32,6 @@ import { OrchestrationChatView } from "@/components/OrchestrationChatView";
 import { OrchestrationBanner } from "@/components/OrchestrationBanner";
 import { ApprovalOverlay } from "@/components/ApprovalOverlay";
 import { useOrchestrationConversation } from "./hooks/useOrchestrationConversation";
-import { usePluginOrchestration } from "./hooks/usePluginOrchestration";
 import { useDebugTrace, type UnifiedDebugReport } from "./hooks/useDebugTrace";
 import { detectCriticalOperations, isCriticalOperation } from "@/lib/guard";
 import { MCPStatusBar } from "@/components/MCPStatusBar";
@@ -572,7 +571,8 @@ export default function Home() {
   // Get clientId from channel hook first, then register with server
   const [registryShortId, setRegistryShortId] = useState<string | null>(null);
 
-  // Stable ref for plugin orchestration detection (wired after pluginOrch hook)
+  // Stable ref for plugin live workflowId detection — set later to feed
+  // setLiveDetectedWorkflowId once the parent state hook is declared.
   const orchDetectedRef = useRef<((wfId: string) => void) | null>(null);
   const orchDetectedCallback = useCallback((wfId: string) => {
     orchDetectedRef.current?.(wfId);
@@ -685,31 +685,42 @@ export default function Home() {
   // extract the workflowId so the SSE stream can connect without needing
   // startOrchestration() to have been called in this session.
   const activeConvMeta = allConversations.find((c) => c.id === activeConversationId)?.metadata as Record<string, unknown> | undefined;
-  const activeConvWorkflowId = isFigmaPlugin ? null : (activeConvMeta?.workflowId as string) ?? null;
+  const activeConvWorkflowId = (activeConvMeta?.workflowId as string) ?? null;
+
+  // ── Live workflowId detection (plugin-only) ───────────────────────
+  // When the plugin receives an execute_request via postMessage, the workflowId
+  // arrives before any conversation metadata exists. Hold it in state so the
+  // SSE stream attaches immediately, and so useOrchestrationConversation can
+  // create the silent sub-conv (no auto-switch in plugin).
+  const [liveDetectedWorkflowId, setLiveDetectedWorkflowId] = useState<string | null>(null);
+  orchDetectedRef.current = (wfId: string) => {
+    setLiveDetectedWorkflowId(wfId);
+  };
+
+  // Effective external workflowId: prefer the active conv's metadata,
+  // fall back to the live-detected workflowId on the parent chat (plugin).
+  const externalWorkflowId = activeConvWorkflowId ?? (isFigmaPlugin ? liveDetectedWorkflowId : null);
 
   // ── Collaborative Agents orchestration ──────────────────────────────
   // Orchestration runs on Temporal (backend workflows + SSE).
-  // Pass activeConvWorkflowId so the stream connects even on page reload.
-  const temporal = useTemporalOrchestration(activeConvWorkflowId);
+  // Pass externalWorkflowId so the stream connects on page reload AND on live
+  // execute_request arrivals in the plugin.
+  const temporal = useTemporalOrchestration(externalWorkflowId);
 
-  // ── Orchestration conversation (webapp-initiated) ──────────────────
+  // ── Orchestration conversation (shared between webapp and plugin) ──
+  // Plugin: isFigmaPlugin=true suppresses auto-switch on sub-conv creation,
+  //         so the user keeps typing in their parent chat.
   const orchConv = useOrchestrationConversation({
     workflowId: temporal.workflowId,
     activeConversationId,
     conversations: allConversations,
     createConversation,
     switchConversation,
+    isFigmaPlugin,
   });
 
-  // ── Plugin orchestration (plugin-side, receives workflowId via broadcast) ──
-  const pluginOrch = usePluginOrchestration();
-
-  // Wire the plugin orchestration detection ref now that pluginOrch is available
-  orchDetectedRef.current = pluginOrch.handleOrchestrationDetected;
-
   // ── Debug traces (persistent, unified across clients) ─────────────
-  // When an orchestration is active, use workflowId as the shared key across all clients
-  const activeWorkflowId = isFigmaPlugin ? pluginOrch.workflowId : temporal.workflowId;
+  const activeWorkflowId = temporal.workflowId;
   const { pushTrace, fetchUnifiedDebug } = useDebugTrace(activeConversationId, activeWorkflowId);
 
   // ── Trust/Brave approval state ────────────────────────────────────
@@ -1099,9 +1110,9 @@ export default function Home() {
   const shouldAutoScrollOrch = useRef(true);
   const scrollRafRef = useRef<number | null>(null);
 
-  // Whether we should show the orchestration panel (combined for webapp + plugin)
-  const showOrchPanel = (!isFigmaPlugin && orchConv.isInOrchestrationConversation)
-    || (isFigmaPlugin && pluginOrch.isViewingOrchestration);
+  // Whether we should show the orchestration panel — single source of truth.
+  // Plugin uses the same gate; the user navigates via banner click → switchConversation.
+  const showOrchPanel = orchConv.isInOrchestrationConversation;
 
   const figmaMcpUrlRef = useRef(figmaMcpUrl);
   figmaMcpUrlRef.current = figmaMcpUrl;
@@ -1411,7 +1422,7 @@ export default function Home() {
 
   // (temporal error sync is below, after chatWorkflow declaration)
 
-  const orchCompletedStatus = isFigmaPlugin ? pluginOrch.completedStatus : temporal.completedStatus;
+  const orchCompletedStatus = temporal.completedStatus;
 
   // ── Dismiss pending approval when orchestration ends ─────────────
   useEffect(() => {
@@ -1432,8 +1443,8 @@ export default function Home() {
     const timer = setTimeout(() => {
       autoPushFired.current = true;
       // Include orchestration SSE events in the webapp's trace so they're available from Supabase
-      const orchEvents = isFigmaPlugin ? pluginOrch.stream.events : temporal.events;
-      const orchAgents = isFigmaPlugin ? pluginOrch.stream.agents : temporal.agents;
+      const orchEvents = temporal.events;
+      const orchAgents = temporal.agents;
       pushTrace(eventLog.current, {
         model: selectedModel,
         agentRole,
@@ -1947,7 +1958,7 @@ export default function Home() {
   }, [messages]);
 
   // Orchestration panel scroll — same logic as chat panel
-  const orchEvents = isFigmaPlugin ? pluginOrch.stream.events : temporal.events;
+  const orchEvents = temporal.events;
   const orchPhase = useOrchestrationPhase(orchEvents, orchCompletedStatus);
 
   const handleOrchScroll = () => {
@@ -1984,18 +1995,11 @@ export default function Home() {
     shouldAutoScrollOrch.current = true;
 
     // If in an orchestration conversation and orchestration is active,
-    // send as user input to the orchestrator instead of as a chat message
+    // send as user input to the orchestrator instead of as a chat message.
+    // Plugin: target this agent so the orchestrator routes the message correctly.
     if (orchConv.isInOrchestrationConversation && temporal.isActive) {
-      temporal.sendUserInput(input.trim());
-      setInput("");
-      if (inputRef.current) inputRef.current.style.height = "auto";
-      return;
-    }
-
-    // Plugin: if viewing orchestration and it is active,
-    // send as user input targeted to this agent
-    if (isFigmaPlugin && pluginOrch.isViewingOrchestration && pluginOrch.isActive) {
-      pluginOrch.sendUserInput(input.trim(), myDisplayShortId);
+      const targetAgent = isFigmaPlugin ? myDisplayShortId : undefined;
+      temporal.sendUserInput(input.trim(), targetAgent);
       setInput("");
       if (inputRef.current) inputRef.current.style.height = "auto";
       return;
@@ -2032,8 +2036,7 @@ export default function Home() {
   // ── Settings content removed — MCP connections managed in Account page ──
   // TODO(Phase 4 follow-up): clean up dead state vars (figmaOAuth, enabledMcps, etc.)
 
-    const hasBannerPad = (!isFigmaPlugin && orchConv.isRelatedToOrchestration)
-      || (isFigmaPlugin && pluginOrch.hasOrchestration);
+    const hasBannerPad = orchConv.isRelatedToOrchestration;
     const headerPaddingClass = (() => {
       const base = agentRole !== "idle" && mcpConnectionStatus !== "idle"
         ? "pt-[7rem]"
@@ -2175,8 +2178,8 @@ export default function Home() {
           )}
           <MCPStatusBar status={mcpConnectionStatus} />
 
-          {/* Unified orchestration banner — only visible on related conversations */}
-          {!isFigmaPlugin && orchConv.isRelatedToOrchestration && (
+          {/* Unified orchestration banner — visible on related conversations (webapp + plugin) */}
+          {orchConv.isRelatedToOrchestration && (
             <OrchestrationBanner
               active={temporal.isActive || !!temporal.completedStatus}
               isInOrchestrationConversation={orchConv.isInOrchestrationConversation}
@@ -2192,24 +2195,6 @@ export default function Home() {
                 localStorage.setItem("guardian:orchViewMode", next);
               }}
               agents={temporal.agents}
-            />
-          )}
-          {isFigmaPlugin && pluginOrch.hasOrchestration && (
-            <OrchestrationBanner
-              active={pluginOrch.hasOrchestration}
-              isInOrchestrationConversation={pluginOrch.isViewingOrchestration}
-              onView={pluginOrch.showOrchestration}
-              onBack={pluginOrch.hideOrchestration}
-              timerRemainingMs={pluginOrch.stream.timerRemainingMs}
-              completedStatus={pluginOrch.stream.completedStatus}
-              errorMessage={pluginOrch.stream.error}
-              viewMode={orchViewMode}
-              onToggleViewMode={() => {
-                const next = orchViewMode === "chat" ? "developer" : "chat";
-                setOrchViewMode(next);
-                localStorage.setItem("guardian:orchViewMode", next);
-              }}
-              agents={pluginOrch.stream.agents}
             />
           )}
         </header>
@@ -2883,16 +2868,7 @@ export default function Home() {
               figmaContext={figmaContext}
               selectedNodeCount={selectedNode?.nodes?.length ?? 0}
               eventLog={eventLog.current}
-              temporalOrchestration={isFigmaPlugin ? {
-                workflowId: pluginOrch.workflowId,
-                isActive: pluginOrch.isActive,
-                completedStatus: pluginOrch.stream.completedStatus,
-                agents: pluginOrch.stream.agents,
-                events: pluginOrch.stream.events,
-                connected: pluginOrch.stream.connected,
-                streamError: pluginOrch.stream.error,
-                timerRemainingMs: pluginOrch.stream.timerRemainingMs,
-              } : {
+              temporalOrchestration={{
                 workflowId: temporal.workflowId,
                 isActive: temporal.isActive,
                 completedStatus: temporal.completedStatus,
@@ -3294,40 +3270,25 @@ export default function Home() {
             {/* ── Right panel: Orchestration conversation ── */}
             <div className="min-w-full h-full relative">
             <div ref={orchScrollContainerRef} onScroll={handleOrchScroll} className={`absolute inset-0 overflow-y-auto px-3 sm:px-4 pb-40 ${headerPaddingClass}`}>
-              {/* Orchestration view — webapp side */}
-              {!isFigmaPlugin && temporal.events.length > 0 && (
+              {/* Unified orchestration view — temporal events; plugin filters to current agent */}
+              {temporal.events.length > 0 && (
                 orchViewMode === "chat" ? (
                   <OrchestrationChatView
                     events={temporal.events}
                     agents={temporal.agents}
+                    agentFilter={isFigmaPlugin ? myDisplayShortId : undefined}
                   />
                 ) : (
                   <OrchestrationEventLog
                     events={temporal.events}
                     agents={temporal.agents}
-                    showAllEvents={developerMode && devShowAllEvents}
-                  />
-                )
-              )}
-              {/* Orchestration view — plugin side (filtered to this agent) */}
-              {isFigmaPlugin && pluginOrch.stream.events.length > 0 && (
-                orchViewMode === "chat" ? (
-                  <OrchestrationChatView
-                    events={pluginOrch.stream.events}
-                    agents={pluginOrch.stream.agents}
-                    agentFilter={myDisplayShortId}
-                  />
-                ) : (
-                  <OrchestrationEventLog
-                    events={pluginOrch.stream.events}
-                    agents={pluginOrch.stream.agents}
-                    agentFilter={myDisplayShortId}
+                    agentFilter={isFigmaPlugin ? myDisplayShortId : undefined}
                     showAllEvents={developerMode && devShowAllEvents}
                   />
                 )
               )}
               {/* Welcome placeholder when no events yet */}
-              {((!isFigmaPlugin && temporal.events.length === 0) || (isFigmaPlugin && pluginOrch.stream.events.length === 0)) && (
+              {temporal.events.length === 0 && (
                 <div className="flex flex-col items-center justify-center h-full text-center px-4">
                   <img src="/guardian-logo.svg" alt="Guardian" className="h-12 mx-auto mb-4" />
                   <h2 className="text-lg font-semibold mb-2">Orchestration</h2>
@@ -3337,7 +3298,7 @@ export default function Home() {
                 </div>
               )}
               {/* Debug context button in orchestration view */}
-              {((!isFigmaPlugin && temporal.events.length > 0) || (isFigmaPlugin && pluginOrch.stream.events.length > 0)) && (
+              {temporal.events.length > 0 && (
                 <CopyDebugButton
                   messages={messages}
                   clients={clients}
@@ -3357,16 +3318,7 @@ export default function Home() {
                   figmaContext={figmaContext}
                   selectedNodeCount={selectedNode?.nodes?.length ?? 0}
                   eventLog={eventLog.current}
-                  temporalOrchestration={isFigmaPlugin ? {
-                    workflowId: pluginOrch.workflowId,
-                    isActive: pluginOrch.isActive,
-                    completedStatus: pluginOrch.stream.completedStatus,
-                    agents: pluginOrch.stream.agents,
-                    events: pluginOrch.stream.events,
-                    connected: pluginOrch.stream.connected,
-                    streamError: pluginOrch.stream.error,
-                    timerRemainingMs: pluginOrch.stream.timerRemainingMs,
-                  } : {
+                  temporalOrchestration={{
                     workflowId: temporal.workflowId,
                     isActive: temporal.isActive,
                     completedStatus: temporal.completedStatus,

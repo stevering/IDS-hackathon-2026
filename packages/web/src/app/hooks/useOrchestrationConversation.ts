@@ -23,6 +23,8 @@ type UseOrchestrationConversationParams = {
   }) => Promise<Conversation | null>;
   /** Switch to a conversation */
   switchConversation: (id: string) => void;
+  /** When true, suppress auto-switch on sub-conv creation (plugin behavior) */
+  isFigmaPlugin?: boolean;
 };
 
 type UseOrchestrationConversationReturn = {
@@ -59,6 +61,7 @@ export function useOrchestrationConversation({
   conversations,
   createConversation,
   switchConversation,
+  isFigmaPlugin = false,
 }: UseOrchestrationConversationParams): UseOrchestrationConversationReturn {
   const [orchestrationConvId, setOrchestrationConvId] = useState<string | null>(null);
   const previousConvIdRef = useRef<string | null>(null);
@@ -83,13 +86,27 @@ export function useOrchestrationConversation({
 
   const searchId = workflowId ?? lastWorkflowIdRef.current;
 
-  // Find existing orchestration conversation for this workflowId
-  // orchestration_id is UUID (legacy), so we match via metadata.workflowId instead
-  const existingOrchConv = searchId
-    ? conversations.find(
+  // Find existing orchestration conversation:
+  // 1. If we have a workflowId hint, prefer the matching child conv
+  // 2. Fallback: any child of the active conv whose metadata carries a workflowId.
+  //    Lets the parent-chat banner ("voir collab") light up from sidebar history
+  //    alone, without requiring a live workflowId in this session.
+  const existingOrchConv = (() => {
+    if (searchId) {
+      const byWorkflow = conversations.find(
         (c) => (c.metadata as Record<string, unknown>)?.workflowId === searchId
-      )
-    : null;
+      );
+      if (byWorkflow) return byWorkflow;
+    }
+    if (activeConversationId) {
+      const childOrch = conversations
+        .filter((c) => c.parent_id === activeConversationId)
+        .filter((c) => !!(c.metadata as Record<string, unknown>)?.workflowId)
+        .at(-1);
+      if (childOrch) return childOrch;
+    }
+    return null;
+  })();
 
   // Create orchestration conversation when workflowId is set
   useEffect(() => {
@@ -129,14 +146,17 @@ export function useOrchestrationConversation({
       if (conv) {
         console.log("[OrchConv] Created sub-conversation:", conv.id, "parent:", conv.parent_id);
         setOrchestrationConvId(conv.id);
-        // Auto-switch to the orchestration conversation
-        switchConversation(conv.id);
+        // Auto-switch to the orchestration conversation (webapp only).
+        // Plugin keeps the user on the parent chat — they navigate via the banner.
+        if (!isFigmaPlugin) {
+          switchConversation(conv.id);
+        }
       } else {
         console.warn("[OrchConv] Failed to create sub-conversation");
       }
       creatingRef.current = false;
     })();
-  }, [workflowId, existingOrchConv, orchestrationConvId, activeConversationId, createConversation, switchConversation]);
+  }, [workflowId, existingOrchConv, orchestrationConvId, activeConversationId, createConversation, switchConversation, isFigmaPlugin]);
 
   const effectiveOrchConvId = orchestrationConvId ?? existingOrchConv?.id ?? null;
 
