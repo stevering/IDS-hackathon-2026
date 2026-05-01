@@ -1586,6 +1586,10 @@ export default function Home() {
 
   useEffect(() => {
     if (!activeConversationId || !activeConversation) return;
+    // Wait for the chat hook to finish loading the active conversation's messages.
+    // Without this gate, switching to a brand-new conv would rename it using the
+    // previous conv's first message (still in `messages` until the async load runs).
+    if (!messagesLoaded) return;
     // Only rename conversations still titled "New conversation"
     if (activeConversation.title !== "New conversation") {
       renamedConvIds.current.add(activeConversationId);
@@ -1616,7 +1620,7 @@ export default function Home() {
 
     const title = text.length <= 60 ? text : text.slice(0, 57).replace(/\s\S*$/, "") + "…";
     updateTitle(activeConversationId, title);
-  }, [activeConversationId, activeConversation, messages, status, updateTitle]);
+  }, [activeConversationId, activeConversation, messages, status, updateTitle, messagesLoaded]);
 
   // ── Reset event log on conversation switch ──
   const prevConvIdForLog = useRef(activeConversationId);
@@ -2114,29 +2118,6 @@ export default function Home() {
             </div>
           </div>
           <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
-            {messages.length > 0 && (
-              <button
-                onClick={() => { setMessages([]); setErrorVisible(false); setMcpConnectionStatus("idle"); }}
-                title="Clear conversation"
-                className="p-1.5 rounded-md text-white/40 hover:text-white/70 hover:bg-white/10 transition-colors cursor-pointer mr-1"
-              >
-                <svg
-                  xmlns="http://www.w3.org/2000/svg"
-                  width="16"
-                  height="16"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                >
-                  <path d="M3 6h18" />
-                  <path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6" />
-                  <path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2" />
-                </svg>
-              </button>
-            )}
             {/* Active conversation title indicator */}
             <span className="text-xs text-white/50 truncate max-w-[160px] hidden sm:inline">
               {activeConversation?.title ?? "New conversation"}
