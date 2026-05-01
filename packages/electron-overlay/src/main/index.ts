@@ -692,8 +692,10 @@ function createTray(): void {
   icon.setTemplateImage(true);
   tray = new Tray(icon);
   tray.setToolTip("DS AI Guardian");
-  tray.setContextMenu(buildTrayMenu());
   tray.on("click", () => toggleVisibility());
+  tray.on("right-click", () => {
+    tray?.popUpContextMenu(buildTrayMenu());
+  });
 }
 
 function buildTrayMenu(): Menu {
@@ -741,7 +743,7 @@ function buildTrayMenu(): Menu {
 }
 
 function refreshTrayMenu(): void {
-  tray?.setContextMenu(buildTrayMenu());
+  // Menu is rebuilt fresh on right-click via popUpContextMenu, so nothing to do here.
 }
 
 function toggleVisibility(): void {

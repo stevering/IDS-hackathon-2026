@@ -96,6 +96,53 @@ When pushing code that includes DB migrations, follow this order:
 - **Breaking RPCs**: if a migration changes a function signature (e.g., `delete_api_key(TEXT)` → `delete_api_key(UUID)`), always `DROP` the old signature first to avoid overload ambiguity.
 - **Vault access**: NEVER use `INSERT INTO vault.secrets` — use `SELECT vault.create_secret(secret)` instead. NEVER use `DELETE FROM vault.secrets` + re-insert — use `PERFORM vault.update_secret(id, new_secret)`. Direct vault table access fails with "permission denied for function _crypto_aead_det_noncegen" because `postgres` is not superuser on Supabase cloud. The `vault.create_secret()` and `vault.update_secret()` functions are owned by `supabase_admin` (SECURITY DEFINER) and bypass this restriction.
 
+### Railway CLI — preview Temporal worker
+
+`git push origin feat/preview` triggers **two parallel auto-deploys**:
+- **Vercel** rebuilds the webapp (everything in `packages/web`).
+- **Railway** rebuilds the Temporal worker from `packages/temporal/Dockerfile`.
+
+Workflow code (`packages/temporal/src/workflows/*`, `packages/orchestrations/src/engine/*`) and activities run in the worker, NOT in the webapp — fixes there require the Railway deploy to complete (typically 3-5 min after push).
+
+**Setup** (one-time)
+- `railway` CLI is at `/opt/homebrew/bin/railway` (login: `stevering@bkm.me`).
+- Project / service / environment IDs are encoded in the dashboard URL:
+  `railway.com/project/<projectId>/service/<serviceId>?environmentId=<envId>`
+- Link the working dir to the preview worker:
+  ```bash
+  railway link --project <projectId> --environment <envId> --service <serviceId>
+  ```
+  (or `railway link` interactive: pick `guardian` → `preview` → `temporal-worker`)
+
+**Common commands**
+| Goal | Command |
+|---|---|
+| Last 10 deploys (status + commit) | `railway deployment list` |
+| Same with full JSON (for scripting) | `railway deployment list --json` |
+| Latest deploy commit + status | `railway deployment list --json \| jq -r '.[0] \| {hash: .meta.commitHash[0:7], status, createdAt}'` |
+| Stream logs of latest deploy | `railway logs` |
+| Logs of a specific deploy | `railway logs <deploymentId>` |
+| Rebuild + redeploy current source | `railway up` (uses local files, NOT git) |
+| Redeploy the same image | `railway redeploy` |
+| Restart without rebuild | `railway restart` |
+| Active workers (cross-check via Temporal) | `temporal task-queue describe --task-queue guardian-orchestration --namespace "$TEMPORAL_NAMESPACE" --address "$TEMPORAL_ADDRESS" --api-key "$TEMPORAL_API_KEY" --tls` |
+
+**Wait for an auto-deploy to land** (use after `git push`):
+```bash
+TARGET=<full-commit-sha>
+until [ "$(railway deployment list --json | jq -r '.[0].meta.commitHash + \":\" + .[0].status')" = "$TARGET:SUCCESS" ] \
+   || [ "$(railway deployment list --json | jq -r '.[0].meta.commitHash + \":\" + .[0].status')" = "$TARGET:FAILED" ]; do
+  sleep 15
+done
+railway deployment list --json | jq -r '.[0] | {hash: .meta.commitHash[0:7], status}'
+```
+
+**Gotchas**
+- The latest poller identity (Temporal `task-queue describe`) is a Docker container hash. After a successful Railway deploy, the old container ID is replaced — if it's still there, the rollout hasn't finished.
+- `railway` uses the linked project/service from `.railway/config.json` (created by `railway link`). If a command says "service required in non-interactive mode", relink.
+- `railway logs` streams (no `--lines/--since` ⇒ tail-follow). Pass `--lines 200` for a one-shot fetch.
+- Auto-deploy is configured per-service in the Railway dashboard (watch branch = `feat/preview`). It is NOT in the repo — there is no GitHub Actions / Railway TOML pipeline file.
+
 ### Backward compatibility — "expand then contract"
 
 Every change to DB schema, RPCs, or stored data formats (JSONB fields, etc.) MUST be backward-compatible with the currently deployed code. The old code and the new code will coexist briefly during deploys.
