@@ -41,15 +41,6 @@ Merging the release PR does not automatically push to Figma Community or the Chr
 - For the Chrome extension, the manifest version has already been synced by the post-version script. Build and upload to the Web Store.
 - For Figma plugins / widget, the manifest does not carry a version field. Use git tags (e.g. `figma-plugin@1.4.0`) so the published artefact can be traced back to a commit.
 
-## Repository setup
-
-The release workflow (`changesets/action`) needs permission to open and update pull requests on your behalf. Once after enabling Actions on the repository, go to **Settings → Actions → General → Workflow permissions** and ensure:
-
-- **Workflow permissions** is set to **Read and write permissions**, and
-- **Allow GitHub Actions to create and approve pull requests** is checked.
-
-Without this, the `Release` workflow will run but fail to push the "Version Packages" PR, with a `403` from the GitHub API. The provided `GITHUB_TOKEN` secret is automatic — no extra secret to create.
-
 ## CI gate
 
 `.github/workflows/check-changeset.yml` runs on every PR to `main` and fails if `pnpm changeset:status` reports no pending changeset. To intentionally bypass the gate (typo fixes, doc-only changes), commit an empty changeset:
@@ -91,8 +82,11 @@ No infinite loop is possible: `changesets/action` never pushes directly to `main
 
 ## Migration to a dedicated repository
 
-`.changeset/config.json` references `stevering/IDS-hackathon-2026` for changelog GitHub links. When the project moves to its dedicated `guardian` repository:
+Real releases are **not** run from `stevering/IDS-hackathon-2026` (the hackathon repo). The Changesets pipeline is configured and ready, but the first actual release will happen once the project moves to its dedicated `figdesys/guardian` repository.
 
-1. Update the `changelog` repo field in `.changeset/config.json`.
-2. Update any release branch references in workflows if the default branch differs.
-3. Existing `CHANGELOG.md` files are unaffected (they hold absolute links that will redirect via GitHub's repo-rename mechanism).
+When the migration happens:
+
+1. **Update `.changeset/config.json`**: change the `changelog` repo field from `stevering/IDS-hackathon-2026` to the new owner/repo (e.g. `figdesys/guardian`) so changelog entries link to the right PRs and authors.
+2. **Update release branch references** in `.github/workflows/release.yml` and `check-changeset.yml` if the default branch differs from `main`.
+3. **Activate GitHub Actions permissions** on the new repo: **Settings → Actions → General → Workflow permissions** = `Read and write` + check `Allow GitHub Actions to create and approve pull requests`. Without this, the `Release` workflow runs but fails to push the "Version Packages" PR with a `403` from the GitHub API. The `GITHUB_TOKEN` secret is automatic — no extra secret to create.
+4. **Existing `CHANGELOG.md` files** are unaffected: they hold absolute links that GitHub's repo-rename mechanism will redirect.
