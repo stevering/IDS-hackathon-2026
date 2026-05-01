@@ -1254,16 +1254,16 @@ export default function Home() {
               <div className="space-y-2 text-sm text-white/30">
                 <p>Try asking:</p>
                 <button
-                  onClick={() => sendMessage({ text: "Check the Button component" })}
+                  onClick={() => sendMessage({ text: "What i can do With guardian ?" })}
                   className="block mx-auto px-3 py-1.5 rounded-md bg-white/5 hover:bg-white/10 transition-colors cursor-pointer"
                 >
-                  &quot;Check the Button component&quot;
+                  &quot;What i can do With guardian ?&quot;
                 </button>
                 <button
-                  onClick={() => sendMessage({ text: "List all components available in Figma" })}
+                  onClick={() => sendMessage({ text: "Show me a demo of your features" })}
                   className="block mx-auto px-3 py-1.5 rounded-md bg-white/5 hover:bg-white/10 transition-colors cursor-pointer"
                 >
-                  &quot;List all components available in Figma&quot;
+                  &quot;Show me a demo of your features&quot;
                 </button>
               </div>
             </div>

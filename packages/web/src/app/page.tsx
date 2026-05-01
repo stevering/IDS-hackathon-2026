@@ -2235,7 +2235,7 @@ export default function Home() {
                     <div className="min-w-0">
                       <p className="text-sm font-medium text-white/90 mb-1">You&apos;re on the free tier</p>
                       <p className="text-xs text-white/60 leading-relaxed mb-3">
-                        You get 500k tokens per day on us (rolling 24h window). Each message uses the platform&apos;s AI model.
+                        You get 250k tokens per day on us (rolling 24h window). Each message uses the platform&apos;s AI model.
                       </p>
                       <div className="space-y-2">
                         <p className="text-[11px] text-white/65 font-medium uppercase tracking-wider">Want unlimited access?</p>
@@ -2273,16 +2273,16 @@ export default function Home() {
               <div className="space-y-2 text-sm text-white/60">
                 <p>Try asking:</p>
                 <button
-                  onClick={() => sendMessage({ text: "Check the Button component" })}
+                  onClick={() => sendMessage({ text: "What i can do With guardian ?" })}
                   className="block mx-auto px-3 py-1.5 rounded-md bg-white/8 border border-white/10 hover:bg-white/15 transition-colors cursor-pointer text-white/75"
                 >
-                  &quot;Check the Button component&quot;
+                  &quot;What i can do With guardian ?&quot;
                 </button>
                 <button
-                  onClick={() => sendMessage({ text: "List all components available in Figma" })}
+                  onClick={() => sendMessage({ text: "Show me a demo of your features" })}
                   className="block mx-auto px-3 py-1.5 rounded-md bg-white/8 border border-white/10 hover:bg-white/15 transition-colors cursor-pointer text-white/75"
                 >
-                  &quot;List all components available in Figma&quot;
+                  &quot;Show me a demo of your features&quot;
                 </button>
               </div>
             </div>
