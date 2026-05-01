@@ -1,6 +1,6 @@
 {
   "name": "@guardian/figma-widget",
-  "version": "1.0.0",
+  "version": "0.1.0",
   "private": true,
   "description": "Guardian Widget for Figma — displays the mascot, opens the plugin, connects to the backend.",
   "scripts": {

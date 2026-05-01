@@ -83,6 +83,10 @@ The repository is structured as a **pnpm monorepo** managed with [Turborepo](htt
 └── package.json
 ```
 
+### Releases & versioning
+
+The monorepo is versioned per-package using [Changesets](https://github.com/changesets/changesets), with two linked groups (Figma plugin/widget/bridge and Temporal orchestrations/worker). Run `pnpm changeset` after any change to record the bump level and changelog note. See [`docs/architecture/versioning.md`](docs/architecture/versioning.md) for the full workflow, the GitHub Actions setup, and how Changesets interacts with the Vercel deploy pipeline.
+
 ## Demonstration of Concept
 
 You can test the online application at https://preview.guardian.figdesys.com, in a limited demo mode.
