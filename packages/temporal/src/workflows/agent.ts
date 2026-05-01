@@ -1535,6 +1535,9 @@ export async function agentWorkflow(input: AgentWorkflowInput): Promise<void> {
           } else if (rEffect.type === "fetch_figma_docs") {
             await handleFetchFigmaDocs(state, rEffect);
             didExecTool = true;
+          } else if (rEffect.type === "execute_external_tool") {
+            await handleExecuteExternalTool(state, rEffect, input.userId, input.mcpServerIds, callLLM, input.model);
+            didExecTool = true;
           } else if (rEffect.type === "call_llm") {
             pendingLLM = { messages: rEffect.messages, tools: rEffect.tools };
           } else {

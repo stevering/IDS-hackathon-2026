@@ -728,9 +728,13 @@ export function processOrchestratorLLMResponse(
         if (resolved) {
           const { key: shortId, agent: agentState } = resolved;
 
-          // Pre-check: block mark_done if the agent's last report indicates failure
+          // Pre-check: block mark_done only if the agent reported a directive-level failure
+          // but its workflow is still alive — the orchestrator should retry instead of giving up.
+          // When the workflow has already terminated (status === "failed"), allow mark_done so
+          // the orchestrator can acknowledge the failure and complete the orchestration.
           const lastReport = agentState.lastReport;
-          if (lastReport && (lastReport.status === "failed" || (lastReport.summary && lastReport.summary.includes("FAILED")))) {
+          const workflowTerminated = agentState.status === "failed" || agentState.status === "completed" || agentState.status === "interrupted";
+          if (!workflowTerminated && lastReport && (lastReport.status === "failed" || (lastReport.summary && lastReport.summary.includes("FAILED")))) {
             const blockMsg = `Cannot mark agent ${shortId} as done — its last report indicates failure: "${(lastReport.summary ?? "").slice(0, 200)}". ` +
               `Send a new directive to retry, or acknowledge the failure.`;
             state.messageHistory.push({
@@ -743,32 +747,41 @@ export function processOrchestratorLLMResponse(
             break;
           }
 
-          agentState.status = "completed";
+          // If the agent's workflow already terminated as failed, just acknowledge —
+          // do not flip status to "completed" (preserve the failure in the audit trail)
+          // and skip terminate_agent (the workflow is already gone).
+          const wasFailed = agentState.status === "failed";
+          if (!wasFailed) {
+            agentState.status = "completed";
+          }
           agentState.confirmedByAgent = true;
-          // Send terminate signal to the agent workflow so it exits cleanly
-          if (agentState.agent.workflowId) {
+          if (!wasFailed && agentState.agent.workflowId) {
             effects.push({
               type: "terminate_agent",
               agentWorkflowId: agentState.agent.workflowId,
             });
           }
-          effects.push({
-            type: "emit_event",
-            event: {
+          if (!wasFailed) {
+            effects.push({
+              type: "emit_event",
+              event: {
+                type: "agent_status_changed",
+                agentShortId: shortId,
+                status: "completed",
+              },
+            });
+            state.eventLog.push({
               type: "agent_status_changed",
               agentShortId: shortId,
               status: "completed",
-            },
-          });
-          state.eventLog.push({
-            type: "agent_status_changed",
-            agentShortId: shortId,
-            status: "completed",
-          });
-          const doneMsg = `Agent ${shortId} marked as done and terminated.`;
+            });
+          }
+          const doneMsg = wasFailed
+            ? `Agent ${shortId} failure acknowledged. (Workflow already terminated.)`
+            : `Agent ${shortId} marked as done and terminated.`;
           state.messageHistory.push({
             role: "tool",
-            content: `${doneMsg}\n---\n${JSON.stringify({ success: true })}`,
+            content: `${doneMsg}\n---\n${JSON.stringify({ success: true, status: wasFailed ? "failed_acknowledged" : "completed" })}`,
             toolCallId: tc.id,
           });
           effects.push({ type: "emit_event", event: { type: "orchestrator_tool_result", toolName: tc.name, result: doneMsg, isError: false } });
