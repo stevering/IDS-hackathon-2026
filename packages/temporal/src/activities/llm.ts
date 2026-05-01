@@ -467,6 +467,10 @@ async function callLLMDirect(params: LLMCallParams): Promise<LLMCallResult> {
     } else if (m.role === "user") {
       messages.push({ role: "user", content: m.content });
     } else {
+      // Skip assistant turns with no text and no tool calls — providers like Vertex/Gemini
+      // reject empty content arrays ("must include at least one parts field"). The model
+      // sometimes emits a no-op turn; preserving it adds nothing and breaks the next call.
+      if (!m.content || m.content.length === 0) continue;
       messages.push({ role: "assistant", content: [{ type: "text", text: m.content }] });
     }
   }
