@@ -428,7 +428,8 @@ For detailed API docs on specific node types, call \`lookup_figma_docs({ topic: 
 export const FIGMA_HIGHLEVEL_TOOLS_SUPPLEMENT = `## Figma — Gotchas for figmaconsole_ tools
 
 Even when using high-level tools (figmaconsole_figma_create_child, figmaconsole_figma_set_fills, etc.),
-some Figma operations require raw code execution. Know when to switch to \`figmaconsole_figma_execute\`.
+some Figma operations require raw code execution. Know when to switch to \`figma_plugin_execute\`
+(direct bridge, preferred) or \`figmaconsole_figma_execute\` (same code via the relay).
 
 ### TEXT nodes: ALWAYS use figma_execute (not create_child)
 

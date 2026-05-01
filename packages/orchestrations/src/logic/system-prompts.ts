@@ -156,19 +156,20 @@ export function buildAgentSystemPrompt(
 
   const fcToolsSection = options?.hasExternalFigmaTools
     ? `
-## MANDATORY: Use figmaconsole_ tools for ALL Figma operations
+## Figma tools — two access paths, same plugin
 
-You have Figma Console MCP tools (prefixed \`figmaconsole_\`). **You MUST use these instead of figma_plugin_execute.**
+You have **two ways** to drive the Figma plugin. Both go through the **same Guardian plugin** that is currently paired with your file (Guardian implements the southleft pairing protocol, so Figma Console MCP can use it as its relay endpoint):
 
-**For code execution**: use \`figmaconsole_figma_execute\` (NOT figma_plugin_execute)
-**For creating nodes**: use \`figmaconsole_figma_create_child\`
-**For fills/strokes**: use \`figmaconsole_figma_set_fills\` / \`figmaconsole_figma_set_strokes\` (hex colors like "#2563EB")
-**For text**: use \`figmaconsole_figma_set_text\`
-**For resize/move**: use \`figmaconsole_figma_resize_node\` / \`figmaconsole_figma_move_node\`
-**For screenshots**: use \`figmaconsole_figma_capture_screenshot\`
-**For clone/delete/rename**: use \`figmaconsole_figma_clone_node\` / \`figmaconsole_figma_delete_node\` / \`figmaconsole_figma_rename_node\`
+1. **\`figma_plugin_execute\`** — direct bridge to the Guardian plugin (no cloud relay involved). Always works while the plugin is connected. Best for arbitrary code that does multiple operations in one round-trip.
+2. **\`figmaconsole_*\`** — high-level structured tools that go through the Figma Console MCP cloud relay. The relay forwards calls to the same Guardian plugin via the southleft pairing. Best for one-shot structured operations (create child, set fills, set text, capture screenshot, etc.) — they are more concise than equivalent figma_execute code.
 
-**NEVER call figma_plugin_execute when figmaconsole_ tools are available.** The only exception is if you need a Figma API that has no figmaconsole_ equivalent.
+### When to use which
+- **Multiple related ops in one go (creating a frame + children + fonts)** → \`figma_plugin_execute\` (single bridge round-trip; no relay overhead).
+- **Single structured op (create one node, set one fill, capture screenshot)** → \`figmaconsole_figma_create_child\`, \`figmaconsole_figma_set_fills\`, \`figmaconsole_figma_set_text\`, \`figmaconsole_figma_resize_node\`, \`figmaconsole_figma_move_node\`, \`figmaconsole_figma_clone_node\`, \`figmaconsole_figma_delete_node\`, \`figmaconsole_figma_rename_node\`, \`figmaconsole_figma_capture_screenshot\`.
+- **Free-form code via the relay** → \`figmaconsole_figma_execute\` works too, but \`figma_plugin_execute\` is preferred (no relay hop, no pairing dependency).
+
+### If a \`figmaconsole_\` call returns "No plugin connected to cloud relay"
+The cloud-relay pairing is missing or stale. The Guardian plugin is **still connected directly** — immediately retry the same operation with \`figma_plugin_execute\` (or its dedicated equivalent). Do NOT loop on \`figma_pair_plugin\`; pairing is set up automatically at workflow start, and if it failed, repeat attempts won't recover it within this run.
 `
     : "";
 
@@ -182,8 +183,9 @@ You have Figma Console MCP tools (prefixed \`figmaconsole_\`). **You MUST use th
 ${fcToolsSection}
 
 ### Tool priority
-1. **Dedicated tools first**: \`figmaconsole_figma_create_child\`, \`figmaconsole_figma_set_fills\`, \`figmaconsole_figma_set_text\`, \`figmaconsole_figma_resize_node\`, \`figmaconsole_figma_move_node\`, \`figmaconsole_figma_clone_node\`, \`figmaconsole_figma_delete_node\`, \`figmaconsole_figma_rename_node\`, \`figmaconsole_figma_capture_screenshot\`, etc.
-2. **\`figmaconsole_figma_execute\` as last resort**: only for operations with no dedicated tool (e.g. complex auto-layout setup, effects, gradients). The system will automatically provide API documentation when you first use raw code execution.
+1. **Dedicated \`figmaconsole_\` tools for single structured ops**: \`figmaconsole_figma_create_child\`, \`figmaconsole_figma_set_fills\`, \`figmaconsole_figma_set_text\`, \`figmaconsole_figma_resize_node\`, \`figmaconsole_figma_move_node\`, \`figmaconsole_figma_clone_node\`, \`figmaconsole_figma_delete_node\`, \`figmaconsole_figma_rename_node\`, \`figmaconsole_figma_capture_screenshot\`. They are concise and avoid hand-rolling code.
+2. **\`figma_plugin_execute\` for free-form code or multi-op sequences**: when one round-trip needs to load fonts + create a frame + add children, \`figma_plugin_execute\` is faster (direct bridge, no relay) and survives a stale cloud-relay pairing.
+3. **\`figmaconsole_figma_execute\`**: equivalent to \`figma_plugin_execute\` but goes through the relay; only use when you specifically want it (rare). On "No plugin connected to cloud relay", retry with \`figma_plugin_execute\` instead.
 
 ### Execution workflow
 - Write a numbered plan BEFORE executing any tool calls
