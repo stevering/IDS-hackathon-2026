@@ -534,16 +534,23 @@ function createOverlay(): void {
 // Used by both the right-click context menu and the tray menu so the two stay
 // in sync. One item per Figma plugin, one item per local MCP service.
 
-function formatCloudItem(): Electron.MenuItemConstructorOptions {
-  return {
-    label: isCloudConnected
-      ? "● Guardian Cloud — connected"
-      : "○ Guardian Cloud — offline",
-    enabled: false,
-  };
+function formatCloudItem(session: StoredSession | null): Electron.MenuItemConstructorOptions {
+  // "Connected" is the state the user cares about: cloud reachable AND signed in.
+  // /api/guardian/status responds without auth, so isCloudConnected alone would
+  // mislead — saying "connected" while the user is actually unauthenticated.
+  if (!isCloudConnected) {
+    return { label: "○ Guardian Cloud — offline", enabled: false };
+  }
+  if (!session) {
+    return { label: "○ Guardian Cloud — sign in required", enabled: false };
+  }
+  return { label: "● Guardian Cloud — connected", enabled: false };
 }
 
 function formatFigmaPluginItems(): Electron.MenuItemConstructorOptions[] {
+  // Note: in cloud mode the plugin's ui.html skips the local WebSocket bridge,
+  // so this list is always empty against preview/prod even if a plugin is open.
+  // See internal backlog: overlay-plugin-presence-cloud-mode.md
   const clients = bridgeServer.getClients();
   if (clients.length === 0) {
     return [{ label: "○ No Figma plugin detected", enabled: false }];
@@ -638,7 +645,7 @@ figma.viewport.scrollAndZoomIntoView([f]);`,
       : [{ label: "Not signed in", enabled: false }]),
     { type: "separator" },
     { label: "Connections:", enabled: false },
-    formatCloudItem(),
+    formatCloudItem(ctxSession),
     ...formatFigmaPluginItems(),
     ...formatLocalServiceItems(),
     ...(sendItems.length > 0 ? [{ type: "separator" as const }, ...sendItems] : []),
@@ -721,7 +728,7 @@ function buildTrayMenu(): Menu {
     authItem,
     { type: "separator" },
     { label: "Connections:", enabled: false },
-    formatCloudItem(),
+    formatCloudItem(session),
     ...formatFigmaPluginItems(),
     ...formatLocalServiceItems(),
     { type: "separator" },
