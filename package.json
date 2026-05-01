@@ -31,7 +31,7 @@
     "changeset:status": "changeset status --since=origin/main",
     "version-packages": "changeset version && pnpm install --lockfile-only && node scripts/sync-manifests.mjs",
     "release": "pnpm build && changeset publish",
-    "postinstall": "git config core.hooksPath scripts/git-hooks"
+    "postinstall": "node -e \"const fs=require('fs');if(fs.existsSync('.git'))require('child_process').spawnSync('git',['config','core.hooksPath','scripts/git-hooks'],{stdio:'inherit'})\""
   },
   "devDependencies": {
     "@changesets/changelog-github": "^0.6.0",
