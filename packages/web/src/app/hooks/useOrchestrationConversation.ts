@@ -87,10 +87,12 @@ export function useOrchestrationConversation({
   const searchId = workflowId ?? lastWorkflowIdRef.current;
 
   // Find existing orchestration conversation:
-  // 1. If we have a workflowId hint, prefer the matching child conv
-  // 2. Fallback: any child of the active conv whose metadata carries a workflowId.
-  //    Lets the parent-chat banner ("voir collab") light up from sidebar history
-  //    alone, without requiring a live workflowId in this session.
+  // 1. If we have a workflowId hint, prefer the matching conv
+  // 2. If the active conv IS itself an orch sub-conv (has metadata.workflowId),
+  //    return it. Covers: user clicks an orch sub-conv from the sidebar after
+  //    a refresh / once it has completed (no live workflowId in state).
+  // 3. Fallback: any child of the active conv whose metadata carries a workflowId.
+  //    Lets the parent-chat banner ("voir collab") light up from sidebar history.
   const existingOrchConv = (() => {
     if (searchId) {
       const byWorkflow = conversations.find(
@@ -99,6 +101,10 @@ export function useOrchestrationConversation({
       if (byWorkflow) return byWorkflow;
     }
     if (activeConversationId) {
+      const activeConv = conversations.find((c) => c.id === activeConversationId);
+      if (activeConv && (activeConv.metadata as Record<string, unknown>)?.workflowId) {
+        return activeConv;
+      }
       const childOrch = conversations
         .filter((c) => c.parent_id === activeConversationId)
         .filter((c) => !!(c.metadata as Record<string, unknown>)?.workflowId)
