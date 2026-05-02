@@ -708,13 +708,13 @@ export default function Home() {
   const temporal = useTemporalOrchestration(externalWorkflowId);
 
   // ── Orchestration conversation (shared between webapp and plugin) ──
-  // Plugin: isFigmaPlugin=true suppresses auto-switch on sub-conv creation,
+  // Viewer-only: the sub-conv is created by the server in /api/orchestration/start.
+  // Plugin: isFigmaPlugin=true suppresses auto-switch to the sub-conv,
   //         so the user keeps typing in their parent chat.
   const orchConv = useOrchestrationConversation({
     workflowId: temporal.workflowId,
     activeConversationId,
     conversations: allConversations,
-    createConversation,
     switchConversation,
     isFigmaPlugin,
   });

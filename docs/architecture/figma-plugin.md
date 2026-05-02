@@ -349,9 +349,11 @@ Instead, origin validation is enforced at the application level:
 The webapp iframe renders the orchestration UI (banner, Chat/Dev toggle, event view, sub-conversations) using the same hooks and components as the standalone Chrome browser. Two minor plugin-specific tweaks live in `packages/web/src/app/page.tsx`:
 
 - `OrchestrationChatView` / `OrchestrationEventLog` receive `agentFilter={myDisplayShortId}` when `isFigmaPlugin === true` so the plugin user only sees events relevant to their agent.
-- `useOrchestrationConversation` is called with `isFigmaPlugin: true`, which suppresses the auto-switch to the orchestration sub-conversation on creation. The user keeps typing in their parent chat and navigates manually via the unified `OrchestrationBanner`.
+- `useOrchestrationConversation` is called with `isFigmaPlugin: true`, which suppresses the auto-switch to the orchestration sub-conversation. The user keeps typing in their parent chat and navigates manually via the unified `OrchestrationBanner`.
 
-Live `execute_request` workflowIds postMessaged into the iframe are captured by `orchDetectedRef.current` and pushed into a local `liveDetectedWorkflowId` state. That feeds `useTemporalOrchestration` as `externalWorkflowId`, which in turn lets `useOrchestrationConversation` create the sub-conversation silently (no auto-switch in plugin). The historical hook `usePluginOrchestration` was removed; both contexts now share `useTemporalOrchestration` + `useOrchestrationConversation`.
+`useOrchestrationConversation` is **viewer-only**: orchestration sub-conversations are created exclusively by the server in `/api/orchestration/start`. The hook resolves the existing sub-conv from the conversations list (matched by `metadata.workflowId`, or by being the active conv itself) and, in the webapp, auto-switches to it once it appears. While the Realtime propagation of a fresh server-side insert is in flight, the hook simply waits — no front-side conversation creation happens, which is what guarantees a single sub-conv per workflow regardless of how the collab was triggered (chat button, MCP tool, plugin discovery).
+
+Live `execute_request` workflowIds postMessaged into the iframe are captured by `orchDetectedRef.current` and pushed into a local `liveDetectedWorkflowId` state. That feeds `useTemporalOrchestration` as `externalWorkflowId`, which in turn lets `useOrchestrationConversation` find the server-created sub-conversation (no auto-switch in plugin). The historical hook `usePluginOrchestration` was removed; both contexts now share `useTemporalOrchestration` + `useOrchestrationConversation`.
 
 ### Message Router (window.onmessage)
 

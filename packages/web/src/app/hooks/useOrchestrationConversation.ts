@@ -14,29 +14,22 @@ type UseOrchestrationConversationParams = {
   activeConversationId: string | null;
   /** All conversations */
   conversations: Conversation[];
-  /** Create a new conversation */
-  createConversation: (opts?: {
-    title?: string;
-    parentId?: string;
-    orchestrationId?: string;
-    metadata?: Record<string, unknown>;
-  }) => Promise<Conversation | null>;
   /** Switch to a conversation */
   switchConversation: (id: string) => void;
-  /** When true, suppress auto-switch on sub-conv creation (plugin behavior) */
+  /** When true, suppress auto-switch to the orchestration sub-conv (plugin behavior) */
   isFigmaPlugin?: boolean;
 };
 
 type UseOrchestrationConversationReturn = {
   /** Whether the user is currently viewing the orchestration conversation */
   isInOrchestrationConversation: boolean;
-  /** The orchestration conversation ID (null if not created yet) */
+  /** The orchestration conversation ID (null when not yet propagated to the front state) */
   orchestrationConversationId: string | null;
   /** Switch to the orchestration conversation */
   switchToOrchestration: () => void;
   /** Switch back to the previous (pre-orchestration) conversation */
   switchBackToChat: () => void;
-  /** Whether an orchestration conversation exists (active or completed) */
+  /** Whether an orchestration conversation is known (active or completed) */
   hasActiveOrchestration: boolean;
   /** Whether the active conversation is the parent or sub-conv of the orchestration */
   isRelatedToOrchestration: boolean;
@@ -49,35 +42,39 @@ type UseOrchestrationConversationReturn = {
 // ---------------------------------------------------------------------------
 
 /**
- * Manages the orchestration conversation lifecycle:
- * - Creates a conversation linked to the workflowId when orchestration starts
- * - Auto-switches to the orchestration conversation
- * - Keeps state after completion so the banner remains visible
- * - Provides navigation between orchestration and previous conversation
+ * Viewer-only hook around the orchestration sub-conversation.
+ *
+ * Sub-conversations are created exclusively by the server (via
+ * /api/orchestration/start). This hook never creates anything — it only:
+ *   - Finds the existing orchestration sub-conv from the conversations list
+ *     (matched by workflowId in metadata, or by being the active conv itself).
+ *   - Auto-switches the user to it on first detection (webapp only).
+ *   - Provides navigation helpers between the sub-conv and the parent chat.
+ *
+ * If the sub-conv is not yet present in the front state (Realtime propagation
+ * lag from a brand-new server-side insert), the hook simply waits — the next
+ * render with an updated conversations array will pick it up.
  */
 export function useOrchestrationConversation({
   workflowId,
   activeConversationId,
   conversations,
-  createConversation,
   switchConversation,
   isFigmaPlugin = false,
 }: UseOrchestrationConversationParams): UseOrchestrationConversationReturn {
   const [orchestrationConvId, setOrchestrationConvId] = useState<string | null>(null);
   const previousConvIdRef = useRef<string | null>(null);
-  const creatingRef = useRef(false);
-  // Track which workflowIds have already been processed to prevent duplicates
-  const processedWorkflowIds = useRef(new Set<string>());
+  // Workflows we've already auto-switched to in this session, so we don't
+  // repeatedly steal focus if the user navigates away.
+  const autoSwitchedWorkflowIds = useRef(new Set<string>());
   // Track the last known workflowId so we can find the conv even after completion
   const lastWorkflowIdRef = useRef<string | null>(null);
 
-  // When a NEW workflowId arrives (different from the last one), dismiss the
-  // previous orchestration so the UI starts fresh for the new workflow.
+  // When a NEW workflowId arrives (different from the last one), reset the
+  // local conv-id state so the next render resolves it for the new workflow.
   if (workflowId && lastWorkflowIdRef.current && workflowId !== lastWorkflowIdRef.current) {
-    // Reset state for the previous orchestration
     setOrchestrationConvId(null);
     previousConvIdRef.current = activeConversationId;
-    // Don't clear processedWorkflowIds — keep history to avoid re-processing old ones
   }
 
   if (workflowId) {
@@ -87,7 +84,8 @@ export function useOrchestrationConversation({
   const searchId = workflowId ?? lastWorkflowIdRef.current;
 
   // Find existing orchestration conversation:
-  // 1. If we have a workflowId hint, prefer the matching conv
+  // 1. If we have a workflowId hint, prefer the matching conv (created by
+  //    the server in /api/orchestration/start).
   // 2. If the active conv IS itself an orch sub-conv (has metadata.workflowId),
   //    return it. Covers: user clicks an orch sub-conv from the sidebar after
   //    a refresh / once it has completed (no live workflowId in state).
@@ -114,55 +112,24 @@ export function useOrchestrationConversation({
     return null;
   })();
 
-  // Create orchestration conversation when workflowId is set
+  // Sync local state + auto-switch when the server-created sub-conv appears
+  // in the conversations list. Auto-switch fires once per workflowId (webapp
+  // only — plugin lets the user navigate via the banner).
   useEffect(() => {
-    if (!workflowId || creatingRef.current) return;
-    // Already processed this workflowId — skip to prevent duplicates
-    if (processedWorkflowIds.current.has(workflowId)) {
-      // Still sync the conv id if we find one in the conversations list
-      if (existingOrchConv && !orchestrationConvId) {
-        setOrchestrationConvId(existingOrchConv.id);
-      }
-      return;
-    }
-    // Already have one for this workflow
-    if (existingOrchConv) {
-      processedWorkflowIds.current.add(workflowId);
+    if (!workflowId || !existingOrchConv) return;
+
+    if (orchestrationConvId !== existingOrchConv.id) {
       setOrchestrationConvId(existingOrchConv.id);
-      return;
     }
-    // Already created in this session
-    if (orchestrationConvId) return;
 
-    // Mark as processed before starting the async creation
-    processedWorkflowIds.current.add(workflowId);
-    creatingRef.current = true;
+    if (autoSwitchedWorkflowIds.current.has(workflowId)) return;
+    autoSwitchedWorkflowIds.current.add(workflowId);
 
-    // Save current conversation before switching
-    previousConvIdRef.current = activeConversationId;
-
-    (async () => {
-      console.log("[OrchConv] Creating sub-conversation for workflowId:", workflowId, "parentId:", activeConversationId);
-      // Link as sub-conversation of the current chat via parentId
-      const conv = await createConversation({
-        title: "Orchestration",
-        parentId: activeConversationId ?? undefined,
-        metadata: { workflowId },
-      });
-      if (conv) {
-        console.log("[OrchConv] Created sub-conversation:", conv.id, "parent:", conv.parent_id);
-        setOrchestrationConvId(conv.id);
-        // Auto-switch to the orchestration conversation (webapp only).
-        // Plugin keeps the user on the parent chat — they navigate via the banner.
-        if (!isFigmaPlugin) {
-          switchConversation(conv.id);
-        }
-      } else {
-        console.warn("[OrchConv] Failed to create sub-conversation");
-      }
-      creatingRef.current = false;
-    })();
-  }, [workflowId, existingOrchConv, orchestrationConvId, activeConversationId, createConversation, switchConversation, isFigmaPlugin]);
+    if (!isFigmaPlugin && activeConversationId !== existingOrchConv.id) {
+      previousConvIdRef.current = activeConversationId;
+      switchConversation(existingOrchConv.id);
+    }
+  }, [workflowId, existingOrchConv, orchestrationConvId, activeConversationId, switchConversation, isFigmaPlugin]);
 
   const effectiveOrchConvId = orchestrationConvId ?? existingOrchConv?.id ?? null;
 
@@ -190,7 +157,7 @@ export function useOrchestrationConversation({
     setOrchestrationConvId(null);
     lastWorkflowIdRef.current = null;
     previousConvIdRef.current = null;
-    processedWorkflowIds.current.clear();
+    autoSwitchedWorkflowIds.current.clear();
   }, []);
 
   // Is the current conversation related to this orchestration? (parent or sub-conv)
