@@ -12,6 +12,7 @@ import {
   processCoordinationResponse,
   processUserInput,
   checkCompletion,
+  cleanupIdleAgents,
   handleCancellation,
   handleBroadcastRelay,
   getAgentViewStates,
@@ -337,6 +338,97 @@ describe("checkCompletion", () => {
   });
 });
 
+describe("cleanupIdleAgents", () => {
+  it("auto-completes a designer never given a directive once the figma agent is done", () => {
+    const figma = makeAgent("figma", "wf-figma");
+    const designer: AgentId = {
+      shortId: "designer",
+      workflowId: "wf-designer",
+      label: "Designer",
+      type: "designer",
+    };
+    const state = createOrchestratorState(makeParams([figma, designer]));
+
+    // Figma reported completion
+    state.agents.get("figma")!.status = "completed";
+    state.agents.get("figma")!.confirmedByAgent = true;
+    state.agents.get("figma")!.lastReport = {
+      status: "completed",
+      summary: "done",
+      timestamp: new Date().toISOString(),
+    };
+
+    // Designer is still active and silent
+    state.agents.get("designer")!.status = "active";
+
+    const effects = cleanupIdleAgents(state);
+
+    expect(state.agents.get("designer")!.status).toBe("completed");
+    expect(state.agents.get("designer")!.confirmedByAgent).toBe(true);
+    const emittedStatusChange = effects.some(
+      (e) => e.type === "emit_event" && e.event.type === "agent_status_changed"
+    );
+    expect(emittedStatusChange).toBe(true);
+
+    // checkCompletion now wraps up
+    const completion = checkCompletion(state);
+    expect(completion?.type).toBe("complete");
+  });
+
+  it("does nothing while at least one directive-recipient is still working", () => {
+    const a = makeAgent("a", "wf-a");
+    const b = makeAgent("b", "wf-b");
+    const state = createOrchestratorState(makeParams([a, b]));
+
+    state.agents.get("a")!.status = "active";
+    state.agents.get("a")!.lastReport = {
+      status: "in_progress",
+      summary: "Directive sent",
+      timestamp: new Date().toISOString(),
+    };
+    // b is idle (no directive yet)
+    state.agents.get("b")!.status = "active";
+
+    const effects = cleanupIdleAgents(state);
+    expect(effects).toHaveLength(0);
+    expect(state.agents.get("b")!.status).toBe("active");
+    expect(state.agents.get("b")!.confirmedByAgent).toBe(false);
+  });
+
+  it("does nothing at orchestration start (no agent has reached terminal state yet)", () => {
+    const state = createOrchestratorState(makeParams([makeAgent("a"), makeAgent("b")]));
+    // Both active, neither has lastReport
+    state.agents.get("a")!.status = "active";
+    state.agents.get("b")!.status = "active";
+
+    const effects = cleanupIdleAgents(state);
+    expect(effects).toHaveLength(0);
+    expect(state.agents.get("a")!.confirmedByAgent).toBe(false);
+    expect(state.agents.get("b")!.confirmedByAgent).toBe(false);
+  });
+
+  it("preserves a failed agent's status and still finalizes idle siblings", () => {
+    const a = makeAgent("a", "wf-a");
+    const b = makeAgent("b", "wf-b");
+    const state = createOrchestratorState(makeParams([a, b]));
+
+    state.agents.get("a")!.status = "failed";
+    state.agents.get("a")!.confirmedByAgent = true;
+    state.agents.get("a")!.lastReport = {
+      status: "failed",
+      summary: "Agent workflow crashed",
+      timestamp: new Date().toISOString(),
+    };
+    state.agents.get("b")!.status = "active"; // idle silent peer
+
+    cleanupIdleAgents(state);
+
+    expect(state.agents.get("a")!.status).toBe("failed"); // preserved
+    expect(state.agents.get("b")!.status).toBe("completed"); // auto-finalized
+    expect(state.agents.get("b")!.confirmedByAgent).toBe(true);
+  });
+});
+
 describe("handleCancellation", () => {
   it("cancels active agents and returns complete effect", () => {
     const agents = [makeAgent("a", "wf-a"), makeAgent("b", "wf-b")];
@@ -522,6 +614,68 @@ describe("processOrchestratorLLMResponse", () => {
     ]);
 
     expect(state.agents.get("a")?.status).toBe("completed");
+  });
+
+  it("acknowledges mark_agent_done on an already-failed agent (workflow terminated)", () => {
+    const state = createOrchestratorState(makeParams([makeAgent("a", "wf-a")]));
+    // Agent workflow already crashed and the engine has set status="failed"
+    state.agents.get("a")!.status = "failed";
+    state.agents.get("a")!.confirmedByAgent = true;
+    state.agents.get("a")!.lastReport = {
+      status: "failed",
+      summary: "Agent workflow crashed: Child Workflow execution failed",
+      timestamp: new Date().toISOString(),
+    };
+
+    const effects = processOrchestratorLLMResponse(state, "Acknowledging failure.", [
+      { id: "tc1", name: "mark_agent_done", arguments: { agentShortId: "a" } },
+    ]);
+
+    // Status preserved as "failed" (audit trail), but confirmedByAgent stays true so allDone fires
+    expect(state.agents.get("a")?.status).toBe("failed");
+    expect(state.agents.get("a")?.confirmedByAgent).toBe(true);
+
+    // The tool result is non-error and signals failed_acknowledged
+    const toolMsg = state.messageHistory.find((m) => m.role === "tool" && m.toolCallId === "tc1");
+    expect(toolMsg).toBeDefined();
+    expect(toolMsg!.content).toContain("failure acknowledged");
+    expect(toolMsg!.content).toContain("failed_acknowledged");
+
+    // No terminate_agent emitted (workflow is already gone)
+    const terminates = effects.filter((e) => e.type === "terminate_agent");
+    expect(terminates).toHaveLength(0);
+
+    // No spurious agent_status_changed → "completed" (preserve failure in event log)
+    const statusChanges = state.eventLog.filter(
+      (e) => e.type === "agent_status_changed" && e.agentShortId === "a" && e.status === "completed"
+    );
+    expect(statusChanges).toHaveLength(0);
+  });
+
+  it("blocks mark_agent_done when agent is still alive but reported a directive-level failure", () => {
+    const state = createOrchestratorState(makeParams([makeAgent("a", "wf-a")]));
+    // Agent is still running but its last report says the directive failed.
+    // Expected behavior: orchestrator should retry, not give up.
+    state.agents.get("a")!.status = "active";
+    state.agents.get("a")!.confirmedByAgent = false;
+    state.agents.get("a")!.lastReport = {
+      status: "failed",
+      summary: "Directive failed: invalid input",
+      timestamp: new Date().toISOString(),
+    };
+
+    processOrchestratorLLMResponse(state, "Marking done despite failure.", [
+      { id: "tc1", name: "mark_agent_done", arguments: { agentShortId: "a" } },
+    ]);
+
+    // Agent stays active, NOT marked done
+    expect(state.agents.get("a")?.status).toBe("active");
+    expect(state.agents.get("a")?.confirmedByAgent).toBe(false);
+
+    // Tool result reports the block
+    const toolMsg = state.messageHistory.find((m) => m.role === "tool" && m.toolCallId === "tc1");
+    expect(toolMsg!.content).toContain("Cannot mark agent");
+    expect(toolMsg!.content).toContain("agent_failed");
   });
 
   it("falls back to text [DIRECTIVE] parsing when no tool calls", () => {

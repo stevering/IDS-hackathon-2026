@@ -1047,6 +1047,63 @@ export function processUserInput(state: OrchestratorState): OrchestratorEffect[]
 }
 
 // ---------------------------------------------------------------------------
+// Cleanup idle agents
+// ---------------------------------------------------------------------------
+
+/**
+ * Auto-complete agents that never received a directive once every agent that
+ * DID receive one has reached a terminal+confirmed state. The orchestrator LLM
+ * sometimes "forgets" to mark_agent_done a silent agent (e.g. a Designer that
+ * was never asked to review), which leaves the orchestration Running until
+ * timeout. This pass finalizes them so checkCompletion can succeed.
+ *
+ * Safety guards (all required):
+ *  - At least one agent must already be terminal+confirmed (orchestration has done work).
+ *  - Every non-idle agent (lastReport != null) must be terminal+confirmed.
+ * Without these, we'd risk marking agents done before the orchestrator had a
+ * chance to dispatch directives.
+ */
+export function cleanupIdleAgents(state: OrchestratorState): OrchestratorEffect[] {
+  const effects: OrchestratorEffect[] = [];
+
+  const isTerminalConfirmed = (a: AgentState) =>
+    a.confirmedByAgent && (a.status === "completed" || a.status === "failed" || a.status === "interrupted");
+
+  const idleAgents = Array.from(state.agents.entries()).filter(
+    ([, a]) => a.lastReport == null && !a.confirmedByAgent && a.status !== "completed" && a.status !== "failed" && a.status !== "interrupted"
+  );
+  if (idleAgents.length === 0) return effects;
+
+  const allValues = Array.from(state.agents.values());
+  const hasTerminalAgent = allValues.some(isTerminalConfirmed);
+  if (!hasTerminalAgent) return effects;
+
+  const everyDirectiveAgentDone = allValues.every(
+    (a) => a.lastReport == null || isTerminalConfirmed(a)
+  );
+  if (!everyDirectiveAgentDone) return effects;
+
+  for (const [shortId, agent] of idleAgents) {
+    agent.status = "completed";
+    agent.confirmedByAgent = true;
+    if (agent.agent.workflowId) {
+      effects.push({ type: "terminate_agent", agentWorkflowId: agent.agent.workflowId });
+    }
+    effects.push({
+      type: "emit_event",
+      event: { type: "agent_status_changed", agentShortId: shortId, status: "completed" },
+    });
+    state.eventLog.push({
+      type: "agent_status_changed",
+      agentShortId: shortId,
+      status: "completed",
+    });
+  }
+
+  return effects;
+}
+
+// ---------------------------------------------------------------------------
 // Check completion
 // ---------------------------------------------------------------------------
 

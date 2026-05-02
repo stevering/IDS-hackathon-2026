@@ -18,6 +18,7 @@ export {
   processCoordinationResponse,
   processUserInput,
   checkCompletion,
+  cleanupIdleAgents,
   handleCancellation,
   handleBroadcastRelay,
   processGuardrailBlocked,

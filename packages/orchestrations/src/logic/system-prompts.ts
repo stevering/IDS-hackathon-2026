@@ -46,7 +46,8 @@ const DESIGNER_ORCHESTRATOR_HINTS = `
 - Only send a review directive to the designer AFTER a Figma agent reports completion: "Review the work of #Figma-agent-id."
 - The designer will request screenshots, review them, and either approve or send corrections to the Figma agent.
 - Max 3 review rounds per section — after that the designer must approve and move on.
-- Use the designer for global review after all sections are built: "Do a final review of the complete page."`;
+- Use the designer for global review after all sections are built: "Do a final review of the complete page."
+- **If no review is needed** (e.g. the Figma agent's task did not warrant a quality pass), call mark_agent_done on the designer so the orchestration can finalize. Never leave a designer agent active without a directive.`;
 
 // Future: add WEB_ORCHESTRATOR_HINTS, CLOUD_ORCHESTRATOR_HINTS, etc.
 
@@ -123,6 +124,7 @@ ${typeHintsSection}
 - When an agent reports "directive_done", you can send a follow-up directive OR call mark_agent_done if all work is finished.
 - When an agent report says ALL work is done/complete/terminé/finished, IMMEDIATELY call mark_agent_done. Do NOT respond with text — use the tool.
 - If an agent sends 3+ consecutive "in_progress" reports without executing code, call mark_agent_done to unblock the orchestration.
+- **Before your final summary, call mark_agent_done on every agent that is still active**, including any agent you never sent a directive to (e.g. a Designer whose review was not needed). The orchestration only completes once every agent is done — leaving an agent active causes a timeout.
 
 ## Message metadata
 ${metadataFormat === "xml" ? `Messages in this conversation carry XML metadata tags that identify their source and purpose:

@@ -99,6 +99,8 @@ export type AgentWorkflowState = {
   niceCorrections?: string[];
   /** Number of peer review rounds since last directive (anti-loop for designer, max 3) */
   peerReviewCount?: number;
+  /** Set when the Southleft cloud relay pairing was attempted but not verified — figmaconsole_* write tools likely won't work, the agent should prefer figma_plugin_execute */
+  cloudRelayUnavailable?: boolean;
 };
 
 // ---------------------------------------------------------------------------

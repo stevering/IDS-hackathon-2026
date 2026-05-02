@@ -26,6 +26,7 @@ import {
   processReports,
   processUserInput,
   checkCompletion,
+  cleanupIdleAgents,
   handleCancellation,
   handleBroadcastRelay,
   processGuardrailBlocked,
@@ -356,6 +357,14 @@ export async function orchestratorWorkflow(
 
     // Flush durable events from this iteration (directives, reports, etc.)
     await flushDurableEvents();
+
+    // Auto-finalize idle agents (e.g. a Designer that was never asked to review)
+    // before checking completion, so a forgotten cleanup doesn't keep the
+    // orchestration Running until timeout.
+    const cleanupEffects = cleanupIdleAgents(state);
+    if (cleanupEffects.length > 0) {
+      await executeEffects(state, cleanupEffects, params.userId);
+    }
 
     // Check completion
     const completionEffect = checkCompletion(state);

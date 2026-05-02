@@ -1415,12 +1415,18 @@ export async function agentWorkflow(input: AgentWorkflowInput): Promise<void> {
         !input.mcpServerIds.includes("figma_console_local");
       if (needsCloudRelay && input.agent.pluginClientId) {
         try {
-          await mcpActivities.pairFCCloudRelay({
+          const pairResult = await mcpActivities.pairFCCloudRelay({
             userId: input.userId,
             pluginClientId: input.agent.pluginClientId,
           });
+          if (!pairResult.success) {
+            // Pairing was not verified — figmaconsole_* write tools won't work.
+            // Track this in state so we can warn the agent if it tries them.
+            state.cloudRelayUnavailable = true;
+          }
         } catch {
-          // Non-fatal: write tools may fail but read tools still work
+          state.cloudRelayUnavailable = true;
+          // Non-fatal: write tools may fail but read tools and figma_plugin_execute still work
         }
       }
     } catch {

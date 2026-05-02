@@ -517,42 +517,53 @@ export async function pairFCCloudRelay(params: {
       }
     }
 
-    // Poll figma_get_status to verify the relay is connected (up to 15s)
-    // The broadcast → webapp → postMessage → plugin → Southleft relay chain takes 3-8s
+    // Verify the relay is actually connected by probing a relay-dependent tool.
+    // The broadcast → webapp → postMessage → plugin → Southleft relay chain takes 3-8s.
+    // Southleft does not expose a dedicated "status" tool, so we run a no-op figma_execute
+    // — if the plugin WebSocket is paired the script runs; otherwise the response contains
+    // "No plugin connected to cloud relay" and we keep polling.
     let relayConnected = false;
     try {
       const statusClient = await connectHTTP(serverDef as Extract<MCPServerDef, { transport: "http" | "sse" }>, tokens.access_token);
       const statusTools = await statusClient.tools();
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const statusTool = statusTools["figma_get_status"] as any;
+      const statusTool = (statusTools["figma_get_status"] ?? statusTools["figma_execute"]) as any;
+      const probeArgs = "figma_get_status" in statusTools ? {} : { code: "return { ok: true };" };
+      const probeName = "figma_get_status" in statusTools ? "figma_get_status" : "figma_execute (no-op)";
       if (statusTool) {
         for (let i = 0; i < 15; i++) {
           await sleep(1000);
           try {
-            const status = await statusTool.execute({}, { toolCallId: `relay-wait-${i}` });
+            const status = await statusTool.execute(probeArgs, { toolCallId: `relay-wait-${i}` });
             const statusStr = JSON.stringify(status);
-            if (statusStr.includes('"available":true') || statusStr.includes("connectedFile")) {
-              log.info(`Cloud relay connected after ${i + 1}s`);
+            if (statusStr.includes("No plugin connected to cloud relay")) {
+              continue; // not paired yet, keep polling
+            }
+            if (statusStr.includes('"available":true') || statusStr.includes("connectedFile") || statusStr.includes('"ok":true')) {
+              log.info(`Cloud relay connected after ${i + 1}s (probe: ${probeName})`);
               relayConnected = true;
               break;
             }
-          } catch { /* relay not ready yet */ }
+          } catch (probeErr) {
+            // Distinguish "not paired yet" (transient) from real RPC errors
+            const msg = probeErr instanceof Error ? probeErr.message : String(probeErr);
+            if (!msg.includes("No plugin connected")) {
+              log.warn(`Probe error iter=${i}: ${msg.slice(0, 200)}`);
+            }
+          }
         }
         if (!relayConnected) {
-          log.warn("Cloud relay not connected after 15s polling");
+          log.warn(`Cloud relay not paired after 15s (probe: ${probeName}). figmaconsole_* write tools will fail until the plugin reconnects.`);
         }
       } else {
-        // No status tool — fallback to fixed wait
-        log.info("No figma_get_status tool, falling back to 8s wait");
-        await sleep(8000);
+        log.warn("Neither figma_get_status nor figma_execute available — cannot verify relay pairing");
       }
       await statusClient.close();
     } catch (err) {
-      log.warn(`Status polling failed, falling back to 8s wait: ${err}`);
-      await sleep(8000);
+      log.warn(`Relay verification failed: ${err}`);
     }
 
-    return { success: true, code };
+    return { success: relayConnected, code, error: relayConnected ? undefined : "Cloud relay broadcast sent but pairing was not verified within 15s" };
   } catch (err) {
     log.error(`pairFCCloudRelay failed: ${err instanceof Error ? err.message : String(err)}`);
     return { success: false, error: `Cloud relay pairing failed: ${err instanceof Error ? err.message : String(err)}` };
