@@ -218,8 +218,13 @@ export function useChatWorkflow({
 
     // Reset `loaded` on every conversation switch so consumers know the old
     // messages list is stale and the empty-state splash should stay hidden
-    // until loadAndRecover finishes.
+    // until loadAndRecover finishes. Also clear `messages` synchronously to
+    // avoid the auto-rename race in page.tsx — without this, the very next
+    // render still sees the previous conv's messages (state hasn't propagated
+    // yet) and renames the brand-new conv with the previous conv's first
+    // user message text.
     setLoaded(false);
+    setMessages([]);
 
     async function loadAndRecover() {
       try {
