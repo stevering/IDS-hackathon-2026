@@ -163,6 +163,13 @@ export function useChatWorkflow({
   // that depends on `messages` for the active conv (e.g. auto-rename) can
   // race against the conv switch.
   const [messagesConvId, setMessagesConvId] = useState<string | null>(null);
+  // When sendMessage is called with forceConversationId (deferred-persistence
+  // lazy creation flow from page.tsx), the parent will setActiveConversation
+  // to that id on the next render. The conversationId-change effect below
+  // would then wipe the optimistic user message we just added. This ref tells
+  // the effect "I know about this transition, skip the reset" — refs update
+  // synchronously so the effect sees the updated value the same render.
+  const expectedNextConvIdRef = useRef<string | null>(null);
   const [mcpDiscoveryFailures, setMcpDiscoveryFailures] = useState<MCPDiscoveryFailure[]>([]);
   const clearMCPDiscoveryFailures = useCallback(() => setMcpDiscoveryFailures([]), []);
   const workflowIdRef = useRef<string | null>(null);
@@ -231,6 +238,18 @@ export function useChatWorkflow({
 
   // ── Load persisted messages + detect active workflow on mount/F5 ─────────
   useEffect(() => {
+    // Lazy-creation skip: sendMessage(forceConversationId=Y) was just called,
+    // and the parent has now set conversationId=Y on this render. The
+    // optimistic user message + messagesConvId + loaded state are already
+    // in place. A reset here would wipe the optimistic message; a load here
+    // would race against the in-flight chat-temporal/start save_message.
+    // Skip both — the streaming subscription set up inside sendMessage will
+    // populate the assistant response.
+    if (conversationId && conversationId === expectedNextConvIdRef.current) {
+      expectedNextConvIdRef.current = null;
+      return;
+    }
+
     // Always reset on conversationId change — including the transition to
     // null (deferred-persistence "fresh chat" mode after a "+ New" click).
     // Without clearing here, the previous conv's messages remain visible in
@@ -912,6 +931,18 @@ export function useChatWorkflow({
     setError(undefined);
     setWorkflowPhase(null);
     benchmarkRef.current = { sendAt: Date.now(), firstDeltaAt: 0, completeAt: 0 };
+
+    if (forceConversationId) {
+      // Mark that the next conversationId-prop transition (caller will call
+      // setActiveConversation right after) is a lazy-creation, not a real
+      // conv switch. The conv-switch effect will short-circuit and preserve
+      // the optimistic user message added below + the streaming subscription.
+      // Also pre-set messagesConvId so consumers (auto-rename, etc.) see the
+      // messages as belonging to the new conv from the start.
+      expectedNextConvIdRef.current = forceConversationId;
+      setMessagesConvId(forceConversationId);
+      setLoaded(true);
+    }
 
     // Add user message to UI immediately
     const userMsgId = `user-${Date.now()}`;
