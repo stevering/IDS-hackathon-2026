@@ -722,6 +722,22 @@ export default function Home() {
     autoSwitchOnWorkflowId: temporal.userInitiatedWorkflowId,
   });
 
+  // ── Refetch conversations when a new orchestration appears ─────────────
+  // The server creates the orchestration parent + sub-conv in
+  // /api/orchestration/start, but the front conversations list is loaded
+  // once at mount and never refreshed via Realtime. Without this refetch,
+  // a brand-new sub-conv is invisible to the front state, breaking
+  // useOrchestrationConversation's lookup (no auto-switch, no banner, etc.).
+  // Triggers on any workflowId transition (user-initiated via the chat button,
+  // or externally-discovered via the figma_execute Realtime broadcast).
+  const lastFetchedWorkflowIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!temporal.workflowId) return;
+    if (lastFetchedWorkflowIdRef.current === temporal.workflowId) return;
+    lastFetchedWorkflowIdRef.current = temporal.workflowId;
+    loadConversations();
+  }, [temporal.workflowId, loadConversations]);
+
   // ── Debug traces (persistent, unified across clients) ─────────────
   const activeWorkflowId = temporal.workflowId;
   const { pushTrace, fetchUnifiedDebug } = useDebugTrace(activeConversationId, activeWorkflowId);
