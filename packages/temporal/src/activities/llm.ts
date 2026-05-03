@@ -503,7 +503,7 @@ async function callLLMDirect(params: LLMCallParams): Promise<LLMCallResult> {
       // AI SDK v6: StaticToolCall has .args, DynamicToolCall (MCP) has .input
       const args = (tc.args ?? tc.input ?? {}) as Record<string, unknown>;
       if (Object.keys(args).length === 0) {
-        console.warn(`[callLLM] Empty args for tool ${tc.toolName}`, { rawKeys: Object.keys(tc).join(","), rawTc: JSON.stringify(tc).slice(0, 500) });
+        console.warn(`[callLLM] Empty args for tool ${tc.toolName}`, { rawKeys: Object.keys(tc).join(",") });
       }
       return { id: tc.toolCallId as string, name: tc.toolName as string, arguments: args };
     }),

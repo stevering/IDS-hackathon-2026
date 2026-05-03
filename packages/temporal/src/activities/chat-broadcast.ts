@@ -8,6 +8,7 @@
 
 import { createClient } from "@supabase/supabase-js";
 import { createLogger } from "../lib/log.js";
+import { redactPayload } from "../lib/redact.js";
 
 export async function broadcastChatEvent(params: {
   conversationId: string;
@@ -18,7 +19,7 @@ export async function broadcastChatEvent(params: {
     conv: params.conversationId.slice(0, 8),
     event: params.event,
   });
-  log.info("broadcasting", { payload: JSON.stringify(params.payload).slice(0, 200) });
+  log.info("broadcasting", redactPayload(params.payload));
 
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL ?? process.env.STORAGE_SUPABASE_URL;
   const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.STORAGE_SUPABASE_SERVICE_ROLE_KEY;

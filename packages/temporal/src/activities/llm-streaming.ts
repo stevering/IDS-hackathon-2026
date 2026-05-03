@@ -19,6 +19,7 @@ import { createClient } from "@supabase/supabase-js";
 import { CancelledFailure, Context, heartbeat } from "@temporalio/activity";
 import type { LLMCallParams, LLMCallResult } from "@guardian/orchestrations";
 import { createLogger } from "../lib/log.js";
+import { redactMessage } from "../lib/redact.js";
 
 // Heartbeat frequency matters for cancellation latency: Temporal delivers
 // activity cancellation notices on heartbeat responses, so the smaller this
@@ -184,12 +185,11 @@ export async function callLLMStreaming(params: LLMStreamingParams): Promise<LLMC
   if (toolSet && toolCount > 0) {
     log.info("tool catalog", { names: Object.keys(toolSet).join(", ") });
   }
-  // Debug: log full message structure for diagnosis
+  // Diagnostic: log message shape (role + lengths) for multi-turn calls.
+  // Never dump message content — it persists in worker stdout (Railway logs).
   if (aiMessages.length > 3) {
-    // Only dump on multi-turn calls (where tool results are present)
     for (let i = 3; i < aiMessages.length; i++) {
-      const m = aiMessages[i];
-      log.info(`msg[${i}] dump`, { json: JSON.stringify(m).slice(0, 500) });
+      log.info(`msg[${i}] shape`, redactMessage(aiMessages[i]));
     }
   }
 

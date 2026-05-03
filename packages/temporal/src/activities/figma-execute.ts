@@ -102,11 +102,13 @@ export async function executeFigmaCode(params: ExecuteCodeParams): Promise<Execu
         if (data?.requestId !== requestId || settled) return;
 
         const success = data.success ?? false;
-        const preview = typeof data.result === "string" ? data.result.slice(0, 100) : JSON.stringify(data.result ?? "").slice(0, 100);
+        const resultLen = typeof data.result === "string"
+          ? data.result.length
+          : (data.result === undefined ? 0 : JSON.stringify(data.result).length);
         if (success) {
-          log.info(`execution succeeded`, { req: requestId, result: preview });
+          log.info(`execution succeeded`, { req: requestId, resultLen });
         } else {
-          log.warn(`execution failed`, { req: requestId, error: data.error ?? "unknown" });
+          log.warn(`execution failed`, { req: requestId, errType: typeof data.error });
         }
         settle({ success, result: data.result, error: data.error });
       })

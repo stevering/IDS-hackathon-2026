@@ -186,9 +186,11 @@ export async function refreshOAuthToken(
   }
 
   if (typeof parsed.access_token !== "string") {
-    throw new Error(
-      `Refresh response missing access_token: ${JSON.stringify(parsed).slice(0, 200)}`,
-    );
+    // Never include `parsed` in the message — OAuth payloads may carry
+    // refresh_token / id_token / error_description that we must not surface
+    // in worker stderr (Railway) or Temporal Cloud workflow history.
+    const fields = Object.keys(parsed).join(",") || "(empty)";
+    throw new Error(`Refresh response missing access_token (fields=${fields})`);
   }
 
   // expires_in may come as string from form-encoded, normalize

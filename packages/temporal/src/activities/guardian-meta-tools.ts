@@ -16,6 +16,7 @@ import { createClient } from "@supabase/supabase-js";
 import { createMCPClient } from "@ai-sdk/mcp";
 import { BUILTIN_PRESETS, buildToolPrefix } from "@guardian/orchestrations";
 import { createLogger } from "../lib/log.js";
+import { redactArgs } from "../lib/redact.js";
 
 const log = createLogger("guardian-meta");
 
@@ -246,7 +247,7 @@ async function handleCallInstanceTool(
     rawToolName = toolName.slice(entry.toolPrefix.length);
   }
 
-  log.info(`Meta-tool call: ${label}/${rawToolName}`, { args: JSON.stringify(args).slice(0, 200) });
+  log.info(`Meta-tool call: ${label}/${rawToolName}`, redactArgs(args));
 
   return executeMCPToolV2({
     userId: ctx.userId,

@@ -18,6 +18,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { LLMToolDefinition } from "@guardian/orchestrations";
 import { createLogger } from "../lib/log.js";
+import { redactArgs, redactResult } from "../lib/redact.js";
 
 // ---------------------------------------------------------------------------
 // MCP Server Registry
@@ -611,16 +612,16 @@ export async function executeMCPTool(params: {
         return { success: false, error: `Tool "${params.toolName}" not found on ${params.serverId}` };
       }
 
-      log.info(`Executing via persistent stdio client...`, { args: JSON.stringify(params.arguments).slice(0, 500) });
+      log.info(`Executing via persistent stdio client...`, redactArgs(params.arguments));
       const result = await tool.execute(params.arguments, { toolCallId: `mcp-${Date.now()}` });
       entry.lastUsed = Date.now();
       // MCP CallToolResult may have isError: true even when the transport succeeds
       if (result && typeof result === "object" && (result as Record<string, unknown>).isError) {
         const textContent = extractTextFromMCPResult(result);
-        log.warn(`Execution returned isError`, { req: params.toolName, error: textContent.slice(0, 200) });
+        log.warn(`Execution returned isError`, { req: params.toolName, errorLen: textContent.length });
         return { success: false, result, error: textContent || "Tool reported an error" };
       }
-      log.info(`Execution succeeded`, { result: JSON.stringify(result).slice(0, 200) });
+      log.info(`Execution succeeded`, redactResult(result));
       return { success: true, result };
     }
 
@@ -664,10 +665,10 @@ export async function executeMCPTool(params: {
     // MCP CallToolResult may have isError: true even when the transport succeeds
     if (result && typeof result === "object" && (result as Record<string, unknown>).isError) {
       const textContent = extractTextFromMCPResult(result);
-      log.warn(`Execution returned isError`, { req: params.toolName, error: textContent.slice(0, 200) });
+      log.warn(`Execution returned isError`, { req: params.toolName, errorLen: textContent.length });
       return { success: false, result, error: textContent || "Tool reported an error" };
     }
-    log.info(`Execution succeeded`, { result: JSON.stringify(result).slice(0, 200) });
+    log.info(`Execution succeeded`, redactResult(result));
     return { success: true, result };
   } catch (err) {
     // If stdio client crashed, kill subprocess and remove from pool
