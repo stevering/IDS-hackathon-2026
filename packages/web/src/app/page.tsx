@@ -2592,6 +2592,10 @@ export default function Home() {
                                     task: lastUserText,
                                     targetAgents,
                                     model: selectedModel,
+                                    // Attach to the current chat so the sub-conv
+                                    // is a child of this conversation, not an
+                                    // orphan parent created server-side.
+                                    conversationId: activeConversationId ?? undefined,
                                   });
                                 }}
                                 disabled={isLoading || temporal.isActive || temporal.starting}

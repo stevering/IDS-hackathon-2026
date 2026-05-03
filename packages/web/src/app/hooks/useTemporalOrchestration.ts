@@ -62,6 +62,13 @@ export function useTemporalOrchestration(externalWorkflowId?: string | null) {
       model?: string;
       maxDurationMs?: number;
       context?: Record<string, unknown>;
+      /**
+       * Existing conversation to attach the orchestration to. When set, the
+       * server skips creating a parent conv and links the new sub-conv as a
+       * child of this one (preserves the chat history → collab thread).
+       * When omitted, the server creates a standalone parent (MCP-style).
+       */
+      conversationId?: string;
     }) => {
       setState((prev) => ({ ...prev, starting: true, error: null }));
 

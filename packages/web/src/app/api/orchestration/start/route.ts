@@ -142,7 +142,15 @@ export async function POST(request: Request) {
     const agentNames = targetAgents.map((a: AgentId) => a.shortId).join(", ");
 
     try {
-      if (!parentConversationId) {
+      // Track whether we created the parent here. Determines if we need to
+      // seed it with the task + ORCHESTRATE marker (MCP-style standalone
+      // callers have no prior chat context). Webapp callers pass an existing
+      // conversationId where those messages already exist (the user's prompt
+      // and the LLM response that emitted the marker), so re-inserting would
+      // duplicate the chat.
+      const parentWasJustCreated = !parentConversationId;
+
+      if (parentWasJustCreated) {
         // Create a parent conversation with the task as title
         const { data: parentId, error: parentErr } = await sb
           .from("conversations")
@@ -157,27 +165,27 @@ export async function POST(request: Request) {
         if (parentErr) throw parentErr;
         parentConversationId = parentId.id;
         log.info("created parent conversation", { convId: parentConversationId });
+
+        // Seed the brand-new parent with the task + ORCHESTRATE marker so the
+        // user has chat context when navigating to it from the sidebar.
+        await sb.from("messages").insert({
+          conversation_id: parentConversationId,
+          role: "user",
+          content: task,
+          parts: [{ type: "text", text: task }],
+          metadata: { source: "mcp" },
+        });
+
+        const orchestrateMarker = `[ORCHESTRATE:${targetAgents.map((a: AgentId) => a.shortId).join(",")}]`;
+        const assistantText = `Starting collaborative orchestration with ${agentNames}.\n\n${orchestrateMarker}`;
+        await sb.from("messages").insert({
+          conversation_id: parentConversationId,
+          role: "assistant",
+          content: assistantText,
+          parts: [{ type: "text", text: assistantText }],
+          metadata: { source: "mcp", workflowId },
+        });
       }
-
-      // Add user message (the task) to the parent conversation
-      await sb.from("messages").insert({
-        conversation_id: parentConversationId,
-        role: "user",
-        content: task,
-        parts: [{ type: "text", text: task }],
-        metadata: { source: "mcp" },
-      });
-
-      // Add assistant message with the orchestrate button marker
-      const orchestrateMarker = `[ORCHESTRATE:${targetAgents.map((a: AgentId) => a.shortId).join(",")}]`;
-      const assistantText = `Starting collaborative orchestration with ${agentNames}.\n\n${orchestrateMarker}`;
-      await sb.from("messages").insert({
-        conversation_id: parentConversationId,
-        role: "assistant",
-        content: assistantText,
-        parts: [{ type: "text", text: assistantText }],
-        metadata: { source: "mcp", workflowId },
-      });
 
       // Create the orchestration sub-conversation
       const { data: orchConvId, error: orchErr } = await sb
