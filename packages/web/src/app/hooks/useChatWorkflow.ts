@@ -64,6 +64,16 @@ export type UseChatWorkflowReturn = {
    * messages arrive. Resets to `false` on every conversation switch.
    */
   loaded: boolean;
+  /**
+   * The conversationId that the current `messages` array was loaded for.
+   * `null` between a conv switch and the moment loadAndRecover finishes
+   * populating messages. Consumers comparing `messages` against the active
+   * conv (e.g. auto-rename) MUST gate on `messagesConvId === activeConvId`
+   * to avoid acting on stale messages from the previous conv (React closure
+   * semantics make a setMessages([]) inside this hook's effect invisible to
+   * effects in the same render at the call site).
+   */
+  messagesConvId: string | null;
   setMessages: (msgs: ChatMessage[]) => void;
   /** Discovery failures surfaced from the Temporal worker (MCP instances that couldn't be reached). */
   mcpDiscoveryFailures: MCPDiscoveryFailure[];
@@ -146,6 +156,13 @@ export function useChatWorkflow({
   // flag from `useMessagePersistence` which was decommissioned along with
   // the legacy `useChat` path.
   const [loaded, setLoaded] = useState(false);
+  // The convId that the current `messages` array was loaded for. Lets
+  // consumers detect "messages are stale relative to the active conv"
+  // (during the brief window between activeConversationId changing and the
+  // useEffect below repopulating messages). Without this, code in page.tsx
+  // that depends on `messages` for the active conv (e.g. auto-rename) can
+  // race against the conv switch.
+  const [messagesConvId, setMessagesConvId] = useState<string | null>(null);
   const [mcpDiscoveryFailures, setMcpDiscoveryFailures] = useState<MCPDiscoveryFailure[]>([]);
   const clearMCPDiscoveryFailures = useCallback(() => setMcpDiscoveryFailures([]), []);
   const workflowIdRef = useRef<string | null>(null);
@@ -218,13 +235,13 @@ export function useChatWorkflow({
 
     // Reset `loaded` on every conversation switch so consumers know the old
     // messages list is stale and the empty-state splash should stay hidden
-    // until loadAndRecover finishes. Also clear `messages` synchronously to
-    // avoid the auto-rename race in page.tsx — without this, the very next
-    // render still sees the previous conv's messages (state hasn't propagated
-    // yet) and renames the brand-new conv with the previous conv's first
-    // user message text.
+    // until loadAndRecover finishes. Also clear `messagesConvId` so consumers
+    // can detect that `messages` no longer reflects the active conv — without
+    // this, page.tsx's auto-rename effect runs in the same render with the
+    // previous conv's messages still in scope (React closure semantics) and
+    // renames the brand-new conv with the previous conv's first user message.
     setLoaded(false);
-    setMessages([]);
+    setMessagesConvId(null);
 
     async function loadAndRecover() {
       try {
@@ -240,6 +257,7 @@ export function useChatWorkflow({
             parts: m.parts ?? [{ type: "text", text: m.content ?? "" }],
           }));
           setMessages(loadedMessages);
+          setMessagesConvId(conversationId);
 
           // Recover the running workflow id from conversation.metadata.chatWorkflowId.
           // This is set by /api/chat-temporal/start so that — after an F5 or tab revisit —
@@ -998,7 +1016,7 @@ export function useChatWorkflow({
     };
   }, []);
 
-  return { messages, sendMessage, cancelMessage, status, error, loaded, setMessages, mcpDiscoveryFailures, clearMCPDiscoveryFailures, workflowPhase };
+  return { messages, messagesConvId, sendMessage, cancelMessage, status, error, loaded, setMessages, mcpDiscoveryFailures, clearMCPDiscoveryFailures, workflowPhase };
 }
 
 // ---------------------------------------------------------------------------

@@ -1583,6 +1583,7 @@ export default function Home() {
   // `messagesLoaded` flag — it flips true after the hook's internal
   // `loadAndRecover` pass completes for the current conversation.
   const messagesLoaded = chatWorkflow.loaded;
+  const messagesConvId = chatWorkflow.messagesConvId;
 
   // ── Conversation switching handler ──────────────────────────────────
   // When switching away from the orchestration conversation, auto-release the role
@@ -1609,6 +1610,14 @@ export default function Home() {
     // Without this gate, switching to a brand-new conv would rename it using the
     // previous conv's first message (still in `messages` until the async load runs).
     if (!messagesLoaded) return;
+    // Stronger guard: also verify the messages array actually belongs to the
+    // active conv. `messagesLoaded` is a separate state inside useChatWorkflow
+    // and doesn't flip back to false synchronously when activeConversationId
+    // changes — so a freshly switched conv can briefly see stale messages here
+    // (React closure semantics). The previous bug was: first user msg of conv
+    // X used to rename brand-new conv Y because both effects fired in the same
+    // render. messagesConvId is the convId messages were last loaded for.
+    if (messagesConvId !== activeConversationId) return;
     // Only rename conversations still titled "New conversation"
     if (activeConversation.title !== "New conversation") {
       renamedConvIds.current.add(activeConversationId);
@@ -1639,7 +1648,7 @@ export default function Home() {
 
     const title = text.length <= 60 ? text : text.slice(0, 57).replace(/\s\S*$/, "") + "…";
     updateTitle(activeConversationId, title);
-  }, [activeConversationId, activeConversation, messages, status, updateTitle, messagesLoaded]);
+  }, [activeConversationId, activeConversation, messages, status, updateTitle, messagesLoaded, messagesConvId]);
 
   // ── Reset event log on conversation switch ──
   const prevConvIdForLog = useRef(activeConversationId);
