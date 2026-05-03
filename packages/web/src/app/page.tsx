@@ -711,12 +711,15 @@ export default function Home() {
   // Viewer-only: the sub-conv is created by the server in /api/orchestration/start.
   // Plugin: isFigmaPlugin=true suppresses auto-switch to the sub-conv,
   //         so the user keeps typing in their parent chat.
+  // Webapp: auto-switch only fires for user-initiated runs (the chat button),
+  //         not for MCP-triggered or externally-discovered workflows.
   const orchConv = useOrchestrationConversation({
     workflowId: temporal.workflowId,
     activeConversationId,
     conversations: allConversations,
     switchConversation,
     isFigmaPlugin,
+    autoSwitchOnWorkflowId: temporal.userInitiatedWorkflowId,
   });
 
   // ── Debug traces (persistent, unified across clients) ─────────────

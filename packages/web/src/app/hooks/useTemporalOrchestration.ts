@@ -136,6 +136,13 @@ export function useTemporalOrchestration(externalWorkflowId?: string | null) {
   return {
     // State
     workflowId: effectiveWorkflowId,
+    /**
+     * The workflowId that was started by `startOrchestration` in this session
+     * (i.e. user-initiated from this tab — not picked up via externalWorkflowId
+     * or live discovery). Consumers can use this to gate behaviors that should
+     * only fire on user-initiated runs (e.g. auto-switching to the orch sub-conv).
+     */
+    userInitiatedWorkflowId: state.workflowId,
     starting: state.starting,
     error: state.error,
     isActive: effectiveWorkflowId !== null && !stream.completedStatus,

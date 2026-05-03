@@ -18,6 +18,14 @@ type UseOrchestrationConversationParams = {
   switchConversation: (id: string) => void;
   /** When true, suppress auto-switch to the orchestration sub-conv (plugin behavior) */
   isFigmaPlugin?: boolean;
+  /**
+   * If set, auto-switch to the orch sub-conv only when its metadata.workflowId
+   * matches this value. Pass `useTemporalOrchestration().userInitiatedWorkflowId`
+   * to restrict auto-switch to user-initiated runs (chat "Start Collaborative
+   * Mode" button), so MCP-triggered or externally-discovered workflows do not
+   * steal the user's focus. Leave null/undefined to never auto-switch.
+   */
+  autoSwitchOnWorkflowId?: string | null;
 };
 
 type UseOrchestrationConversationReturn = {
@@ -61,6 +69,7 @@ export function useOrchestrationConversation({
   conversations,
   switchConversation,
   isFigmaPlugin = false,
+  autoSwitchOnWorkflowId = null,
 }: UseOrchestrationConversationParams): UseOrchestrationConversationReturn {
   const [orchestrationConvId, setOrchestrationConvId] = useState<string | null>(null);
   const previousConvIdRef = useRef<string | null>(null);
@@ -112,9 +121,14 @@ export function useOrchestrationConversation({
     return null;
   })();
 
-  // Sync local state + auto-switch when the server-created sub-conv appears
-  // in the conversations list. Auto-switch fires once per workflowId (webapp
-  // only — plugin lets the user navigate via the banner).
+  // Sync local state + (gated) auto-switch when the server-created sub-conv
+  // appears in the conversations list. Auto-switch fires once per workflowId,
+  // and only when:
+  //   - autoSwitchOnWorkflowId matches the resolved workflowId (caller signals
+  //     it was user-initiated, e.g. via the chat "Start Collaborative Mode"
+  //     button) — MCP / external discovery passes null and never auto-switches
+  //   - we are NOT in the plugin (banner handles plugin navigation)
+  //   - the user is not already on the sub-conv
   useEffect(() => {
     if (!workflowId || !existingOrchConv) return;
 
@@ -125,11 +139,24 @@ export function useOrchestrationConversation({
     if (autoSwitchedWorkflowIds.current.has(workflowId)) return;
     autoSwitchedWorkflowIds.current.add(workflowId);
 
-    if (!isFigmaPlugin && activeConversationId !== existingOrchConv.id) {
+    const userInitiated = autoSwitchOnWorkflowId === workflowId;
+    if (
+      userInitiated &&
+      !isFigmaPlugin &&
+      activeConversationId !== existingOrchConv.id
+    ) {
       previousConvIdRef.current = activeConversationId;
       switchConversation(existingOrchConv.id);
     }
-  }, [workflowId, existingOrchConv, orchestrationConvId, activeConversationId, switchConversation, isFigmaPlugin]);
+  }, [
+    workflowId,
+    existingOrchConv,
+    orchestrationConvId,
+    activeConversationId,
+    switchConversation,
+    isFigmaPlugin,
+    autoSwitchOnWorkflowId,
+  ]);
 
   const effectiveOrchConvId = orchestrationConvId ?? existingOrchConv?.id ?? null;
 
