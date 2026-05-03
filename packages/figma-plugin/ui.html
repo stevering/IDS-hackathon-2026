@@ -2139,7 +2139,7 @@
          * making it the universal entry point for "generate Figma objects" requests.
          */
         function handleElectronMessage(msg) {
-            console.log('[Guardian Bridge] Message depuis Electron:', msg.type, msg);
+            console.log('[Guardian Bridge] Message depuis Electron:', msg.type);
 
             if (msg.type === 'PING') {
                 send({ type: 'PONG' });

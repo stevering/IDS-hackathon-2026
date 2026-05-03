@@ -231,17 +231,21 @@ export function useChatWorkflow({
 
   // ── Load persisted messages + detect active workflow on mount/F5 ─────────
   useEffect(() => {
-    if (!conversationId || !enabled) return;
-
-    // Reset `loaded` on every conversation switch so consumers know the old
-    // messages list is stale and the empty-state splash should stay hidden
-    // until loadAndRecover finishes. Also clear `messagesConvId` so consumers
-    // can detect that `messages` no longer reflects the active conv — without
-    // this, page.tsx's auto-rename effect runs in the same render with the
-    // previous conv's messages still in scope (React closure semantics) and
-    // renames the brand-new conv with the previous conv's first user message.
+    // Always reset on conversationId change — including the transition to
+    // null (deferred-persistence "fresh chat" mode after a "+ New" click).
+    // Without clearing here, the previous conv's messages remain visible in
+    // the UI because the load branch below short-circuits when convId is null.
     setLoaded(false);
     setMessagesConvId(null);
+    setMessages([]);
+    workflowIdRef.current = null;
+
+    if (!conversationId || !enabled) return;
+
+    // The reset above also covers the conv-switch case: by the time
+    // loadAndRecover finishes, messagesConvId is repopulated for the new
+    // conv. The auto-rename effect in page.tsx gates on this so it does not
+    // trigger with stale messages from the previous conv (closure semantics).
 
     async function loadAndRecover() {
       try {
