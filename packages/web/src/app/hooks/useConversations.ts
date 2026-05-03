@@ -40,7 +40,12 @@ export type ConversationMessage = {
  * Fetches conversations on mount, creates a default one if none exists,
  * and provides methods to switch, create, delete, and rename conversations.
  */
-export function useConversations(clientId: string, enabled = true) {
+export function useConversations(clientId: string, enabled = true, preferredInitialId: string | null = null) {
+  // The preferred initial id is captured once on first load so that a URL like
+  // /c/<id> can drive which conversation is selected. After init, switching is
+  // owned by the page-level URL sync effects.
+  const preferredInitialIdRef = useRef(preferredInitialId);
+  preferredInitialIdRef.current = preferredInitialId;
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [activeConversationId, setActiveConversationId] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -123,14 +128,13 @@ export function useConversations(clientId: string, enabled = true) {
           return;
         }
         if (convs.length === 0) {
-          // Genuinely no conversations — create a default
-          console.log("[Conversations] Creating default conversation...");
-          const newConv = await createConversationInternal();
-          console.log("[Conversations] Created:", newConv?.id ?? "FAILED");
-          if (newConv) {
-            setActiveConversationId(newConv.id);
-            initialized.current = true;
-          }
+          // No existing conversations — start in "fresh chat" mode (welcome
+          // screen). The conv is created lazily on first message send via
+          // ensureConversation, so users with no history don't end up with
+          // an empty "New conversation" placeholder in the DB.
+          console.log("[Conversations] No conversations — entering fresh-chat mode");
+          setActiveConversationId(null);
+          initialized.current = true;
         } else {
           // Find an active conversation for this client, or use the most recent
           const active = convs.find(
@@ -196,20 +200,19 @@ export function useConversations(clientId: string, enabled = true) {
       orchestrationId?: string;
       metadata?: Record<string, unknown>;
     }): Promise<Conversation | null> => {
-      const conv = await createConversationInternal(opts);
-      const isOrchConv = opts?.orchestrationId || opts?.metadata?.workflowId;
-      const isSubConv = !!opts?.parentId;
-      if (conv && !isOrchConv && !isSubConv) {
-        // Auto-switch to new standalone conversations (not sub-conversations)
-        setActiveConversationId(conv.id);
-        // Mark as active on server so F5 restores the right conversation
-        fetch(`/api/conversations/${conv.id}`, {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ isActive: true, clientId: clientIdRef.current }),
-        }).catch(() => {});
+      // Sub-conv / orch-conv creations still hit the DB immediately —
+      // they are server-driven flows that need a real id (e.g. Étape 2/3).
+      if (opts?.parentId || opts?.orchestrationId || opts?.metadata?.workflowId) {
+        return createConversationInternal(opts);
       }
-      return conv;
+
+      // Standalone "+ New conversation" click: defer DB persistence (ChatGPT
+      // / Claude / Gemini pattern). Setting activeConversationId to null puts
+      // the UI in "fresh chat" mode (welcome screen). The conv is actually
+      // inserted at first message send via ensureConversation in page.tsx,
+      // which avoids cluttering the sidebar with empty placeholder convs.
+      setActiveConversationId(null);
+      return null;
     },
     [createConversationInternal],
   );

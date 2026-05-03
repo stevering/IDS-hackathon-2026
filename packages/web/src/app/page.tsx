@@ -678,6 +678,7 @@ export default function Home() {
     renameConversation,
     loadConversations,
     ensureConversation,
+    setActiveConversation,
   } = useConversations(myClientId, !!myClientId);
 
   // ── Derive workflowId from active conversation metadata ──
@@ -1206,7 +1207,6 @@ export default function Home() {
           "data" in event.data && event.data.data) {
         const d = event.data.data as { nodes?: unknown[]; image?: string | null; nodeUrl?: string | null };
         const d2 = { nodes: d.nodes ?? [], image: d.image ?? null, nodeUrl: d.nodeUrl ?? null };
-        console.log(d2);
         setSelectedNode(d2);
       }
       if (event.data && typeof event.data === "object" && event.data.type === "southleft-mcp-auth") {
@@ -1545,7 +1545,25 @@ export default function Home() {
   // compatible for the read paths used downstream (`.role`, `.parts`,
   // `.length`), and the cast is a compile-time no-op.
   const messages = chatWorkflow.messages as unknown as UIMessage[];
-  const sendMessage = chatWorkflow.sendMessage;
+  // Wrapper: when there's no active conv (deferred-persistence mode after a
+  // "+ New conversation" click), create the conv on-demand at send time and
+  // pass the fresh id to chatWorkflow.sendMessage via forceConversationId —
+  // sendMessage's prop-derived convId is still null on this render, so the
+  // override is needed to bridge the state-propagation gap.
+  const rawSendMessage = chatWorkflow.sendMessage;
+  const sendMessage = useCallback(
+    async (msg: { text: string }) => {
+      if (activeConversationId) {
+        rawSendMessage(msg);
+        return;
+      }
+      const newId = await ensureConversation();
+      if (!newId) return;
+      setActiveConversation(newId);
+      rawSendMessage({ text: msg.text, forceConversationId: newId });
+    },
+    [activeConversationId, rawSendMessage, ensureConversation, setActiveConversation],
+  );
   const cancelMessage = chatWorkflow.cancelMessage;
   const status = chatWorkflow.status === "idle" ? "ready" as const : "streaming" as const;
   const error = chatWorkflow.error ? new Error(chatWorkflow.error) : undefined;
@@ -2223,7 +2241,8 @@ export default function Home() {
             <div className="min-w-full h-full relative">
             <div ref={scrollContainerRef} onScroll={handleScroll} className={`absolute inset-0 overflow-y-auto px-3 sm:px-4 pb-56 ${headerPaddingClass}`}>
               {/* Chat panel content starts here */}
-          {messages.length === 0 && messagesLoaded && (
+          {/* Welcome screen: empty conv (loaded) OR fresh-chat mode (no active conv yet) */}
+          {messages.length === 0 && (messagesLoaded || activeConversationId === null) && (
             <div className="flex flex-col items-center justify-center h-full text-center px-4">
               <img src="/guardian-logo.svg" alt="Guardian" className="h-12 mx-auto mb-4" />
               <h2 className="text-lg font-semibold mb-2">

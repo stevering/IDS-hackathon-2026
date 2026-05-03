@@ -47,7 +47,7 @@ export type MCPDiscoveryFailure = {
 
 export type UseChatWorkflowReturn = {
   messages: ChatMessage[];
-  sendMessage: (msg: { text: string }) => void;
+  sendMessage: (msg: { text: string; forceConversationId?: string }) => void;
   /**
    * Abort the current generation by signalling `chatCancel` to the running
    * Temporal workflow. No-op if no workflow is attached (status === "idle" or
@@ -898,8 +898,12 @@ export function useChatWorkflow({
   }, []);
 
   // ── Send message ────────────────────────────────────────────────────────
-  const sendMessage = useCallback(async ({ text: content }: { text: string }) => {
-    if (!conversationId || !enabled) return;
+  const sendMessage = useCallback(async ({ text: content, forceConversationId }: { text: string; forceConversationId?: string }) => {
+    // forceConversationId lets callers send into a conv that was just created
+    // (lazy-create flow) without waiting for the conversationId prop to
+    // propagate through React state. In the normal case, fall back to the prop.
+    const effectiveConvId = forceConversationId ?? conversationId;
+    if (!effectiveConvId || !enabled) return;
 
     setError(undefined);
     setWorkflowPhase(null);
@@ -935,7 +939,7 @@ export function useChatWorkflow({
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            conversationId,
+            conversationId: effectiveConvId,
             message: content,
             model,
             mcpServerIds,
@@ -956,7 +960,7 @@ export function useChatWorkflow({
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            conversationId,
+            conversationId: effectiveConvId,
             message: content,
             model,
             mcpServerIds,
@@ -972,7 +976,7 @@ export function useChatWorkflow({
       }
 
       // Subscribe to streaming channel
-      subscribeToStream(conversationId, result.workflowId);
+      subscribeToStream(effectiveConvId, result.workflowId);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
       setStatus("error");
