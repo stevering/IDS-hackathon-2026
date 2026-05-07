@@ -617,6 +617,7 @@ export async function chatWorkflow(params: ChatWorkflowParams): Promise<void> {
               manifest: instanceManifest,
               toolName: tc.name,
               args: tc.arguments,
+              pluginClientId: params.figmaPluginClientId,
             });
             toolResult = result.success
               ? JSON.stringify(result.result ?? { success: true })
@@ -632,6 +633,7 @@ export async function chatWorkflow(params: ChatWorkflowParams): Promise<void> {
                 instanceId: resolved.instanceId,
                 toolName: resolved.rawName,
                 arguments: tc.arguments,
+                pluginClientId: params.figmaPluginClientId,
               });
               toolResult = result.success
                 ? JSON.stringify(result.result ?? { success: true })
@@ -648,6 +650,7 @@ export async function chatWorkflow(params: ChatWorkflowParams): Promise<void> {
                 serverId: resolvedV1.serverId,
                 toolName: resolvedV1.rawName,
                 arguments: tc.arguments,
+                pluginClientId: params.figmaPluginClientId,
               });
               toolResult = result.success
                 ? JSON.stringify(result.result ?? { success: true })
@@ -662,6 +665,7 @@ export async function chatWorkflow(params: ChatWorkflowParams): Promise<void> {
               serverId: resolved.serverId,
               toolName: resolved.rawName,
               arguments: tc.arguments,
+              pluginClientId: params.figmaPluginClientId,
             });
             toolResult = result.success
               ? JSON.stringify(result.result ?? { success: true })

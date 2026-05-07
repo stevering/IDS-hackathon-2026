@@ -571,12 +571,98 @@ export async function pairFCCloudRelay(params: {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Figma Console rewriters
+// ---------------------------------------------------------------------------
+// The Southleft Figma Console MCP is built for clients that don't have our
+// auto-pairing. Its raw responses leak its manual flow into the LLM:
+//   - figma_pair_plugin returns { pairingCode, instructions: ["Click ▶ Cloud Mode", ...] }
+//   - figma_execute returns "No plugin connected to cloud relay. User must pair... use figma_pair_plugin tool."
+// Guardian already handles pairing automatically (pairFCCloudRelay broadcasts the
+// code via Realtime, the plugin auto-connects). These rewriters intercept
+// Southleft's raw responses so the LLM never sees the manual flow.
+
+const NO_PLUGIN_CONNECTED_PATTERN = /no\s+plugin\s+connected\s+to\s+cloud\s+relay/i;
+
+/**
+ * Pre-execute interceptor for figma_pair_plugin.
+ *
+ * When the LLM calls figma_pair_plugin directly, run pairFCCloudRelay
+ * internally and return a neutral result that does NOT expose the pairing code
+ * or manual instructions. Tells the LLM to retry whatever it was doing.
+ */
+async function interceptFigmaPairCall(params: {
+  userId: string;
+  pluginClientId?: string;
+}): Promise<unknown> {
+  const pair = await pairFCCloudRelay({
+    userId: params.userId,
+    pluginClientId: params.pluginClientId,
+  });
+  if (pair.success) {
+    return {
+      content: [
+        {
+          type: "text",
+          text: JSON.stringify({
+            status: "paired",
+            note: "Auto-pairing handled by Guardian. The Figma plugin is connected via the cloud relay. Retry your previous tool call.",
+          }),
+        },
+      ],
+      isError: false,
+    };
+  }
+  // Pairing failed — surface a Guardian-flavoured error, NOT Southleft's manual flow.
+  return {
+    content: [
+      {
+        type: "text",
+        text: JSON.stringify({
+          status: "not_paired",
+          error:
+            pair.error ??
+            "Cloud relay pairing failed. The Guardian plugin is not running in Figma. Ask the user to open Figma Desktop with the Guardian plugin, then retry.",
+        }),
+      },
+    ],
+    isError: true,
+  };
+}
+
+/**
+ * Detect the Southleft "no plugin connected to cloud relay" error in a result
+ * payload (string, MCP CallToolResult content array, or generic object).
+ */
+function isNoPluginConnectedError(result: unknown, errorText?: string): boolean {
+  if (errorText && NO_PLUGIN_CONNECTED_PATTERN.test(errorText)) return true;
+  if (typeof result === "string") return NO_PLUGIN_CONNECTED_PATTERN.test(result);
+  if (result && typeof result === "object") {
+    try {
+      return NO_PLUGIN_CONNECTED_PATTERN.test(JSON.stringify(result));
+    } catch {
+      return false;
+    }
+  }
+  return false;
+}
+
+/**
+ * Rewrite Southleft's "No plugin connected to cloud relay. User must pair..."
+ * error into a Guardian-context message. Used when the auto-pair recovery
+ * also fails — we don't want to leak Southleft's manual instructions.
+ */
+function rewriteNoPluginConnectedError(): string {
+  return "Guardian plugin is not running in Figma. Ask the user to open Figma Desktop and launch the Guardian plugin, then retry. (Pairing is automatic — no manual code entry needed.)";
+}
+
 export async function executeMCPTool(params: {
   userId: string;
   serverId: string;
   toolName: string;
   arguments: Record<string, unknown>;
   agentId?: string;
+  pluginClientId?: string;
 }): Promise<{ success: boolean; result?: unknown; error?: string }> {
   const log = createLogger("mcp-exec", {
     u: params.userId.slice(0, 8),
@@ -588,6 +674,74 @@ export async function executeMCPTool(params: {
   if (!serverDef) {
     return { success: false, error: `Unknown MCP server: ${params.serverId}` };
   }
+
+  // ── Figma Console interceptor: figma_pair_plugin ───────────────────────────
+  // Pairing is internal to Guardian. The LLM must never see Southleft's
+  // pairing code or manual instructions. Re-pair via pairFCCloudRelay and
+  // return a neutral result.
+  const isFigmaConsole = params.serverId === "figma_console" || params.serverId === "figma_console_local";
+  if (isFigmaConsole && params.toolName === "figma_pair_plugin") {
+    log.info("Intercepting figma_pair_plugin — running Guardian auto-pair instead");
+    const result = await interceptFigmaPairCall({
+      userId: params.userId,
+      pluginClientId: params.pluginClientId,
+    });
+    const isError = (result as { isError?: boolean }).isError === true;
+    return isError
+      ? { success: false, result, error: extractTextFromMCPResult(result) || "pair failed" }
+      : { success: true, result };
+  }
+
+  // Inner exec helper — runs the actual MCP call. Used twice if we need to
+  // recover from "No plugin connected to cloud relay" by re-pairing.
+  const runOnce = async (): Promise<{ success: boolean; result?: unknown; error?: string }> => {
+    return runMCPToolCall(params, serverDef, log);
+  };
+
+  let outcome = await runOnce();
+
+  // ── Figma Console recovery: "No plugin connected to cloud relay" ───────────
+  // Auto-pair may have failed, the plugin may have reloaded, or the relay
+  // may have dropped between turns. Re-pair on demand and retry once.
+  if (
+    isFigmaConsole &&
+    !outcome.success &&
+    isNoPluginConnectedError(outcome.result, outcome.error)
+  ) {
+    log.warn("Figma Console returned 'no plugin connected' — re-pairing and retrying once");
+    const pair = await pairFCCloudRelay({
+      userId: params.userId,
+      pluginClientId: params.pluginClientId,
+    });
+    if (pair.success) {
+      outcome = await runOnce();
+      if (!outcome.success && isNoPluginConnectedError(outcome.result, outcome.error)) {
+        outcome = { ...outcome, error: rewriteNoPluginConnectedError() };
+      }
+    } else {
+      outcome = { ...outcome, error: rewriteNoPluginConnectedError() };
+    }
+  }
+
+  return outcome;
+}
+
+/**
+ * Inner MCP call dispatcher. Extracted so executeMCPTool can retry the same
+ * call after a re-pair attempt without duplicating the stdio/HTTP branches.
+ */
+async function runMCPToolCall(
+  params: {
+    userId: string;
+    serverId: string;
+    toolName: string;
+    arguments: Record<string, unknown>;
+    agentId?: string;
+  },
+  serverDef: MCPServerDef,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  log: any,
+): Promise<{ success: boolean; result?: unknown; error?: string }> {
 
   try {
     if (serverDef.transport === "stdio") {

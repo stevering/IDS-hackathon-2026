@@ -123,6 +123,7 @@ export interface MCPActivities {
     toolName: string;
     arguments: Record<string, unknown>;
     agentId?: string;
+    pluginClientId?: string;
   }): Promise<{ success: boolean; result?: unknown; error?: string }>;
 
   pairFCCloudRelay(params: {
@@ -169,6 +170,7 @@ export interface MCPV2Activities {
     instanceId: string;
     toolName: string;
     arguments: Record<string, unknown>;
+    pluginClientId?: string;
   }): Promise<{ success: boolean; result?: unknown; error?: string }>;
 }
 
@@ -178,6 +180,7 @@ export interface GuardianMetaActivities {
     manifest: InstanceManifestEntry[];
     toolName: string;
     args: Record<string, unknown>;
+    pluginClientId?: string;
   }): Promise<{ success: boolean; result?: unknown; error?: string }>;
 
   buildInstanceSystemPrompt(manifest: InstanceManifestEntry[]): string;

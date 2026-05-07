@@ -19,6 +19,7 @@ import {
 } from "@guardian/orchestrations";
 import type { LLMToolDefinition } from "@guardian/orchestrations";
 import { callBridgedMCP } from "./mcp-bridge-client.js";
+import { pairFCCloudRelay } from "./mcp.js";
 import {
   refreshOAuthTokenIfNeeded,
   forceRefreshOAuthToken,
@@ -430,6 +431,7 @@ export async function executeMCPToolV2(params: {
   instanceId: string;
   toolName: string;
   arguments: Record<string, unknown>;
+  pluginClientId?: string;
 }): Promise<{ success: boolean; result?: unknown; error?: string }> {
   const log = createLogger("mcp-v2-exec", { u: params.userId.slice(0, 8), tool: params.toolName });
   const supabase = createServiceClient();
@@ -443,6 +445,38 @@ export async function executeMCPToolV2(params: {
 
   if (!inst) {
     return { success: false, error: `Instance ${params.instanceId} not found or disabled` };
+  }
+
+  // ── Figma Console interceptor: figma_pair_plugin ───────────────────────────
+  // Pairing is internal to Guardian — never expose Southleft's pairing code or
+  // manual instructions to the LLM. Re-pair via pairFCCloudRelay and return a
+  // neutral result.
+  const isFigmaConsole = inst.preset_type === "figma_console";
+  if (isFigmaConsole && params.toolName === "figma_pair_plugin") {
+    log.info("Intercepting figma_pair_plugin — running Guardian auto-pair instead");
+    const pair = await pairFCCloudRelay({
+      userId: params.userId,
+      pluginClientId: params.pluginClientId,
+    });
+    if (pair.success) {
+      return {
+        success: true,
+        result: {
+          content: [{
+            type: "text",
+            text: JSON.stringify({
+              status: "paired",
+              note: "Auto-pairing handled by Guardian. The Figma plugin is connected via the cloud relay. Retry your previous tool call.",
+            }),
+          }],
+          isError: false,
+        },
+      };
+    }
+    return {
+      success: false,
+      error: pair.error ?? "Cloud relay pairing failed. The Guardian plugin is not running in Figma. Ask the user to open Figma Desktop with the Guardian plugin, then retry.",
+    };
   }
 
   if (inst.scope === "local") {
@@ -497,39 +531,78 @@ export async function executeMCPToolV2(params: {
     }
   };
 
-  try {
-    let result;
+  // Run the tool call (with potential 401 reactive refresh) and surface
+  // success / failure as a structured outcome so we can apply Figma Console
+  // recovery on top.
+  const runOnce = async (): Promise<{ success: boolean; result?: unknown; error?: string }> => {
     try {
-      result = await tryExecute(initialToken);
-    } catch (err) {
-      if (!is401Error(err)) throw err;
-      log.warn(`${inst.label}: 401 on exec — attempting force refresh`);
-      const refreshedToken = await forceRefreshCloudToken(supabase, params.userId, inst, preset, log);
-      if (!refreshedToken) {
-        log.error(`${inst.label}: force refresh failed, cannot retry`);
-        throw err;
-      }
-      result = await tryExecute(refreshedToken);
-      log.info(`${inst.label}: execution succeeded after reactive refresh`);
-    }
-
-    if (result && typeof result === "object" && (result as Record<string, unknown>).isError) {
-      // Extract the actual error text from the MCP CallToolResult content
-      let errorText = "Tool reported an error";
+      let result;
       try {
-        const r = result as { content?: Array<{ type: string; text?: string }> };
-        if (Array.isArray(r.content)) {
-          const texts = r.content.filter(c => c.type === "text" && c.text).map(c => c.text);
-          if (texts.length > 0) errorText = texts.join("\n");
+        result = await tryExecute(initialToken);
+      } catch (err) {
+        if (!is401Error(err)) throw err;
+        log.warn(`${inst.label}: 401 on exec — attempting force refresh`);
+        const refreshedToken = await forceRefreshCloudToken(supabase, params.userId, inst, preset, log);
+        if (!refreshedToken) {
+          log.error(`${inst.label}: force refresh failed, cannot retry`);
+          throw err;
         }
-      } catch { /* use fallback */ }
-      return { success: false, result, error: errorText };
-    }
+        result = await tryExecute(refreshedToken);
+        log.info(`${inst.label}: execution succeeded after reactive refresh`);
+      }
 
-    log.info(`Execution succeeded on ${inst.label}/${params.toolName}`);
-    return { success: true, result };
-  } catch (err) {
-    log.error(`Execution failed`, { error: String(err) });
-    return { success: false, error: String(err) };
+      if (result && typeof result === "object" && (result as Record<string, unknown>).isError) {
+        // Extract the actual error text from the MCP CallToolResult content
+        let errorText = "Tool reported an error";
+        try {
+          const r = result as { content?: Array<{ type: string; text?: string }> };
+          if (Array.isArray(r.content)) {
+            const texts = r.content.filter(c => c.type === "text" && c.text).map(c => c.text);
+            if (texts.length > 0) errorText = texts.join("\n");
+          }
+        } catch { /* use fallback */ }
+        return { success: false, result, error: errorText };
+      }
+
+      log.info(`Execution succeeded on ${inst.label}/${params.toolName}`);
+      return { success: true, result };
+    } catch (err) {
+      log.error(`Execution failed`, { error: String(err) });
+      return { success: false, error: String(err) };
+    }
+  };
+
+  let outcome = await runOnce();
+
+  // ── Figma Console recovery: "No plugin connected to cloud relay" ───────────
+  // Auto-pair may have failed, the plugin may have reloaded, or the relay
+  // may have dropped between turns. Re-pair on demand and retry once. If
+  // recovery fails, rewrite the error so the LLM never sees Southleft's
+  // manual pairing instructions.
+  const NO_PLUGIN_RE = /no\s+plugin\s+connected\s+to\s+cloud\s+relay/i;
+  const looksLikeNoPlugin = (out: typeof outcome): boolean => {
+    if (out.success) return false;
+    if (out.error && NO_PLUGIN_RE.test(out.error)) return true;
+    if (out.result) {
+      try { return NO_PLUGIN_RE.test(JSON.stringify(out.result)); } catch { return false; }
+    }
+    return false;
+  };
+  const guardianRewrite = "Guardian plugin is not running in Figma. Ask the user to open Figma Desktop and launch the Guardian plugin, then retry. (Pairing is automatic — no manual code entry needed.)";
+
+  if (isFigmaConsole && looksLikeNoPlugin(outcome)) {
+    log.warn("Figma Console returned 'no plugin connected' — re-pairing and retrying once");
+    const pair = await pairFCCloudRelay({
+      userId: params.userId,
+      pluginClientId: params.pluginClientId,
+    });
+    if (pair.success) {
+      outcome = await runOnce();
+      if (looksLikeNoPlugin(outcome)) outcome = { ...outcome, error: guardianRewrite };
+    } else {
+      outcome = { ...outcome, error: guardianRewrite };
+    }
   }
+
+  return outcome;
 }

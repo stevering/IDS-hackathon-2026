@@ -470,6 +470,12 @@ Two connection modes depending on the environment:
 4. Cloud relay WebSocket established → added to FC Bridge handler pool (same handlers as local WS)
 5. Agent LLM calls `figmaconsole_*` tools → routed through Southleft HTTP → cloud relay → WS → Guardian FC Bridge → Proxy → code.ts
 
+**LLM-facing rewriters** (`packages/temporal/src/activities/mcp.ts`, `mcp-v2.ts`): Southleft's MCP is built for clients without auto-pairing. Its raw responses (the `instructions` array in `figma_pair_plugin`'s payload, the "User must pair the Desktop Bridge plugin first" error from `figma_execute`) leak Southleft's manual flow into the LLM, which then dutifully recopies the pairing code and "click Cloud Mode" steps to the user. To prevent this:
+- **Pre-execute intercept** of `figma_pair_plugin`: `executeMCPTool` / `executeMCPToolV2` call `pairFCCloudRelay` internally and return a neutral `{ status: "paired", note: "Retry your previous tool call." }` payload. The LLM never sees a pairing code.
+- **Post-execute recovery** for "No plugin connected to cloud relay" errors: re-pair via `pairFCCloudRelay` and retry the original call once. If recovery fails, the error is rewritten to "Guardian plugin is not running in Figma. Ask the user to open Figma Desktop..." — without mentioning manual pairing.
+
+Both interceptors require `pluginClientId`, threaded from the workflow into `executeMCPTool`/`executeMCPToolV2`/`executeGuardianMetaTool` so `pairFCCloudRelay` can broadcast `connect_fc_cloud_relay` to the right plugin client.
+
 **Key fixes for AI SDK v6 compatibility:**
 - Tool parameters extracted from `inputSchema.jsonSchema` (not `parameters` which is `undefined` for MCP tools)
 - `jsonSchema()` wrapper requires `{ validate: (v) => ({ success: true, value: v }) }` passthrough validator

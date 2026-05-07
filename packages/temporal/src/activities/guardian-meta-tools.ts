@@ -95,6 +95,7 @@ export const GUARDIAN_META_TOOL_SPECS: LLMToolDefinition[] = [
 export type MetaToolContext = {
   userId: string;
   manifest: InstanceManifestEntry[];
+  pluginClientId?: string;
 };
 
 // ---------------------------------------------------------------------------
@@ -106,8 +107,9 @@ export async function executeGuardianMetaTool(params: {
   manifest: InstanceManifestEntry[];
   toolName: string;
   args: Record<string, unknown>;
+  pluginClientId?: string;
 }): Promise<{ success: boolean; result?: unknown; error?: string }> {
-  const ctx: MetaToolContext = { userId: params.userId, manifest: params.manifest };
+  const ctx: MetaToolContext = { userId: params.userId, manifest: params.manifest, pluginClientId: params.pluginClientId };
   const { toolName, args } = params;
   switch (toolName) {
     case "guardian_list_instances":
@@ -254,6 +256,7 @@ async function handleCallInstanceTool(
     instanceId: entry.instanceId,
     toolName: rawToolName,
     arguments: args,
+    pluginClientId: ctx.pluginClientId,
   });
 }
 

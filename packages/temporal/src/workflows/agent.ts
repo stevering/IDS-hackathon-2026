@@ -1222,6 +1222,7 @@ async function handleExecuteExternalTool(
     toolName: resolved.rawName,
     arguments: effect.arguments,
     agentId: state.agent.shortId,
+    pluginClientId: state.agent.pluginClientId,
   });
 
   // For figma_execute tools, the MCP transport may succeed (result.success = true)
