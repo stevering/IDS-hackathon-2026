@@ -23,11 +23,20 @@ let learnedParentOrigin: string | null = null;
  * Record the parent's origin from an inbound MessageEvent. Call this once we
  * have validated the message is genuinely from `window.parent`.
  *
- * Sandboxed iframes report `event.origin === "null"` — we accept and store it
- * verbatim, since `postMessage(msg, "null")` is a valid (if narrow) target.
+ * The opaque origin sentinel "null" — emitted by data:URL frames and
+ * sandboxed iframes — is intentionally NOT recorded. Despite being the
+ * serialization of an opaque origin, "null" is NOT a valid `targetOrigin`
+ * per the HTML spec (it's neither "*", "/", nor a parseable URL), so
+ * `parent.postMessage(msg, "null")` throws SyntaxError and the message is
+ * silently dropped. This is exactly the Figma plugin shape: ui.html runs
+ * inside a `data:text/html;base64,...` frame whose origin serializes to
+ * "null". Skipping the record leaves `learnedParentOrigin = null`, so
+ * `postMessageToParent` falls back to "*" — acceptable here, since the
+ * parent is the Figma-controlled plugin sandbox, not a third-party page.
  */
 export function recordParentOrigin(origin: string | undefined | null): void {
   if (typeof origin !== "string" || origin.length === 0) return;
+  if (origin === "null") return;
   learnedParentOrigin = origin;
 }
 
