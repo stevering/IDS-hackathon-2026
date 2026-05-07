@@ -1298,8 +1298,20 @@
     mainAvatar.style.backgroundImage = '';
 
     window.addEventListener('message', (event) => {
-        // Only accept messages from the trusted webapp origin
-        if (guardianOrigin !== '*' && event.origin !== guardianOrigin) return;
+        // Only accept messages from the trusted webapp.
+        // Two acceptance paths (either is enough):
+        //  1) event.source is our own iframe's contentWindow — intrinsically trusted
+        //     regardless of origin (robust to preview-domain redirects, e.g. when the
+        //     iframe was built with one URL but Vercel serves it from another).
+        //  2) event.origin matches the build-time guardianOrigin (legacy check).
+        const fromOurIframe = !!webviewIframe && event.source === webviewIframe.contentWindow;
+        const originMatches = guardianOrigin === '*' || event.origin === guardianOrigin;
+        if (!fromOurIframe && !originMatches) {
+            if (event.data && event.data.source === 'figpal-webapp') {
+                console.warn('[FC Bridge] Rejected figpal-webapp message — neither source nor origin matched', { eventOrigin: event.origin, guardianOrigin: guardianOrigin });
+            }
+            return;
+        }
         if (event.data && event.data.source === 'figpal-webapp') {
             if (event.data.type === 'AUTH_STATE') {
                 applyAuthState(!!event.data.authenticated);
