@@ -1491,6 +1491,12 @@ export default function Home() {
   const targetPluginClientId = selectedDesignItem?.kind === "plugin"
     ? selectedDesignItem.clientId
     : undefined;
+  // Fallback: when the user picks a Figma Console MCP instance (or anything
+  // non-plugin), the workflow still needs a pluginClientId to broadcast the
+  // cloud-relay pairing code to a live plugin. Pick any connected Figma plugin
+  // from presence — there's usually only one, and it's the same plugin the
+  // user sees the selectedNode from.
+  const presencePluginClientId = clients.find((c) => c.type === "figma-plugin")?.clientId;
 
   const chatWorkflow = useChatWorkflow({
     conversationId: activeConversationId,
@@ -1498,8 +1504,9 @@ export default function Home() {
     mcpServerIds: temporalMcpServerIds,
     // Priority: (1) plugin selected in TargetSelector → its clientId
     //           (2) webapp running inside Figma plugin iframe → own clientId
-    //           (3) no plugin available → undefined (skips pairing + plugin execute)
-    figmaPluginClientId: targetPluginClientId ?? (isFigmaPlugin ? myClientId : undefined),
+    //           (3) any plugin in Realtime presence → enables auto-pairing of the cloud relay
+    //           (4) no plugin available → undefined (skips pairing + plugin execute)
+    figmaPluginClientId: targetPluginClientId ?? (isFigmaPlugin ? myClientId : undefined) ?? presencePluginClientId,
     enabled: true,
     selectedNode,
     figmaPluginContext,
