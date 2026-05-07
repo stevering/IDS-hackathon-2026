@@ -4,6 +4,7 @@ import { useState, useEffect } from "react";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
 import { LegalFooter } from "@/components/LegalFooter";
+import { postMessageToParent } from "@/lib/parent-postmessage";
 
 type PageMode = "loading" | "login" | "invite-expired" | "invite-already-accepted";
 
@@ -53,9 +54,7 @@ export default function LoginPage() {
     const hash = window.location.hash;
     if (!hash) {
       setMode("login");
-      try {
-        window.parent.postMessage({ source: "figpal-webapp", type: "AUTH_STATE", authenticated: false }, "*");
-      } catch (_) {}
+      postMessageToParent({ source: "figpal-webapp", type: "AUTH_STATE", authenticated: false });
       return;
     }
 

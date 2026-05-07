@@ -54,6 +54,7 @@ import { MCPErrorBlock } from "@/components/chat/MCPErrorBlock";
 import { markdownComponents } from "@/components/chat/markdown-components";
 import { fixUnpairedMarkdown } from "@/lib/markdown-utils";
 import { parseStructuredContent, parseTextWithImages, type StructuredSegment, type Segment } from "@/lib/content-parsing";
+import { postMessageToParent } from "@/lib/parent-postmessage";
 
 
 function MCPStatusBlock({ status }: { status: "connecting" | "connected" | "error" }) {
@@ -941,23 +942,23 @@ export default function Home() {
         results.code = await pingUrl(codeProjectPath);
       }
 
-      // Figma MCP — OAuth token check or ping local URL
+      // Figma MCP — OAuth status (server-backed via figmaOAuth state) or ping local URL
       if (enabledMcps.figma !== false) {
         if (figmaOAuth) {
-          results.figma = typeof window !== "undefined" && !!localStorage.getItem("figma_mcp_tokens");
+          results.figma = true;
         } else if (figmaMcpUrl?.trim()) {
           results.figma = await pingUrl(figmaMcpUrl);
         }
       }
 
-      // GitHub MCP — OAuth token check
+      // GitHub MCP — OAuth status (server-backed via githubOAuth state)
       if (enabledMcps.github) {
-        results.github = typeof window !== "undefined" && !!localStorage.getItem("github_mcp_tokens");
+        results.github = githubOAuth;
       }
 
-      // Figma Console — OAuth token check
+      // Figma Console — OAuth status (server-backed via southleftOAuth state)
       if (enabledMcps.figmaConsole) {
-        results.figmaConsole = typeof window !== "undefined" && !!localStorage.getItem("southleft_access_token");
+        results.figmaConsole = southleftOAuth;
       }
 
       if (!cancelled) setMcpReachable(results);
@@ -966,7 +967,7 @@ export default function Home() {
     checkAll();
     const interval = setInterval(checkAll, 30_000);
     return () => { cancelled = true; clearInterval(interval); };
-  }, [codeProjectPath, figmaMcpUrl, figmaOAuth, enabledMcps]);
+  }, [codeProjectPath, figmaMcpUrl, figmaOAuth, githubOAuth, southleftOAuth, enabledMcps]);
 
   // ── Target items for Design and Code selectors ──────────────────────
   // ── TargetSelector data (Phase 4 — sourced from user_mcp_instances) ──
@@ -1181,9 +1182,7 @@ export default function Home() {
   executeCodeRef.current = executeCode;
   // Notify the Figma plugin that the user is authenticated
   useEffect(() => {
-    try {
-      window.parent.postMessage({ source: "figpal-webapp", type: "AUTH_STATE", authenticated: true }, "*");
-    } catch (_) {}
+    postMessageToParent({ source: "figpal-webapp", type: "AUTH_STATE", authenticated: true });
   }, []);
 
   // Sync figmaContext from hook → local state used by the rest of the component
@@ -1233,11 +1232,10 @@ export default function Home() {
       }
 
       // GitHub OAuth popup fast-path
+      // Tokens are persisted server-side (httpOnly cookie + Supabase Vault) by the
+      // OAuth callback. The webapp tracks connection state via /api/auth/github-mcp/status.
       if (event.data && typeof event.data === "object" && event.data.type === "github-oauth-complete") {
         if (event.data.success) {
-          if (event.data.tokensJson && typeof window !== 'undefined') {
-            try { localStorage.setItem('github_mcp_tokens', event.data.tokensJson as string); } catch(_) {}
-          }
           setGithubOAuth(true);
         }
         setGithubWaitingForOAuth(false);
@@ -1248,11 +1246,10 @@ export default function Home() {
       }
 
       // Figma official OAuth popup fast-path
+      // Tokens are persisted server-side (httpOnly cookie + Supabase Vault) by the
+      // OAuth callback. The webapp tracks connection state via /api/auth/figma-mcp/status.
       if (event.data && typeof event.data === "object" && event.data.type === "figma-oauth-complete") {
         if (event.data.success) {
-          if (event.data.tokensJson && typeof window !== 'undefined') {
-            try { localStorage.setItem('figma_mcp_tokens', event.data.tokensJson as string); } catch(_) {}
-          }
           setFigmaOAuth(true);
         }
         setFigmaWaitingForOAuth(false);
@@ -1262,46 +1259,38 @@ export default function Home() {
         setFigmaWaitingForOAuth(false);
       }
 
-      // Token relay from OAuth popup via postMessage
+      // OAuth popup signals completion — tokens are persisted server-side
+      // (httpOnly cookie + Supabase Vault) by the callback; the webapp
+      // checks /api/auth/southleft-mcp/status, never receives the raw token.
       if (event.data && typeof event.data === "object" && event.data.type === "southleft-oauth-complete") {
-        const accessToken = event.data.accessToken as string | undefined;
-        if (accessToken) {
-          localStorage.setItem('southleft_access_token', accessToken);
+        if (event.data.success) {
           setSouthleftOAuth(true);
-          setWaitingForOAuth(false);
         }
+        setWaitingForOAuth(false);
       }
     };
     window.addEventListener("message", handleMessage);
     return () => window.removeEventListener("message", handleMessage);
   }, [tunnelSecret]);
 
-  // Check localStorage for southleft access token to determine auth status
+  // Check server-side connection status for southleft (cookie or Supabase Vault).
   useEffect(() => {
-    if (typeof window !== 'undefined') {
-      const token = localStorage.getItem('southleft_access_token');
-      setSouthleftOAuth(!!token);
-    }
-  }, []);
+    fetch("/api/auth/southleft-mcp/status", {
+      headers: { "X-Auth-Token": tunnelSecret || "" },
+    })
+      .then((r) => r.json())
+      .then((d) => setSouthleftOAuth(!!d?.connected))
+      .catch(() => {});
+  }, [tunnelSecret]);
 
-  // If this page is the popup landing after OAuth, relay token to opener then close
+  // Legacy popup-landing relay: previously the popup would land on /, read the
+  // token from localStorage and forward it to the opener. The OAuth callback
+  // now responds with self-contained HTML that closes the popup directly, so
+  // this fallback is obsolete. We only auto-close any leftover landing tab.
   useEffect(() => {
     if (typeof window === 'undefined') return;
     const params = new URLSearchParams(window.location.search);
-    const isAuthSuccess = params.get('auth') === 'success';
-    const source = params.get('source');
-    const isPopup = params.get('popup') === 'true';
-
-    if (isAuthSuccess && isPopup && source === 'southleft-mcp') {
-      const accessToken = localStorage.getItem('southleft_access_token');
-      if (accessToken && window.opener) {
-        try {
-          window.opener.postMessage({ type: 'southleft-oauth-complete', accessToken }, window.location.origin);
-        } catch (e) {
-          console.warn('[southleft popup] postMessage to opener failed:', e);
-        }
-      }
-      // Give a short delay so the message is dispatched before close
+    if (params.get('auth') === 'success' && params.get('popup') === 'true') {
       setTimeout(() => { try { window.close(); } catch (_) {} }, 300);
     }
   }, []);
@@ -1319,7 +1308,7 @@ export default function Home() {
         });
         const data = await res.json();
         if (data?.type === 'southleft-mcp-auth' && data.success && data.access_token) {
-          localStorage.setItem('southleft_access_token', data.access_token as string);
+          // Tokens are persisted server-side by the callback; just flip UI state.
           setSouthleftOAuth(true);
           setWaitingForOAuth(false);
         }
@@ -1353,10 +1342,7 @@ export default function Home() {
         const data = await res.json();
         if (data?.type === 'github-mcp-auth') {
           if (data.success) {
-            const tokensJson = data.tokens?.github_mcp_tokens as string | undefined;
-            if (tokensJson) {
-              try { localStorage.setItem('github_mcp_tokens', tokensJson); } catch(_) {}
-            }
+            // Tokens are persisted server-side by the callback; just flip UI state.
             setGithubOAuth(true);
           }
           setGithubWaitingForOAuth(false);
@@ -1381,10 +1367,7 @@ export default function Home() {
         const data = await res.json();
         if (data?.type === 'figma-mcp-auth') {
           if (data.success) {
-            const tokensJson = data.tokens?.figma_mcp_tokens as string | undefined;
-            if (tokensJson) {
-              try { localStorage.setItem('figma_mcp_tokens', tokensJson); } catch(_) {}
-            }
+            // Tokens are persisted server-side by the callback; just flip UI state.
             setFigmaOAuth(true);
           }
           setFigmaWaitingForOAuth(false);
@@ -1396,33 +1379,24 @@ export default function Home() {
     return () => { clearInterval(interval); clearTimeout(timeout); };
   }, [figmaWaitingForOAuth]);
 
-  // Restore GitHub and Figma MCP auth status on mount
-  // localStorage takes priority (works in Figma plugin iframe where cookies from OAuth popup are not sent),
-  // then fall back to server cookie check.
+  // Restore GitHub and Figma MCP auth status on mount.
+  // Status endpoints check both the OAuth cookie (top-level webapp) and the
+  // Supabase Vault entry (Figma plugin iframe context, where SameSite=Lax
+  // OAuth cookies are not sent on cross-site fetches).
   useEffect(() => {
-    // Figma: localStorage takes priority (works in Figma plugin iframe)
-    if (typeof window !== 'undefined' && localStorage.getItem('figma_mcp_tokens')) {
-      setFigmaOAuth(true);
-    } else {
-      fetch("/api/auth/figma-mcp/status", {
-        headers: { "X-Auth-Token": tunnelSecret || "" },
-      })
-        .then((r) => r.json())
-        .then((d) => setFigmaOAuth(d.connected))
-        .catch(() => {});
-    }
+    fetch("/api/auth/figma-mcp/status", {
+      headers: { "X-Auth-Token": tunnelSecret || "" },
+    })
+      .then((r) => r.json())
+      .then((d) => setFigmaOAuth(!!d?.connected))
+      .catch(() => {});
 
-    // GitHub: localStorage takes priority (works in Figma plugin iframe)
-    if (typeof window !== 'undefined' && localStorage.getItem('github_mcp_tokens')) {
-      setGithubOAuth(true);
-    } else {
-      fetch("/api/auth/github-mcp/status", {
-        headers: { "X-Auth-Token": tunnelSecret || "" },
-      })
-        .then((r) => r.json())
-        .then((d) => setGithubOAuth(d.connected))
-        .catch(() => {});
-    }
+    fetch("/api/auth/github-mcp/status", {
+      headers: { "X-Auth-Token": tunnelSecret || "" },
+    })
+      .then((r) => r.json())
+      .then((d) => setGithubOAuth(!!d?.connected))
+      .catch(() => {});
   }, [tunnelSecret]);
 
   useEffect(() => {

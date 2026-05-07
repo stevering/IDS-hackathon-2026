@@ -4,6 +4,7 @@ import { useEffect, useRef, useState, useCallback } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { type ExecuteCodeResult, type PluginEvent, pushPluginEvent } from "./useFigmaPlugin";
 import { parsePresenceState, type ClientType, type PresenceClient } from "@/types/presence";
+import { postMessageToParent } from "@/lib/parent-postmessage";
 
 
 const CHANNEL_BASE = "guardian:execute";
@@ -216,9 +217,7 @@ export function useFigmaExecuteChannel(
         if (clientInfoRef.current?.type !== "figma-plugin") return;
         console.log(`[ExecuteChannel] Forwarding connect_fc_port (port ${port}) to plugin`);
         // Forward to plugin UI via postMessage
-        if (typeof window !== "undefined") {
-          window.parent.postMessage({ source: "figpal-webapp", type: "CONNECT_FC_PORT", data: { port } }, "*");
-        }
+        postMessageToParent({ source: "figpal-webapp", type: "CONNECT_FC_PORT", data: { port } });
       })
       .on("broadcast", { event: "connect_fc_cloud_relay" }, (payload) => {
         const { code, targetClientId } = payload.payload as { code: string; targetClientId?: string };
@@ -232,9 +231,7 @@ export function useFigmaExecuteChannel(
           return;
         }
         console.log(`[ExecuteChannel] Forwarding connect_fc_cloud_relay (code ${code}) to plugin`);
-        if (typeof window !== "undefined") {
-          window.parent.postMessage({ source: "figpal-webapp", type: "CONNECT_FC_CLOUD_RELAY", data: { code } }, "*");
-        }
+        postMessageToParent({ source: "figpal-webapp", type: "CONNECT_FC_CLOUD_RELAY", data: { code } });
       })
       .subscribe(async (status) => {
         if (status === "SUBSCRIBED") {

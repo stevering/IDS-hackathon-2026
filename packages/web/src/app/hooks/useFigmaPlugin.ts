@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback, useRef } from "react";
+import { postMessageToParent, recordParentOrigin } from "@/lib/parent-postmessage";
 
 export type FigmaPluginContext = {
   fileKey: string | null;
@@ -103,7 +104,7 @@ export function useFigmaPlugin() {
     const msg: Record<string, unknown> = { source: "figpal-webapp", type };
     if (data !== undefined) msg.data = data;
     pushPluginEvent(eventLog.current, { dir: "out", channel: "postMessage", type, summary: summarize(msg) });
-    window.parent.postMessage(msg, "*");
+    postMessageToParent(msg);
   }, []);
 
   // ─── Execute arbitrary JS inside the Figma sandbox ─────────────────
@@ -117,14 +118,9 @@ export function useFigmaPlugin() {
         const id = `exec-${Date.now()}-${Math.random().toString(36).slice(2)}`;
         pendingExecutions.current.set(id, resolve);
         pushPluginEvent(eventLog.current, { dir: "out", channel: "postMessage", type: "EXECUTE_CODE", summary: `code=${code}` });
-        if (typeof window !== "undefined") {
-          // Note: code and timeout are sent at the top level (not inside data)
-          // because code.js reads msg.code and msg.timeout directly.
-          window.parent.postMessage(
-            { source: "figpal-webapp", type: "EXECUTE_CODE", id, code, timeout },
-            "*"
-          );
-        }
+        // Note: code and timeout are sent at the top level (not inside data)
+        // because code.js reads msg.code and msg.timeout directly.
+        postMessageToParent({ source: "figpal-webapp", type: "EXECUTE_CODE", id, code, timeout });
       });
     },
     []
@@ -160,6 +156,13 @@ export function useFigmaPlugin() {
       // event.source which is the window reference — cannot be spoofed.
       // Accept messages from: parent window (plugin ui.html) or self (HMR).
       if (event.source !== window.parent && event.source !== window) return;
+
+      // Cache the parent origin so subsequent outbound posts can target it
+      // instead of using "*" (audit P0 #1: prevents arbitrary parents from
+      // intercepting auth state, relay codes, and EXECUTE_CODE payloads).
+      if (event.source === window.parent) {
+        recordParentOrigin(event.origin);
+      }
 
       const d = event.data;
       if (!d || typeof d !== "object") return;
