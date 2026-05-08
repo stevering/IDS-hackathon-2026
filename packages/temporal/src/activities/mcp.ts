@@ -415,8 +415,16 @@ function extractTextFromMCPResult(result: unknown): string {
 
 /**
  * Pair the Guardian plugin with the Southleft cloud relay.
- * Calls figma_pair_plugin on the Southleft MCP server, then broadcasts
- * the pairing code to the plugin via Supabase Realtime so it auto-connects.
+ *
+ * Probe-first: before issuing a new pairing code (which would invalidate any
+ * existing relay session — Southleft only supports one paired plugin per
+ * OAuth token, see `internal/docs/backlog/fc-cloud-relay-multi-pairing.md`),
+ * try a no-op `figma_execute` against Southleft. If the relay is still alive
+ * (i.e. a plugin is paired and responsive), short-circuit with success and
+ * skip both `figma_pair_plugin` and the broadcast.
+ *
+ * Otherwise call `figma_pair_plugin`, broadcast the code via Supabase Realtime
+ * so the plugin auto-connects, then poll until a probe confirms the pairing.
  */
 export async function pairFCCloudRelay(params: {
   userId: string;
@@ -444,6 +452,34 @@ export async function pairFCCloudRelay(params: {
   const tokens = JSON.parse(tokensJson);
   if (!tokens.access_token) {
     return { success: false, error: "Southleft token has no access_token" };
+  }
+
+  // ── Probe-first: skip pairing if the relay is already alive ────────────
+  try {
+    const probeClient = await connectHTTP(serverDef as Extract<MCPServerDef, { transport: "http" | "sse" }>, tokens.access_token);
+    const probeTools = await probeClient.tools();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const probeTool = (probeTools["figma_get_status"] ?? probeTools["figma_execute"]) as any;
+    if (probeTool) {
+      const probeArgs = "figma_get_status" in probeTools ? {} : { code: "return { ok: true };" };
+      try {
+        const probe = await probeTool.execute(probeArgs, { toolCallId: `pair-probe-${Date.now()}` });
+        const probeStr = JSON.stringify(probe);
+        const alive =
+          !probeStr.includes("No plugin connected to cloud relay") &&
+          (probeStr.includes('"available":true') || probeStr.includes("connectedFile") || probeStr.includes('"ok":true'));
+        if (alive) {
+          await probeClient.close();
+          log.info("Cloud relay already paired (probe ok) — skipping figma_pair_plugin");
+          return { success: true };
+        }
+      } catch {
+        // Probe failures fall through to full pairing.
+      }
+    }
+    await probeClient.close();
+  } catch (err) {
+    log.warn(`Probe-first failed: ${err instanceof Error ? err.message : String(err)} — falling through to pair`);
   }
 
   try {

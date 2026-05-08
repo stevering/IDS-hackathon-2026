@@ -1997,12 +1997,31 @@
         }
 
         // Expose cloud relay connect for Southleft Figma Console (production/preview)
-        // Called when the webapp receives a connect_fc_cloud_relay broadcast from Supabase
+        // Called when the webapp receives a connect_fc_cloud_relay broadcast from Supabase.
+        //
+        // A new pairing code means Southleft has issued a fresh relay session and is
+        // expecting a fresh WebSocket bound to that code. The previous WS is now
+        // orphan — Southleft's PluginRelayDO actually closes it server-side with
+        // code 1000 "Replaced by new connection" the moment a new WS upgrade lands
+        // on the same DO. Keeping the old socket and skipping connect to the new
+        // code would leave the new code with no peer and the worker's probe would
+        // time out with "No plugin connected to cloud relay".
         var _fcCloudRelayWs = null;
         window.__connectFCCloudRelay = function(code) {
-            if (_fcCloudRelayWs && _fcCloudRelayWs.readyState <= 1) {
-                console.log('[FC Bridge] Cloud relay already connected');
-                return;
+            if (_fcCloudRelayWs) {
+                console.log('[FC Bridge] Closing previous cloud relay WS to bind new code ' + code);
+                try {
+                    // Drop our handlers so the close doesn't trigger the cleanup that
+                    // would null out _fcCloudRelayWs AFTER we open the new one below.
+                    _fcCloudRelayWs.onopen = null;
+                    _fcCloudRelayWs.onclose = null;
+                    _fcCloudRelayWs.onerror = null;
+                    _fcCloudRelayWs.onmessage = null;
+                    var idx = activeConnections.findIndex(function(c) { return c.ws === _fcCloudRelayWs; });
+                    if (idx >= 0) activeConnections.splice(idx, 1);
+                    _fcCloudRelayWs.close();
+                } catch (e) { /* ignore */ }
+                _fcCloudRelayWs = null;
             }
             var relayUrl = 'wss://figma-console-mcp.southleft.com/ws/pair?code=' + code;
             console.log('[FC Bridge] Cloud relay connecting with code ' + code);

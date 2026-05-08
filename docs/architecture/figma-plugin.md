@@ -465,10 +465,12 @@ Two connection modes depending on the environment:
 
 **Production/preview** (Southleft cloud relay):
 1. Agent workflow detects `figma_console` (not `figma_console_local`) in mcpServerIds
-2. Calls `pairFCCloudRelay` activity → connects to Southleft HTTP MCP → calls `figma_pair_plugin` → gets 6-char pairing code
-3. **Broadcasts `connect_fc_cloud_relay`** via Supabase Realtime → webapp forwards → plugin auto-connects to `wss://figma-console-mcp.southleft.com/ws/pair?code=XXXXXX`
-4. Cloud relay WebSocket established → added to FC Bridge handler pool (same handlers as local WS)
-5. Agent LLM calls `figmaconsole_*` tools → routed through Southleft HTTP → cloud relay → WS → Guardian FC Bridge → Proxy → code.ts
+2. Calls `pairFCCloudRelay` activity. **Probe-first**: a no-op `figma_execute` is fired against Southleft; if it succeeds the relay is already paired with a live plugin and we short-circuit (no new code, no broadcast). Otherwise we call `figma_pair_plugin` → get 6-char pairing code.
+3. **Broadcasts `connect_fc_cloud_relay`** via Supabase Realtime → webapp forwards → plugin auto-connects to `wss://figma-console-mcp.southleft.com/ws/pair?code=XXXXXX`. The plugin closes its previous cloud-relay WS (if any) before opening the new one — Southleft's `PluginRelayDO` would close it server-side anyway with code 1000 "Replaced by new connection".
+4. Cloud relay WebSocket established → added to FC Bridge handler pool (same handlers as local WS).
+5. Agent LLM calls `figmaconsole_*` tools → routed through Southleft HTTP → cloud relay → WS → Guardian FC Bridge → Proxy → code.ts.
+
+**Multi-pairing limit**: Southleft's cloud relay supports **exactly one paired plugin per OAuth token** (`src/index.ts` stores a single `relayDoId`; `PluginRelayDO` holds a single WS, replaced on re-pair). The local stdio variant is multi-client by design, but in production we use the cloud transport, so only one plugin can drive `figmaconsole_*` calls at a time per user. The probe-first + explicit re-pair mitigates the obvious symptom (re-pair wasn't invalidating the previous plugin properly), but true parallel multi-plugin would require either Southleft upstream changes or self-hosting a relay — see `internal/docs/backlog/fc-cloud-relay-multi-pairing.md`.
 
 **LLM-facing rewriters** (`packages/temporal/src/activities/mcp.ts`, `mcp-v2.ts`): Southleft's MCP is built for clients without auto-pairing. Its raw responses (the `instructions` array in `figma_pair_plugin`'s payload, the "User must pair the Desktop Bridge plugin first" error from `figma_execute`) leak Southleft's manual flow into the LLM, which then dutifully recopies the pairing code and "click Cloud Mode" steps to the user. To prevent this:
 - **Pre-execute intercept** of `figma_pair_plugin`: `executeMCPTool` / `executeMCPToolV2` call `pairFCCloudRelay` internally and return a neutral `{ status: "paired", note: "Retry your previous tool call." }` payload. The LLM never sees a pairing code.
