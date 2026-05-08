@@ -1498,6 +1498,26 @@ export default function Home() {
   // user sees the selectedNode from.
   const presencePluginClientId = clients.find((c) => c.type === "figma-plugin")?.clientId;
 
+  // Resolve the routing target to a structured object for the system prompt.
+  // The LLM does not implicitly know which plugin its `figmaconsole_*` calls
+  // route to — it just calls the tool and the worker (`pairFCCloudRelay`)
+  // binds Southleft's cloud relay to whichever plugin matches `figmaPluginClientId`.
+  // Surfacing the target here lets the LLM answer questions like "which file
+  // are we in?" without an extra tool call, and makes plugin-switch UX explicit.
+  const resolvedPluginClientId = targetPluginClientId ?? (isFigmaPlugin ? myClientId : undefined) ?? presencePluginClientId;
+  const activeTargetClient = resolvedPluginClientId
+    ? clients.find((c) => c.clientId === resolvedPluginClientId)
+    : undefined;
+  const activeTarget = activeTargetClient && activeTargetClient.type === "figma-plugin"
+    ? {
+        shortId: activeTargetClient.shortId,
+        label: activeTargetClient.label,
+        fileName: activeTargetClient.figmaContext?.fileName,
+        fileKey: activeTargetClient.fileKey,
+        fileUrl: activeTargetClient.figmaContext?.fileUrl ?? undefined,
+      }
+    : undefined;
+
   const chatWorkflow = useChatWorkflow({
     conversationId: activeConversationId,
     model: selectedModel || undefined,
@@ -1506,7 +1526,7 @@ export default function Home() {
     //           (2) webapp running inside Figma plugin iframe → own clientId
     //           (3) any plugin in Realtime presence → enables auto-pairing of the cloud relay
     //           (4) no plugin available → undefined (skips pairing + plugin execute)
-    figmaPluginClientId: targetPluginClientId ?? (isFigmaPlugin ? myClientId : undefined) ?? presencePluginClientId,
+    figmaPluginClientId: resolvedPluginClientId,
     enabled: true,
     selectedNode,
     figmaPluginContext,
@@ -1516,6 +1536,7 @@ export default function Home() {
     keyId: selectedKeyId ?? undefined,
     designInstanceId: focusDesignInstanceId ?? undefined,
     codeInstanceId: focusCodeInstanceId ?? undefined,
+    activeTarget,
   });
 
   // Chat variables — Temporal-only since the April 2026 cleanup.

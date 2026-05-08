@@ -40,6 +40,23 @@ export type ConnectedAgent = {
   fileName?: string;
 };
 
+/**
+ * The Figma plugin the user has explicitly selected as the routing target for
+ * this conversation (TargetSelector pick, or the inferred fallback when the
+ * webapp runs inside a plugin iframe). All `figmaconsole_*` and
+ * `figma_plugin_execute` calls are server-side routed to this plugin —
+ * Southleft's cloud relay supports exactly one paired plugin per OAuth token,
+ * so other entries in `connectedAgents` are visible but NOT reachable through
+ * those tools without re-pairing first.
+ */
+export type ActiveTarget = {
+  shortId: string;
+  label?: string;
+  fileName?: string;
+  fileKey?: string;
+  fileUrl?: string;
+};
+
 export type BuildDynamicContextOpts = {
   selectedNode?: SelectedNode;
   figmaPluginContext?: FigmaPluginContext;
@@ -48,6 +65,7 @@ export type BuildDynamicContextOpts = {
   modelId?: string;
   source?: string;
   keyLabel?: string;
+  activeTarget?: ActiveTarget;
 };
 
 // ---------------------------------------------------------------------------
@@ -94,6 +112,23 @@ RULES:
 - When the user refers to "the current page" or "this page", they mean the page named above.
 - Do NOT ask the user for the Figma file URL if this context is present — you already have it.`;
     }
+  }
+
+  // Active Figma target (the plugin this conversation routes to)
+  if (opts.activeTarget?.shortId) {
+    const t = opts.activeTarget;
+    ctx += `\n\n## ACTIVE FIGMA TARGET (this conversation)
+- **shortId:** ${t.shortId}`;
+    if (t.label) ctx += `\n- **label:** ${t.label}`;
+    if (t.fileName) ctx += `\n- **file:** "${t.fileName}"`;
+    if (t.fileKey) ctx += ` (fileKey: ${t.fileKey})`;
+    if (t.fileUrl) ctx += `\n- **fileUrl:** ${t.fileUrl}`;
+    ctx += `
+
+RULES:
+- All \`figmaconsole_*\` and \`figma_plugin_execute\` tool calls in this conversation are routed to **this** plugin instance. Other plugins listed under "Connected Agents" below are visible but NOT reachable through these tools — Southleft's cloud relay binds to one plugin per user at a time.
+- When the user references "the current file", "this Figma", "my plugin", or similar without naming a specific agent, they mean this target.
+- If the user asks to switch to a different plugin/file, instruct them to change the selection in the Target selector — Guardian will re-pair automatically. Do NOT attempt to drive other plugins from \`figmaconsole_*\` calls.`;
   }
 
   // Connected agents

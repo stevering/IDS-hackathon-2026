@@ -108,6 +108,14 @@ type ConnectedAgent = {
   fileName?: string;
 };
 
+type ActiveTarget = {
+  shortId: string;
+  label?: string;
+  fileName?: string;
+  fileKey?: string;
+  fileUrl?: string;
+};
+
 type UseChatWorkflowParams = {
   conversationId: string | null;
   model?: string;
@@ -121,6 +129,8 @@ type UseChatWorkflowParams = {
   isLocalPlugin?: boolean;
   source?: string;
   keyId?: string;
+  /** Resolved Figma plugin target for this conversation (for the system prompt). */
+  activeTarget?: ActiveTarget;
   // V2: focus instance IDs from TargetSelector
   designInstanceId?: string;
   codeInstanceId?: string;
@@ -142,6 +152,7 @@ export function useChatWorkflow({
   isLocalPlugin,
   source,
   keyId,
+  activeTarget,
   designInstanceId,
   codeInstanceId,
 }: UseChatWorkflowParams): UseChatWorkflowReturn {
@@ -213,6 +224,8 @@ export function useChatWorkflow({
   sourceRef.current = source;
   const keyIdRef = useRef(keyId);
   keyIdRef.current = keyId;
+  const activeTargetRef = useRef(activeTarget);
+  activeTargetRef.current = activeTarget;
 
   // ── Reset workflow state when conversation changes ──────────────────────
   // CRITICAL: workflowIdRef persists across renders as a mutable ref. When the
@@ -966,6 +979,7 @@ export function useChatWorkflow({
         isLocalPlugin: isLocalPluginRef.current,
         source: sourceRef.current,
         keyId: keyIdRef.current,
+        activeTarget: activeTargetRef.current,
       };
 
       if (workflowIdRef.current) {

@@ -15,6 +15,7 @@ import {
   type SelectedNode,
   type FigmaPluginContext,
   type ConnectedAgent,
+  type ActiveTarget,
 } from "@/lib/chat-dynamic-context";
 import { enforceFreeTierQuota } from "@/lib/chat-quota";
 
@@ -58,6 +59,7 @@ export async function POST(
     isLocalPlugin,
     source,
     keyId,
+    activeTarget,
     // V2 focus instance IDs from the TargetSelector. When this route has to
     // spin up a new chatWorkflow (idle timeout, first follow-up after reload,
     // etc.), these drive the V2 discovery path — without them the workflow
@@ -79,6 +81,7 @@ export async function POST(
     isLocalPlugin?: boolean;
     source?: string;
     keyId?: string;
+    activeTarget?: ActiveTarget;
     designInstanceId?: string;
     codeInstanceId?: string;
   };
@@ -235,6 +238,7 @@ export async function POST(
       modelId: resolvedModel,
       source,
       keyLabel,
+      activeTarget,
     });
     const systemPrompt = GUARDIAN_SYSTEM_PROMPT + dynamicCtx;
 

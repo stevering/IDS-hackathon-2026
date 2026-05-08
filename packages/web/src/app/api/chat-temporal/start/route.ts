@@ -15,6 +15,7 @@ import {
   type SelectedNode,
   type FigmaPluginContext,
   type ConnectedAgent,
+  type ActiveTarget,
 } from "@/lib/chat-dynamic-context";
 import { enforceFreeTierQuota } from "@/lib/chat-quota";
 
@@ -42,6 +43,7 @@ export async function POST(request: Request) {
   const {
     conversationId, message, model, mcpServerIds, figmaPluginClientId, images,
     selectedNode, figmaPluginContext, connectedAgents, isLocalPlugin, source, keyId,
+    activeTarget,
     designInstanceId, codeInstanceId,
   } = body as {
     conversationId: string;
@@ -56,6 +58,7 @@ export async function POST(request: Request) {
     isLocalPlugin?: boolean;
     source?: string;
     keyId?: string;
+    activeTarget?: ActiveTarget;
     /** V2: focus Design MCP instance ID (from TargetSelector) */
     designInstanceId?: string;
     /** V2: focus Code MCP instance ID (from TargetSelector) */
@@ -127,6 +130,7 @@ export async function POST(request: Request) {
       modelId: resolvedModel,
       source,
       keyLabel,
+      activeTarget,
     });
     const systemPrompt = GUARDIAN_SYSTEM_PROMPT + dynamicCtx;
 
