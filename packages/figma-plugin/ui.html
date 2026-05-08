@@ -2007,12 +2007,20 @@
         // code would leave the new code with no peer and the worker's probe would
         // time out with "No plugin connected to cloud relay".
         var _fcCloudRelayWs = null;
+        // Telemetry helper — prints ISO timestamp + ms-since-page-load to align
+        // with worker logs when diagnosing pairing failures.
+        var _fcLogStart = Date.now();
+        function _fcLog(msg) {
+            var now = new Date();
+            var rel = ((Date.now() - _fcLogStart) / 1000).toFixed(2);
+            console.log('[FC Bridge] ' + now.toISOString() + ' (+' + rel + 's) ' + msg);
+        }
         window.__connectFCCloudRelay = function(code) {
+            var prevState = _fcCloudRelayWs ? _fcCloudRelayWs.readyState : 'null';
+            _fcLog('__connectFCCloudRelay called with code=' + code + ' prevWsState=' + prevState);
             if (_fcCloudRelayWs) {
-                console.log('[FC Bridge] Closing previous cloud relay WS to bind new code ' + code);
+                _fcLog('Closing previous cloud relay WS (state=' + prevState + ') to bind new code ' + code);
                 try {
-                    // Drop our handlers so the close doesn't trigger the cleanup that
-                    // would null out _fcCloudRelayWs AFTER we open the new one below.
                     _fcCloudRelayWs.onopen = null;
                     _fcCloudRelayWs.onclose = null;
                     _fcCloudRelayWs.onerror = null;
@@ -2024,24 +2032,24 @@
                 _fcCloudRelayWs = null;
             }
             var relayUrl = 'wss://figma-console-mcp.southleft.com/ws/pair?code=' + code;
-            console.log('[FC Bridge] Cloud relay connecting with code ' + code);
+            _fcLog('Cloud relay connecting with code ' + code);
             try {
                 _fcCloudRelayWs = new WebSocket(relayUrl);
+                var thisCode = code;
                 _fcCloudRelayWs.onopen = function() {
-                    console.log('[FC Bridge] Cloud relay connected');
+                    _fcLog('Cloud relay onopen — code=' + thisCode + ' readyState=' + _fcCloudRelayWs.readyState);
                     activeConnections.push({ port: 'cloud', ws: _fcCloudRelayWs });
                     attachWsHandlers(_fcCloudRelayWs, 'cloud');
                     initializeConnection(_fcCloudRelayWs);
-                    // Override onclose to clean up cloud relay state
                     var originalOnClose = _fcCloudRelayWs.onclose;
                     _fcCloudRelayWs.onclose = function(event) {
-                        console.log('[FC Bridge] Cloud relay disconnected');
+                        _fcLog('Cloud relay onclose — code=' + thisCode + ' wasClean=' + event.wasClean + ' code=' + event.code + ' reason=' + (event.reason || '<none>'));
                         _fcCloudRelayWs = null;
                         if (originalOnClose) originalOnClose(event);
                     };
                 };
-                _fcCloudRelayWs.onerror = function() {
-                    console.log('[FC Bridge] Cloud relay connection FAILED for code ' + code);
+                _fcCloudRelayWs.onerror = function(err) {
+                    _fcLog('Cloud relay onerror — code=' + thisCode + ' (WS will close shortly)');
                     _fcCloudRelayWs = null;
                 };
             } catch(e) {

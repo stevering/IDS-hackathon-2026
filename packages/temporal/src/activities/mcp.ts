@@ -455,6 +455,7 @@ export async function pairFCCloudRelay(params: {
   }
 
   // ── Probe-first: skip pairing if the relay is already alive ────────────
+  log.info("Probe-first: checking if relay is already paired");
   try {
     const probeClient = await connectHTTP(serverDef as Extract<MCPServerDef, { transport: "http" | "sse" }>, tokens.access_token);
     const probeTools = await probeClient.tools();
@@ -462,6 +463,7 @@ export async function pairFCCloudRelay(params: {
     const probeTool = (probeTools["figma_get_status"] ?? probeTools["figma_execute"]) as any;
     if (probeTool) {
       const probeArgs = "figma_get_status" in probeTools ? {} : { code: "return { ok: true };" };
+      const probeName = "figma_get_status" in probeTools ? "figma_get_status" : "figma_execute (no-op)";
       try {
         const probe = await probeTool.execute(probeArgs, { toolCallId: `pair-probe-${Date.now()}` });
         const probeStr = JSON.stringify(probe);
@@ -470,12 +472,15 @@ export async function pairFCCloudRelay(params: {
           (probeStr.includes('"available":true') || probeStr.includes("connectedFile") || probeStr.includes('"ok":true'));
         if (alive) {
           await probeClient.close();
-          log.info("Cloud relay already paired (probe ok) — skipping figma_pair_plugin");
+          log.info(`Probe-first: relay alive (probe=${probeName}) — skipping figma_pair_plugin`);
           return { success: true };
         }
-      } catch {
-        // Probe failures fall through to full pairing.
+        log.info(`Probe-first: relay not alive (probe=${probeName}) — preview=${probeStr.slice(0, 200)}`);
+      } catch (probeErr) {
+        log.info(`Probe-first: probe threw — ${probeErr instanceof Error ? probeErr.message : String(probeErr)}`);
       }
+    } else {
+      log.warn("Probe-first: neither figma_get_status nor figma_execute available");
     }
     await probeClient.close();
   } catch (err) {
@@ -568,11 +573,19 @@ export async function pairFCCloudRelay(params: {
       const probeArgs = "figma_get_status" in statusTools ? {} : { code: "return { ok: true };" };
       const probeName = "figma_get_status" in statusTools ? "figma_get_status" : "figma_execute (no-op)";
       if (statusTool) {
+        let lastStatusPreview: string | null = null;
         for (let i = 0; i < 15; i++) {
           await sleep(1000);
           try {
             const status = await statusTool.execute(probeArgs, { toolCallId: `relay-wait-${i}` });
             const statusStr = JSON.stringify(status);
+            // Telemetry: log a preview every 3 iterations and on any change to
+            // see what /relay/status actually returns over the 15s window.
+            const preview = statusStr.slice(0, 220);
+            if (preview !== lastStatusPreview && (i % 3 === 0 || preview !== lastStatusPreview)) {
+              log.info(`Probe iter=${i + 1}/15 preview=${preview}`);
+              lastStatusPreview = preview;
+            }
             if (statusStr.includes("No plugin connected to cloud relay")) {
               continue; // not paired yet, keep polling
             }
