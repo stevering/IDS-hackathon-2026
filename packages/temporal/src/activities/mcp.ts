@@ -409,6 +409,24 @@ function extractTextFromMCPResult(result: unknown): string {
   return "";
 }
 
+/**
+ * Detect whether a Southleft probe response indicates the cloud relay is paired
+ * and the plugin is responsive. Operates on the UNESCAPED inner text (the
+ * `content[].text` of the MCP CallToolResult), not the stringified outer
+ * envelope — JSON.stringify of the outer result double-escapes inner JSON,
+ * which broke an earlier pattern that looked for `"ok":true` literally.
+ */
+function isRelayAliveResponse(innerText: string): boolean {
+  if (!innerText) return false;
+  if (/no\s+plugin\s+connected\s+to\s+cloud\s+relay/i.test(innerText)) return false;
+  return (
+    innerText.includes('"available":true') ||
+    innerText.includes("connectedFile") ||
+    innerText.includes('"ok":true') ||
+    innerText.includes('"success":true')
+  );
+}
+
 // ---------------------------------------------------------------------------
 // executeMCPTool — called for each execute_external_tool effect
 // ---------------------------------------------------------------------------
@@ -466,16 +484,13 @@ export async function pairFCCloudRelay(params: {
       const probeName = "figma_get_status" in probeTools ? "figma_get_status" : "figma_execute (no-op)";
       try {
         const probe = await probeTool.execute(probeArgs, { toolCallId: `pair-probe-${Date.now()}` });
-        const probeStr = JSON.stringify(probe);
-        const alive =
-          !probeStr.includes("No plugin connected to cloud relay") &&
-          (probeStr.includes('"available":true') || probeStr.includes("connectedFile") || probeStr.includes('"ok":true'));
-        if (alive) {
+        const inner = extractTextFromMCPResult(probe);
+        if (isRelayAliveResponse(inner)) {
           await probeClient.close();
           log.info(`Probe-first: relay alive (probe=${probeName}) — skipping figma_pair_plugin`);
           return { success: true };
         }
-        log.info(`Probe-first: relay not alive (probe=${probeName}) — preview=${probeStr.slice(0, 200)}`);
+        log.info(`Probe-first: relay not alive (probe=${probeName}) — preview=${inner.slice(0, 200)}`);
       } catch (probeErr) {
         log.info(`Probe-first: probe threw — ${probeErr instanceof Error ? probeErr.message : String(probeErr)}`);
       }
@@ -573,23 +588,24 @@ export async function pairFCCloudRelay(params: {
       const probeArgs = "figma_get_status" in statusTools ? {} : { code: "return { ok: true };" };
       const probeName = "figma_get_status" in statusTools ? "figma_get_status" : "figma_execute (no-op)";
       if (statusTool) {
-        let lastStatusPreview: string | null = null;
+        let lastInnerPreview: string | null = null;
         for (let i = 0; i < 15; i++) {
           await sleep(1000);
           try {
             const status = await statusTool.execute(probeArgs, { toolCallId: `relay-wait-${i}` });
-            const statusStr = JSON.stringify(status);
-            // Telemetry: log a preview every 3 iterations and on any change to
-            // see what /relay/status actually returns over the 15s window.
-            const preview = statusStr.slice(0, 220);
-            if (preview !== lastStatusPreview && (i % 3 === 0 || preview !== lastStatusPreview)) {
+            // Extract the inner MCP CallToolResult text content. The outer
+            // JSON.stringify of the raw result double-escapes inner JSON,
+            // so any pattern check must run on the unescaped inner text.
+            const inner = extractTextFromMCPResult(status);
+            const preview = inner.slice(0, 220);
+            if (preview !== lastInnerPreview && (i % 3 === 0 || preview !== lastInnerPreview)) {
               log.info(`Probe iter=${i + 1}/15 preview=${preview}`);
-              lastStatusPreview = preview;
+              lastInnerPreview = preview;
             }
-            if (statusStr.includes("No plugin connected to cloud relay")) {
+            if (inner.includes("No plugin connected to cloud relay")) {
               continue; // not paired yet, keep polling
             }
-            if (statusStr.includes('"available":true') || statusStr.includes("connectedFile") || statusStr.includes('"ok":true')) {
+            if (isRelayAliveResponse(inner)) {
               log.info(`Cloud relay connected after ${i + 1}s (probe: ${probeName})`);
               relayConnected = true;
               break;
