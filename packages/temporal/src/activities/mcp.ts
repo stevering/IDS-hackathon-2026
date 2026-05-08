@@ -410,6 +410,20 @@ function extractTextFromMCPResult(result: unknown): string {
 }
 
 /**
+ * Tracks the last plugin client ID that was paired with the Southleft cloud
+ * relay, per user. Used by `pairFCCloudRelay` to skip the probe-first
+ * shortcut when the caller is targeting a DIFFERENT plugin than the one
+ * currently paired — Southleft's `/relay/status` would say "alive" because
+ * the OLD plugin is still connected, but routing tool calls would hit the
+ * wrong plugin (Southleft only supports one paired plugin per OAuth token).
+ *
+ * In-memory only. Lost on worker restart, which costs an unnecessary re-pair
+ * on the first conversation after a deploy — negligible compared to the
+ * correctness it buys when the user has multiple plugins running.
+ */
+const lastPairedPluginByUser: Map<string, string> = new Map();
+
+/**
  * Detect whether a Southleft probe response indicates the cloud relay is paired
  * and the plugin is responsive. Operates on the UNESCAPED inner text (the
  * `content[].text` of the MCP CallToolResult), not the stringified outer
@@ -472,34 +486,47 @@ export async function pairFCCloudRelay(params: {
     return { success: false, error: "Southleft token has no access_token" };
   }
 
-  // ── Probe-first: skip pairing if the relay is already alive ────────────
-  log.info("Probe-first: checking if relay is already paired");
-  try {
-    const probeClient = await connectHTTP(serverDef as Extract<MCPServerDef, { transport: "http" | "sse" }>, tokens.access_token);
-    const probeTools = await probeClient.tools();
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const probeTool = (probeTools["figma_get_status"] ?? probeTools["figma_execute"]) as any;
-    if (probeTool) {
-      const probeArgs = "figma_get_status" in probeTools ? {} : { code: "return { ok: true };" };
-      const probeName = "figma_get_status" in probeTools ? "figma_get_status" : "figma_execute (no-op)";
-      try {
-        const probe = await probeTool.execute(probeArgs, { toolCallId: `pair-probe-${Date.now()}` });
-        const inner = extractTextFromMCPResult(probe);
-        if (isRelayAliveResponse(inner)) {
-          await probeClient.close();
-          log.info(`Probe-first: relay alive (probe=${probeName}) — skipping figma_pair_plugin`);
-          return { success: true };
+  // ── Probe-first: skip pairing if the relay is already paired with the
+  //    targeted plugin. Skip the shortcut entirely when the caller is
+  //    targeting a different plugin than the one we last paired — Southleft
+  //    can't tell us WHICH plugin is currently paired via /relay/status, only
+  //    that some plugin is. We track lastPairedPluginByUser to avoid the
+  //    "wrong plugin" routing trap when the user has multiple plugins running.
+  const lastPaired = params.pluginClientId ? lastPairedPluginByUser.get(params.userId) : undefined;
+  const sameTarget = !!params.pluginClientId && lastPaired === params.pluginClientId;
+  if (!sameTarget) {
+    log.info(
+      `Probe-first: skipped (target plugin ${params.pluginClientId ?? "<none>"} differs from last paired ${lastPaired ?? "<none>"}) — forcing re-pair`,
+    );
+  } else {
+    log.info("Probe-first: checking if relay is already paired");
+    try {
+      const probeClient = await connectHTTP(serverDef as Extract<MCPServerDef, { transport: "http" | "sse" }>, tokens.access_token);
+      const probeTools = await probeClient.tools();
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const probeTool = (probeTools["figma_get_status"] ?? probeTools["figma_execute"]) as any;
+      if (probeTool) {
+        const probeArgs = "figma_get_status" in probeTools ? {} : { code: "return { ok: true };" };
+        const probeName = "figma_get_status" in probeTools ? "figma_get_status" : "figma_execute (no-op)";
+        try {
+          const probe = await probeTool.execute(probeArgs, { toolCallId: `pair-probe-${Date.now()}` });
+          const inner = extractTextFromMCPResult(probe);
+          if (isRelayAliveResponse(inner)) {
+            await probeClient.close();
+            log.info(`Probe-first: relay alive (probe=${probeName}) — skipping figma_pair_plugin`);
+            return { success: true };
+          }
+          log.info(`Probe-first: relay not alive (probe=${probeName}) — preview=${inner.slice(0, 200)}`);
+        } catch (probeErr) {
+          log.info(`Probe-first: probe threw — ${probeErr instanceof Error ? probeErr.message : String(probeErr)}`);
         }
-        log.info(`Probe-first: relay not alive (probe=${probeName}) — preview=${inner.slice(0, 200)}`);
-      } catch (probeErr) {
-        log.info(`Probe-first: probe threw — ${probeErr instanceof Error ? probeErr.message : String(probeErr)}`);
+      } else {
+        log.warn("Probe-first: neither figma_get_status nor figma_execute available");
       }
-    } else {
-      log.warn("Probe-first: neither figma_get_status nor figma_execute available");
+      await probeClient.close();
+    } catch (err) {
+      log.warn(`Probe-first failed: ${err instanceof Error ? err.message : String(err)} — falling through to pair`);
     }
-    await probeClient.close();
-  } catch (err) {
-    log.warn(`Probe-first failed: ${err instanceof Error ? err.message : String(err)} — falling through to pair`);
   }
 
   try {
@@ -629,6 +656,9 @@ export async function pairFCCloudRelay(params: {
       log.warn(`Relay verification failed: ${err}`);
     }
 
+    if (relayConnected && params.pluginClientId) {
+      lastPairedPluginByUser.set(params.userId, params.pluginClientId);
+    }
     return { success: relayConnected, code, error: relayConnected ? undefined : "Cloud relay broadcast sent but pairing was not verified within 15s" };
   } catch (err) {
     log.error(`pairFCCloudRelay failed: ${err instanceof Error ? err.message : String(err)}`);
