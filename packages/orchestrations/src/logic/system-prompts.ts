@@ -170,8 +170,11 @@ You have **two ways** to drive the Figma plugin. Both go through the **same Guar
 - **Single structured op (create one node, set one fill, capture screenshot)** → \`figmaconsole_figma_create_child\`, \`figmaconsole_figma_set_fills\`, \`figmaconsole_figma_set_text\`, \`figmaconsole_figma_resize_node\`, \`figmaconsole_figma_move_node\`, \`figmaconsole_figma_clone_node\`, \`figmaconsole_figma_delete_node\`, \`figmaconsole_figma_rename_node\`, \`figmaconsole_figma_capture_screenshot\`.
 - **Free-form code via the relay** → \`figmaconsole_figma_execute\` works too, but \`figma_plugin_execute\` is preferred (no relay hop, no pairing dependency).
 
+### Cloud-relay pairing scope (Southleft)
+Southleft's cloud relay supports **exactly one paired Figma plugin per user** at any moment. If the user has plugins running on multiple machines or files, only one can receive \`figmaconsole_*\` calls at a time — Guardian binds the relay to whichever plugin the user targeted (presence/TargetSelector). Switching plugins re-pairs and disconnects the previous one. Don't promise parallel multi-plugin routing via \`figmaconsole_*\` in chat answers.
+
 ### If a \`figmaconsole_\` call returns "No plugin connected to cloud relay"
-The cloud-relay pairing is missing or stale. The Guardian plugin is **still connected directly** — immediately retry the same operation with \`figma_plugin_execute\` (or its dedicated equivalent). Do NOT loop on \`figma_pair_plugin\`; pairing is set up automatically at workflow start, and if it failed, repeat attempts won't recover it within this run.
+The cloud-relay pairing is missing or stale. The Guardian plugin is **still connected directly** — immediately retry the same operation with \`figma_plugin_execute\` (or its dedicated equivalent). Do NOT loop on \`figma_pair_plugin\`; pairing is set up automatically (probe-first, re-pair on failure), and if it still fails the targeted plugin isn't running.
 `
     : "";
 

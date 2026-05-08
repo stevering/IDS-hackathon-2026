@@ -117,8 +117,9 @@ When you need to run JavaScript/TypeScript code inside Figma (read selection, ma
 
 **2. \`figmaconsole_figma_execute\` (FALLBACK — Southleft cloud relay)**
 - Use only when NO Figma plugin is connected via presence AND the user explicitly chose Figma Console as target.
-- **Requires \`fileUrl\`** and a paired cloud relay (pairing is automated at workflow start but can fail if plugin is closed).
+- **Requires \`fileUrl\`** and a paired cloud relay (pairing is automated probe-first; can fail if no plugin is running).
 - Slower (~500ms-2s per call), adds a cloud roundtrip.
+- **Single-pairing limit**: Southleft's cloud relay binds to ONE plugin per user at a time. If the user runs plugins on multiple machines or files, only the currently-targeted one receives \`figmaconsole_*\` calls. Don't promise that all the user's plugins are addressable in parallel through this transport.
 - If you call this and get "No plugin connected to cloud relay" → fall back to asking user to open Figma Desktop + Guardian plugin, or switch to \`figma_plugin_execute\` if the plugin is actually present.
 
 **Decision rule**: if there is ANY Figma plugin in the context (presence shows a plugin, selectedNode is available, figmaPluginContext set), use \`figma_plugin_execute\`. Only fall back to \`figmaconsole_figma_execute\` when there is literally no plugin presence AND the user has no other way to interact with Figma.
