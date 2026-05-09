@@ -120,40 +120,31 @@ export function buildDynamicContext(opts: BuildDynamicContextOpts): string {
     const pd = opts.pendingDisambiguation;
     const categoryLabel = pd.category === "design" ? "DESIGN" : "CODE";
     const targetWord = pd.category === "design" ? "Figma plugin" : "code MCP";
-    const map: Record<string, string> = {};
-    for (const c of pd.candidates) {
-      const display = c.fileName ? `${c.shortId} (${c.fileName})` : c.shortId;
-      map[display] = c.targetId;
-    }
-    const choices = Object.keys(map);
-    const suggestion = pd.candidates.find((c) => c.targetId === pd.suggestionTargetId);
-    const suggestionDisplay = suggestion
-      ? (suggestion.fileName ? `${suggestion.shortId} (${suggestion.fileName})` : suggestion.shortId)
-      : choices[0];
     ctx += `## ${categoryLabel} TARGET — DISAMBIGUATION REQUIRED (READ FIRST)
-**${pd.candidates.length} ${targetWord}s are connected** and the user picked "Auto". You CANNOT call any plugin-bound tool until the user picks one. There is NO need to call \`guardian_list_instances\` — the candidates are listed below.
+**${pd.candidates.length} ${targetWord}s are connected** and the user picked "Auto". You cannot route plugin-bound tool calls until the user picks one.
 
-Candidates:`;
+Connected candidates (info only — you don't need to format anything from this list):`;
     for (const c of pd.candidates) {
-      const isSuggested = c.targetId === pd.suggestionTargetId ? " [SUGGESTED — most recent]" : "";
+      const isSuggested = c.targetId === pd.suggestionTargetId ? " [most-recently active]" : "";
       const fileBit = c.fileName ? ` — file "${c.fileName}"` : "";
       ctx += `\n- ${c.shortId}${fileBit}${isSuggested}`;
     }
     ctx += `
 
-REQUIRED ACTION (verbatim):
-Emit this QCM block as your response. Copy it EXACTLY — the QCM_META JSON drives the UI's Target selector update on click.
+REQUIRED ACTION:
+You are the intent classifier. Decide based on the user's message:
+1. **Needs plugin pairing** (write, execute code, inspect current selection without a fileUrl) → call \`request_target_disambiguation({ preamble?: "..." })\`. The worker synthesizes the QCM from the candidate list above and ends the turn. You do NOT format the QCM yourself, you do NOT need any targetId.
+2. **Read-only with explicit fileUrl** (\`figmaconsole_figma_get_*\`, \`figma_*\` with fileUrl arg) → call the tool directly, no disambiguation needed.
+3. **Conversational / no tool needed** → answer in text.
 
-<!-- QCM_START -->
-<!-- QCM_META: ${JSON.stringify({ category: pd.category, map })} -->
-${choices.map((c) => `- [CHOICE] ${c}`).join("\n")}
-<!-- QCM_END -->
+Use \`preamble\` to phrase the question contextually:
+- Generic: omit preamble (a default question is used).
+- User hinted at a target: \`preamble: "Tu confirmes qu'on cible file A ?"\` — the user just confirms with one click.
 
-You MAY add a one-line text question before the \`<!-- QCM_START -->\` line (e.g. "Quel plugin cibler ?"). Suggest "${suggestionDisplay}" — but do NOT pick silently.
-
-EXCEPTIONS — these tools work WITHOUT picking a plugin:
-- ${pd.category === "design" ? "READ-ONLY \`figmaconsole_figma_get_*\` and \`figma_*\` tools called with an explicit fileUrl in arguments — they hit the REST API, no pairing needed." : ""}
-- DO NOT call \`figmaconsole_figma_execute\`, \`figmaconsole_figma_set_*\`, \`figmaconsole_figma_create_child\`, \`figma_plugin_execute\` or any write tool until the user picks. The worker will reject these with \`AMBIGUOUS_TARGET\` and you will have wasted a turn.`;
+DO NOT:
+- Format a QCM block yourself for target disambiguation (the worker does it deterministically).
+- Call \`guardian_list_instances\` — the candidates are right above.
+- Retry plugin-bound tools after \`AMBIGUOUS_TARGET\` — call \`request_target_disambiguation\` instead.`;
   }
 
   // Selected Figma node

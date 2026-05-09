@@ -211,8 +211,24 @@ Rules:
 - Do NOT nest QCM blocks or mix them with other special blocks.
 - The user will click a button, and the selected option text will be sent back as their message.
 
-## QCM_META — Target disambiguation variant
-When the system prompt contains a \`DESIGN TARGET — DISAMBIGUATION REQUIRED\` or \`CODE TARGET — DISAMBIGUATION REQUIRED\` section (multiple plugins/instances connected and the user picked "Auto"), you MUST use the QCM_META extension so the UI can update the Target selector at click time. Place the META comment INSIDE the QCM block, before the choices:
+## Target disambiguation — call the dedicated tool, NEVER format the QCM yourself
+When a \`DESIGN TARGET — DISAMBIGUATION REQUIRED\` or \`CODE TARGET — DISAMBIGUATION REQUIRED\` section is present in the system prompt, the user has multiple plugins/instances connected and picked "Auto". You MUST NOT format a QCM block yourself for target disambiguation — instead, call the dedicated tool:
+
+\`\`\`
+request_target_disambiguation({ preamble?: "Quel plugin cibler ?" })
+\`\`\`
+
+The worker synthesizes the QCM from the connected candidates and ENDS the turn. The user picks → the next turn arrives with the target resolved, and you proceed normally. You don't need to know the QCM format, the candidate list, or any targetIds.
+
+Decision rule (you are the intent classifier):
+1. Read the user's message.
+2. Decide if the request needs a paired plugin/instance:
+   - **Plugin-bound** (write, execute code, read current selection without an explicit fileUrl) → call \`request_target_disambiguation\` with an optional contextual \`preamble\`.
+   - **Read-only with explicit fileUrl** (\`figmaconsole_figma_get_*\`, \`figma_*\` with a fileUrl arg) → call the tool directly, no disambiguation needed.
+   - **Conversational / no tool needed** → answer in text directly.
+3. If the user message gives a clear hint about which target ("dans file A", "le plugin de #pelere"), reflect it in the \`preamble\` (e.g. "Tu confirmes qu'on cible file A ?") so the user just confirms with one click.
+
+LEGACY format (kept for non-target QCMs only — project pickers, etc.):
 
 <!-- QCM_START -->
 <!-- QCM_META: {"category":"design","map":{"Mereku (File A)":"plugin:abc-123","Other (File B)":"plugin:def-456"}} -->
@@ -226,11 +242,8 @@ Rules:
 - The \`map\` values MUST be the \`targetId\` strings from the disambiguation block (\`plugin:<clientId>\` or \`instance:<uuid>\`).
 - Suggest the most-recent / SUGGESTED candidate first, but never decide silently — the user has the final word.
 
-## AMBIGUOUS_TARGET — recovery rule
-If a tool call returns an error starting with \`AMBIGUOUS_TARGET:\`, it means you tried a plugin-bound tool while no plugin is paired (Auto + 0 or 2+ plugins). DO NOT retry without pairing — the call will fail again. Instead:
-1. Stop the tool loop for this turn.
-2. Emit a QCM_FORMAT block (with QCM_META) listing the connected plugins from the \`DESIGN TARGET — DISAMBIGUATION REQUIRED\` section of the system prompt.
-3. Wait for the user's pick. The next turn's system prompt will resolve the target and the tool call will work.
+## AMBIGUOUS_TARGET — defense-in-depth recovery
+If you accidentally call a plugin-bound tool while disambiguation is still pending, the worker rejects it with \`AMBIGUOUS_TARGET:\`. Recover by calling \`request_target_disambiguation\` (NOT by formatting a QCM yourself, NOT by calling \`guardian_list_instances\`). Do NOT retry the original tool until the user picks.
 
 For READ-ONLY tools (\`figma_get_*\` family) used with an explicit \`fileUrl\`, NO disambiguation is needed — those don't require a paired plugin and you can call them directly even when the resolver reports "ambiguous" or "no-plugin".
 `

@@ -103,6 +103,23 @@ const { executeGuardianMetaTool } = proxyActivities<GuardianMetaActivities>({
 // Workflow params
 // ---------------------------------------------------------------------------
 
+/** One disambiguation candidate (plugin or MCP instance). Mirror of the
+ *  frontend's `DisambiguationCandidate` type. Used by the worker to
+ *  build the QCM block when the LLM calls `request_target_disambiguation`. */
+export type DisambigCandidateParam = {
+  targetId: string;
+  shortId: string;
+  label: string;
+  fileName?: string;
+  fileKey?: string;
+};
+
+export type PendingDisambiguationParam = {
+  category: "design" | "code";
+  candidates: DisambigCandidateParam[];
+  suggestionTargetId: string;
+};
+
 export type ChatWorkflowParams = {
   conversationId: string;
   userId: string;
@@ -122,6 +139,10 @@ export type ChatWorkflowParams = {
   focusDesignInstanceId?: string;
   /** V2: focus Code MCP instance ID (from TargetSelector) */
   focusCodeInstanceId?: string;
+  /** Frontend resolver's "ambiguous" output, when present. Lets the LLM
+   *  signal disambig via `request_target_disambiguation` and lets the
+   *  worker synthesize the QCM block deterministically. */
+  pendingDisambiguation?: PendingDisambiguationParam;
 };
 
 // ---------------------------------------------------------------------------
@@ -157,6 +178,13 @@ export async function chatWorkflow(params: ChatWorkflowParams): Promise<void> {
   // tools mid-conversation), but tool execution uses `currentPluginClientId`.
   let currentPluginClientId: string | undefined = params.figmaPluginClientId;
 
+  // Mutable disambiguation state — updated from chatNewMessage signal so the
+  // resolver's per-message ambig recompute (e.g. user opens/closes a plugin
+  // mid-conv) reaches the worker without spinning a new workflow. The
+  // `request_target_disambiguation` tool reads this to build the QCM block.
+  let currentPendingDisambiguation: PendingDisambiguationParam | undefined =
+    params.pendingDisambiguation;
+
   // Pending messages from signals
   const pendingMessages: ChatNewMessagePayload[] = [];
 
@@ -185,6 +213,11 @@ export async function chatWorkflow(params: ChatWorkflowParams): Promise<void> {
     if (msg.pluginClientIdOverride !== undefined) {
       // null → unpair (REST-only mode), string → pair to that plugin.
       currentPluginClientId = msg.pluginClientIdOverride ?? undefined;
+    }
+    if (msg.pendingDisambiguationOverride !== undefined) {
+      // null → no longer ambiguous (user picked or one plugin closed);
+      // object → new candidate set (e.g. a plugin opened/closed mid-conv).
+      currentPendingDisambiguation = msg.pendingDisambiguationOverride ?? undefined;
     }
     pendingMessages.push(msg);
   });
@@ -324,6 +357,33 @@ export async function chatWorkflow(params: ChatWorkflowParams): Promise<void> {
       // User will see "No plugin connected to cloud relay" error on first write.
     }
   }
+
+  // ── Disambiguation signaling tool (always exposed) ──────────────────────
+  // The LLM calls this when it judges the user's request needs a paired
+  // Figma plugin (or code MCP) AND the resolver is ambiguous. The worker
+  // synthesizes the QCM block from `currentPendingDisambiguation` and
+  // returns it as the assistant message — terminating this turn so the
+  // user can pick. The LLM never has to format the QCM itself.
+  //
+  // Exposed unconditionally because the catalog is computed once at
+  // workflow start, but disambig state can change mid-conv via the
+  // chatNewMessage signal. The system prompt gates when to call it.
+  mcpTools.push({
+    name: "request_target_disambiguation",
+    description:
+      "Call this tool when (a) a `*_TARGET — DISAMBIGUATION REQUIRED` section is present in the system prompt or signaled by an `AMBIGUOUS_TARGET` tool error, AND (b) you judge that the user's request needs a paired plugin/instance to fulfill (i.e. you cannot answer via read-only REST tools with an explicit fileUrl). Calling this tool emits a multiple-choice question to the user with the connected candidates and ENDS your turn. Do NOT call when the request can be answered without pairing (e.g. user gave a fileUrl, or the question is conversational).",
+    parameters: {
+      type: "object",
+      properties: {
+        preamble: {
+          type: "string",
+          description:
+            "Optional one-line text shown above the choices, e.g. \"Quel plugin cibler ?\" or \"Tu veux que j'agisse sur file A ou file B ?\". If omitted, a generic prompt is used.",
+        },
+      },
+      required: [],
+    },
+  });
 
   // ── V2: inject Guardian meta-tools + instance system prompt ──────────────
   // allFocusTools stores the unfiltered tool set for progressive disclosure
@@ -529,6 +589,89 @@ export async function chatWorkflow(params: ChatWorkflowParams): Promise<void> {
         content: llmResult.content || "",
         toolCalls: llmResult.toolCalls,
       });
+
+      // ── Deterministic disambiguation short-circuit ─────────────────────
+      // If the LLM signaled "I need the user to pick a target" by calling
+      // `request_target_disambiguation`, we DON'T execute any tools and we
+      // DON'T re-invoke the LLM this turn. We just synthesize the QCM block
+      // from the current candidate list and emit it as the assistant
+      // response. The frontend's QCMBlock click handler will fire next turn
+      // with the resolved targetId, and the LLM resumes normally.
+      //
+      // This makes the QCM emission 100% deterministic — no model
+      // instruction-following required for the QCM format.
+      const disambigTc = llmResult.toolCalls.find((t) => t.name === "request_target_disambiguation");
+      if (disambigTc) {
+        const pd = currentPendingDisambiguation;
+        if (!pd || pd.candidates.length === 0) {
+          // The LLM called the tool but no disambig is pending. Either the
+          // user already picked between LLM dispatch and now, or the LLM
+          // hallucinated. Tell it to retry without the tool.
+          const errMsg = JSON.stringify({
+            content: [{ type: "text", text: "request_target_disambiguation called but no disambiguation is currently pending. Proceed without it — call read-only tools or answer in text." }],
+            isError: true,
+          });
+          messages.push({ role: "tool", content: errMsg, toolCallId: disambigTc.id });
+          // Also persist for F5 recovery
+          await persistChatMessage({
+            conversationId: params.conversationId,
+            role: "assistant",
+            content: `Tool: ${disambigTc.name}`,
+            userId: params.userId,
+            parts: [{ type: "dynamic-tool", toolName: disambigTc.name, toolCallId: disambigTc.id, input: disambigTc.arguments, state: "error", output: { content: [{ type: "text", text: errMsg }], isError: true } }],
+          });
+          status = "streaming";
+          continue; // re-loop to LLM with the error tool result
+        }
+
+        const preambleArg = (disambigTc.arguments?.preamble as string | undefined)?.trim();
+        const qcmContent = buildDisambiguationQCM(pd, preambleArg);
+
+        // Persist as a fresh assistant message (independent from the tool-call
+        // bubble — the tool bubble itself is hidden from the user).
+        await persistChatMessage({
+          conversationId: params.conversationId,
+          role: "assistant",
+          content: qcmContent,
+          userId: params.userId,
+          metadata: { synthetic: "disambiguation", finishReason: "stop" },
+        });
+
+        // Broadcast text_complete so the frontend renders the QCM and stops
+        // the streaming spinner. `hasToolCalls: false` tells the client this
+        // IS the final message for the turn.
+        try {
+          await broadcastChatEvent({
+            conversationId: params.conversationId,
+            event: "text_complete",
+            payload: { content: qcmContent, hasToolCalls: false, finishReason: "stop" },
+          });
+        } catch {
+          // Non-fatal — the persisted message will appear on next reload
+        }
+
+        // Acknowledge the tool call to the LLM history (no-op semantics —
+        // we never re-enter the LLM this turn) and persist for F5 recovery.
+        messages.push({
+          role: "tool",
+          content: JSON.stringify({ content: [{ type: "text", text: "Disambiguation QCM emitted to user. Wait for the user's pick before continuing." }], isError: false }),
+          toolCallId: disambigTc.id,
+        });
+        await persistChatMessage({
+          conversationId: params.conversationId,
+          role: "assistant",
+          content: `Tool: ${disambigTc.name}`,
+          userId: params.userId,
+          parts: [{ type: "dynamic-tool", toolName: disambigTc.name, toolCallId: disambigTc.id, input: disambigTc.arguments, state: "output-available", output: { content: [{ type: "text", text: "QCM emitted" }], isError: false } }],
+        });
+
+        // Push the synthesized assistant turn into the in-memory history so
+        // the next LLM call (after user picks) sees the conversation flow.
+        messages.push({ role: "assistant", content: qcmContent });
+
+        status = "idle";
+        return;
+      }
 
       for (const tc of llmResult.toolCalls) {
         let toolResult: string;
@@ -790,6 +933,40 @@ const TOOL_PREFIX_MAP: Array<[string, string]> = [
  * Pure function — deterministic string manipulation only, safe to call from
  * a Temporal workflow.
  */
+/**
+ * Build the QCM block emitted as the assistant response when the LLM calls
+ * `request_target_disambiguation`. Mirrors the format the frontend's
+ * `parseStructuredContent` understands (QCM_START + QCM_META + CHOICE lines).
+ *
+ * The QCM_META JSON drives the TargetSelector update at click time — see
+ * `QCMBlock.onTargetChoice` in the webapp.
+ *
+ * Pure function — safe to call from a workflow.
+ */
+function buildDisambiguationQCM(
+  pd: PendingDisambiguationParam,
+  preamble?: string,
+): string {
+  const map: Record<string, string> = {};
+  for (const c of pd.candidates) {
+    const display = c.fileName ? `${c.shortId} (${c.fileName})` : c.shortId;
+    map[display] = c.targetId;
+  }
+  const choices = Object.keys(map);
+  const defaultPreamble = pd.category === "design"
+    ? "Plusieurs plugins Figma sont connectés — lequel veux-tu cibler ?"
+    : "Plusieurs MCPs code sont connectés — lequel veux-tu utiliser ?";
+  const head = preamble && preamble.length > 0 ? preamble : defaultPreamble;
+  return [
+    head,
+    "",
+    "<!-- QCM_START -->",
+    `<!-- QCM_META: ${JSON.stringify({ category: pd.category, map })} -->`,
+    ...choices.map((c) => `- [CHOICE] ${c}`),
+    "<!-- QCM_END -->",
+  ].join("\n");
+}
+
 function formatToolError(
   toolName: string,
   rawError: string | undefined,

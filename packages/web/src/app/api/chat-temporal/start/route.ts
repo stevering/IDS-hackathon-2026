@@ -207,6 +207,22 @@ export async function POST(request: Request) {
         figmaPluginClientId,
         focusDesignInstanceId: resolvedDesignInstanceId,
         focusCodeInstanceId: resolvedCodeInstanceId,
+        // Forward the resolver's "ambiguous" output so the worker's
+        // `request_target_disambiguation` tool can synthesize an up-to-date
+        // QCM block when the LLM signals it needs the user to pick.
+        pendingDisambiguation: pendingDisambiguation
+          ? {
+              category: pendingDisambiguation.category,
+              candidates: pendingDisambiguation.candidates.map((c) => ({
+                targetId: c.targetId,
+                shortId: c.shortId,
+                label: c.label,
+                fileName: c.fileName,
+                fileKey: c.fileKey,
+              })),
+              suggestionTargetId: pendingDisambiguation.suggestionTargetId,
+            }
+          : undefined,
       }],
     });
 

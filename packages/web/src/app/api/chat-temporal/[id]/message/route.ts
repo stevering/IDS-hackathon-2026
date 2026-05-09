@@ -185,6 +185,23 @@ export async function POST(
           // resolver returns `ambiguous` or `no-plugin`, so we map that
           // explicitly to null to clear the worker's currentPluginClientId.
           pluginClientIdOverride: figmaPluginClientId ?? null,
+          // null = "no longer ambiguous" (user picked or one plugin closed);
+          // object = "new candidates" (a plugin opened/closed mid-conv).
+          // The worker's `request_target_disambiguation` tool reads this to
+          // build the QCM block at call time.
+          pendingDisambiguationOverride: pendingDisambiguation
+            ? {
+                category: pendingDisambiguation.category,
+                candidates: pendingDisambiguation.candidates.map((c) => ({
+                  targetId: c.targetId,
+                  shortId: c.shortId,
+                  label: c.label,
+                  fileName: c.fileName,
+                  fileKey: c.fileKey,
+                })),
+                suggestionTargetId: pendingDisambiguation.suggestionTargetId,
+              }
+            : null,
         });
         log.info("signalled existing workflow", { conv: conversationId, model: resolvedModel });
         return NextResponse.json({ workflowId, conversationId, action: "signalled" });
@@ -270,6 +287,19 @@ export async function POST(
         figmaPluginClientId,
         focusDesignInstanceId: designInstanceId,
         focusCodeInstanceId: codeInstanceId,
+        pendingDisambiguation: pendingDisambiguation
+          ? {
+              category: pendingDisambiguation.category,
+              candidates: pendingDisambiguation.candidates.map((c) => ({
+                targetId: c.targetId,
+                shortId: c.shortId,
+                label: c.label,
+                fileName: c.fileName,
+                fileKey: c.fileKey,
+              })),
+              suggestionTargetId: pendingDisambiguation.suggestionTargetId,
+            }
+          : undefined,
       }],
     });
 

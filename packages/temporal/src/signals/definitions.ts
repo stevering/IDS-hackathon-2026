@@ -125,6 +125,20 @@ export type ChatNewMessagePayload = {
    *   - `undefined`  → keep the previous turn's value (no change)
    */
   pluginClientIdOverride?: string | null;
+  /**
+   * Optional per-turn disambiguation context. The frontend recomputes the
+   * resolver on every send — when it returns "ambiguous" it forwards the
+   * candidate list here so the worker's `request_target_disambiguation`
+   * tool can synthesize an up-to-date QCM block. Semantics:
+   *   - object     → set/replace currentPendingDisambiguation
+   *   - null       → clear (resolver no longer ambiguous)
+   *   - undefined  → keep the previous turn's value
+   */
+  pendingDisambiguationOverride?: {
+    category: "design" | "code";
+    candidates: { targetId: string; shortId: string; label: string; fileName?: string; fileKey?: string }[];
+    suggestionTargetId: string;
+  } | null;
 };
 
 /** Chat workflow status returned by chatStatusQuery */
