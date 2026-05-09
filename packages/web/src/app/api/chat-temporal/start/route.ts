@@ -159,26 +159,42 @@ export async function POST(request: Request) {
 
     // Resolve instance IDs server-side if frontend didn't provide them.
     // This handles: race conditions (hook not loaded yet), plugin-selected design target, etc.
+    //
+    // ⚠️ IMPORTANT: skip the fallback when the resolver explicitly says
+    // "ambiguous" for that category. The frontend has 2+ candidates and
+    // wants the user to pick — auto-falling-back to first-enabled here
+    // would silently expose tools from the wrong instance and the LLM
+    // would never reach the disambig flow. Leaving the focus undefined
+    // forces V2 discovery to either expose nothing or all-via-meta-tools,
+    // and the LLM has to call request_target_disambiguation to proceed.
     let resolvedDesignInstanceId = designInstanceId;
     let resolvedCodeInstanceId = codeInstanceId;
-    if (!resolvedDesignInstanceId || !resolvedCodeInstanceId) {
+    const allowDesignFallback = designPairingKind !== "ambiguous";
+    const allowCodeFallback = codePairingKind !== "ambiguous";
+    if (
+      (allowDesignFallback && !resolvedDesignInstanceId) ||
+      (allowCodeFallback && !resolvedCodeInstanceId)
+    ) {
       try {
         const { data: defaults } = await supabase
           .from("user_category_defaults")
           .select("category, instance_id")
           .eq("user_id", userId);
         for (const d of defaults ?? []) {
-          if (!resolvedDesignInstanceId && d.category === "design" && d.instance_id) {
+          if (allowDesignFallback && !resolvedDesignInstanceId && d.category === "design" && d.instance_id) {
             resolvedDesignInstanceId = d.instance_id as string;
           }
-          if (!resolvedCodeInstanceId && d.category === "code" && d.instance_id) {
+          if (allowCodeFallback && !resolvedCodeInstanceId && d.category === "code" && d.instance_id) {
             resolvedCodeInstanceId = d.instance_id as string;
           }
         }
       } catch { /* non-fatal — V1 fallback will handle it */ }
 
       // Last resort: pick the first enabled instance per category
-      if (!resolvedDesignInstanceId || !resolvedCodeInstanceId) {
+      if (
+        (allowDesignFallback && !resolvedDesignInstanceId) ||
+        (allowCodeFallback && !resolvedCodeInstanceId)
+      ) {
         try {
           const { data: instances } = await supabase
             .from("user_mcp_instances")
@@ -186,10 +202,10 @@ export async function POST(request: Request) {
             .eq("enabled", true)
             .order("created_at", { ascending: true });
           for (const inst of instances ?? []) {
-            if (!resolvedDesignInstanceId && inst.category === "design") {
+            if (allowDesignFallback && !resolvedDesignInstanceId && inst.category === "design") {
               resolvedDesignInstanceId = inst.id as string;
             }
-            if (!resolvedCodeInstanceId && inst.category === "code") {
+            if (allowCodeFallback && !resolvedCodeInstanceId && inst.category === "code") {
               resolvedCodeInstanceId = inst.id as string;
             }
           }
@@ -228,6 +244,8 @@ export async function POST(request: Request) {
               suggestionTargetId: pendingDisambiguation.suggestionTargetId,
             }
           : undefined,
+        designPairingKind,
+        codePairingKind,
       }],
     });
 

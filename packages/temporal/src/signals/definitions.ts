@@ -139,6 +139,11 @@ export type ChatNewMessagePayload = {
     candidates: { targetId: string; shortId: string; label: string; fileName?: string; fileKey?: string }[];
     suggestionTargetId: string;
   } | null;
+  /** Per-turn override for the resolver kinds. Worker uses these for the
+   *  code-bound enforcement (mirror of design plugin-bound). `null` means
+   *  unset / not applicable; `undefined` means "no change from previous". */
+  designPairingKindOverride?: "explicit" | "auto-resolved" | "ambiguous" | "no-plugin" | null;
+  codePairingKindOverride?: "explicit" | "auto-resolved" | "ambiguous" | "none" | null;
 };
 
 /** Chat workflow status returned by chatStatusQuery */

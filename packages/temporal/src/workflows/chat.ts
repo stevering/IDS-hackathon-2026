@@ -143,6 +143,12 @@ export type ChatWorkflowParams = {
    *  signal disambig via `request_target_disambiguation` and lets the
    *  worker synthesize the QCM block deterministically. */
   pendingDisambiguation?: PendingDisambiguationParam;
+  /** Frontend resolver kinds, forwarded so the worker can refuse code-bound
+   *  tool calls when code is ambiguous (symmetric to the design plugin-bound
+   *  guard). Without these, the LLM could pick a code tool by prefix and
+   *  silently route to the wrong instance.  */
+  designPairingKind?: "explicit" | "auto-resolved" | "ambiguous" | "no-plugin";
+  codePairingKind?: "explicit" | "auto-resolved" | "ambiguous" | "none";
 };
 
 // ---------------------------------------------------------------------------
@@ -185,6 +191,12 @@ export async function chatWorkflow(params: ChatWorkflowParams): Promise<void> {
   let currentPendingDisambiguation: PendingDisambiguationParam | undefined =
     params.pendingDisambiguation;
 
+  // Mutable resolver kinds — symmetric to the disambig state. Used by the
+  // dispatch loop to refuse code-bound tool calls when code is ambig
+  // (mirror of the figma_console plugin-bound guard).
+  let currentCodePairingKind: ChatWorkflowParams["codePairingKind"] = params.codePairingKind;
+  let currentDesignPairingKind: ChatWorkflowParams["designPairingKind"] = params.designPairingKind;
+
   // Pending messages from signals
   const pendingMessages: ChatNewMessagePayload[] = [];
 
@@ -218,6 +230,12 @@ export async function chatWorkflow(params: ChatWorkflowParams): Promise<void> {
       // null → no longer ambiguous (user picked or one plugin closed);
       // object → new candidate set (e.g. a plugin opened/closed mid-conv).
       currentPendingDisambiguation = msg.pendingDisambiguationOverride ?? undefined;
+    }
+    if (msg.designPairingKindOverride !== undefined) {
+      currentDesignPairingKind = msg.designPairingKindOverride ?? undefined;
+    }
+    if (msg.codePairingKindOverride !== undefined) {
+      currentCodePairingKind = msg.codePairingKindOverride ?? undefined;
     }
     pendingMessages.push(msg);
   });
@@ -800,21 +818,38 @@ export async function chatWorkflow(params: ChatWorkflowParams): Promise<void> {
             const resolved = resolveV2Tool(tc.name, instanceManifest);
             if (resolved) {
               const manifestEntry = instanceManifest.find((e) => e.instanceId === resolved.instanceId);
-              const result = await executeMCPToolV2({
-                userId: params.userId,
-                instanceId: resolved.instanceId,
-                toolName: resolved.rawName,
-                arguments: tc.arguments,
-                pluginClientId: currentPluginClientId,
-                hasPendingDisambig: !!currentPendingDisambiguation,
-              });
-              toolResult = result.success
-                ? JSON.stringify(result.result ?? { success: true })
-                : formatToolError(tc.name, result.error, {
-                    source: manifestEntry?.displayName ?? manifestEntry?.presetType ?? "MCP instance",
-                    label: manifestEntry?.label,
-                  });
-              isError = !result.success;
+
+              // ── Code-bound enforcement ───────────────────────────────────
+              // Symmetric to the figma_console plugin-bound guard. When the
+              // resolver returned "ambiguous" for code, we MUST refuse
+              // code-bound tool calls so the LLM is forced to call
+              // request_target_disambiguation. Without this, even with
+              // niveau-1 fallback disabled, a stale tool catalog (followup
+              // signal on an existing workflow) could expose code tools
+              // and the LLM would silently pick the wrong instance.
+              if (manifestEntry?.category === "code" && currentCodePairingKind === "ambiguous") {
+                const text = currentPendingDisambiguation?.category === "code"
+                  ? `AMBIGUOUS_TARGET: tool '${tc.name}' is code-bound and multiple Code MCP instances are connected (user picked "Auto"). Call \`request_target_disambiguation({ preamble?: "..." })\` to delegate the choice to the user — the worker emits a deterministic QCM. Do NOT format a QCM yourself, do NOT retry this tool until the user picks.`
+                  : `AMBIGUOUS_TARGET: tool '${tc.name}' is code-bound and multiple Code MCP instances are connected. The current pending disambiguation is for Design first — wait for the user to pick a Design target, then a Code disambiguation will follow on the next turn. Do NOT call \`request_target_disambiguation\` for code right now (Design has priority). Either answer in text or wait.`;
+                toolResult = JSON.stringify({ content: [{ type: "text", text }], isError: true });
+                isError = true;
+              } else {
+                const result = await executeMCPToolV2({
+                  userId: params.userId,
+                  instanceId: resolved.instanceId,
+                  toolName: resolved.rawName,
+                  arguments: tc.arguments,
+                  pluginClientId: currentPluginClientId,
+                  hasPendingDisambig: !!currentPendingDisambiguation,
+                });
+                toolResult = result.success
+                  ? JSON.stringify(result.result ?? { success: true })
+                  : formatToolError(tc.name, result.error, {
+                      source: manifestEntry?.displayName ?? manifestEntry?.presetType ?? "MCP instance",
+                      label: manifestEntry?.label,
+                    });
+                isError = !result.success;
+              }
             } else {
               // Fallback: try V1 resolution (e.g., guardian_ prefix tools)
               const resolvedV1 = resolveServerForTool(tc.name);

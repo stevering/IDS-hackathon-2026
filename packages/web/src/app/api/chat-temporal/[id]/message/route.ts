@@ -206,6 +206,8 @@ export async function POST(
                 suggestionTargetId: pendingDisambiguation.suggestionTargetId,
               }
             : null,
+          designPairingKindOverride: designPairingKind ?? null,
+          codePairingKindOverride: codePairingKind ?? null,
         });
         log.info("signalled existing workflow", { conv: conversationId, model: resolvedModel });
         return NextResponse.json({ workflowId, conversationId, action: "signalled" });
@@ -306,6 +308,8 @@ export async function POST(
               suggestionTargetId: pendingDisambiguation.suggestionTargetId,
             }
           : undefined,
+        designPairingKind,
+        codePairingKind,
       }],
     });
 
