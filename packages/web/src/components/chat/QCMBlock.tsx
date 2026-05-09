@@ -1,12 +1,29 @@
 "use client";
 
-export function QCMBlock({ choices, onSelect, disabled }: { choices: string[]; onSelect: (choice: string) => void; disabled: boolean }) {
+import type { QCMMeta } from "@/lib/content-parsing";
+
+type Props = {
+  choices: string[];
+  onSelect: (choice: string) => void;
+  disabled: boolean;
+  meta?: QCMMeta;
+  onTargetChoice?: (category: "design" | "code", targetId: string) => void;
+};
+
+export function QCMBlock({ choices, onSelect, disabled, meta, onTargetChoice }: Props) {
   return (
     <div className="my-3 flex flex-wrap gap-2">
       {choices.map((choice, i) => (
         <button
           key={i}
-          onClick={() => !disabled && onSelect(choice)}
+          onClick={() => {
+            if (disabled) return;
+            if (meta && onTargetChoice) {
+              const targetId = meta.map[choice];
+              if (targetId) onTargetChoice(meta.category, targetId);
+            }
+            onSelect(choice);
+          }}
           disabled={disabled}
           className={`px-4 py-2 rounded-lg text-sm font-medium border transition-colors ${
             disabled

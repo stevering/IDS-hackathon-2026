@@ -57,6 +57,39 @@ export type ActiveTarget = {
   fileUrl?: string;
 };
 
+/**
+ * Emitted when the user picked "Auto" but the resolver finds multiple
+ * candidates (e.g. 2+ Figma plugins running). The LLM must ask the user to
+ * disambiguate via QCM_FORMAT before invoking any plugin-bound tool. The
+ * worker also enforces this at the activity level (AMBIGUOUS_TARGET error).
+ */
+export type DisambiguationCandidate = {
+  /** TargetSelector id, e.g. "plugin:abc123" or "instance:uuid". */
+  targetId: string;
+  shortId: string;
+  label: string;
+  fileName?: string;
+  fileKey?: string;
+};
+
+export type PendingDisambiguation = {
+  category: "design" | "code";
+  candidates: DisambiguationCandidate[];
+  /** TargetSelector id of the most-recent / suggested candidate. */
+  suggestionTargetId: string;
+};
+
+/**
+ * Read-only REST endpoints (e.g. figma_console figma_get_*, figma_mcp tools)
+ * that work via fileUrl without a paired plugin. Listed in the system prompt
+ * so the LLM knows it can serve read-only requests even when no plugin is
+ * paired (or while disambiguation is pending).
+ */
+export type RestEndpointInfo = {
+  presetType: string;
+  label: string;
+};
+
 export type BuildDynamicContextOpts = {
   selectedNode?: SelectedNode;
   figmaPluginContext?: FigmaPluginContext;
@@ -66,6 +99,8 @@ export type BuildDynamicContextOpts = {
   source?: string;
   keyLabel?: string;
   activeTarget?: ActiveTarget;
+  pendingDisambiguation?: PendingDisambiguation;
+  restEndpoints?: RestEndpointInfo[];
 };
 
 // ---------------------------------------------------------------------------
@@ -129,6 +164,64 @@ RULES:
 - All \`figmaconsole_*\` and \`figma_plugin_execute\` tool calls in this conversation are routed to **this** plugin instance. Other plugins listed under "Connected Agents" below are visible but NOT reachable through these tools — Southleft's cloud relay binds to one plugin per user at a time.
 - When the user references "the current file", "this Figma", "my plugin", or similar without naming a specific agent, they mean this target.
 - If the user asks to switch to a different plugin/file, instruct them to change the selection in the Target selector — Guardian will re-pair automatically. Do NOT attempt to drive other plugins from \`figmaconsole_*\` calls.`;
+  }
+
+  // Disambiguation required — user picked "Auto" and the resolver found
+  // multiple candidates. The LLM must ask the user via QCM_FORMAT before
+  // any plugin-bound tool call. The QCM_META block lets the UI map the
+  // chosen label back to the targetId so the TargetSelector updates on click.
+  if (opts.pendingDisambiguation) {
+    const pd = opts.pendingDisambiguation;
+    const categoryLabel = pd.category === "design" ? "DESIGN" : "CODE";
+    const targetWord = pd.category === "design" ? "Figma plugin" : "code MCP";
+    const map: Record<string, string> = {};
+    for (const c of pd.candidates) {
+      const display = c.fileName ? `${c.shortId} (${c.fileName})` : c.shortId;
+      map[display] = c.targetId;
+    }
+    const choices = Object.keys(map);
+    const suggestion = pd.candidates.find((c) => c.targetId === pd.suggestionTargetId);
+    const suggestionDisplay = suggestion
+      ? (suggestion.fileName ? `${suggestion.shortId} (${suggestion.fileName})` : suggestion.shortId)
+      : choices[0];
+    ctx += `\n\n## ${categoryLabel} TARGET — DISAMBIGUATION REQUIRED
+The user selected "Auto" and ${pd.candidates.length} ${targetWord}s are connected. Guardian cannot route plugin-bound tool calls without knowing which one to target.
+
+Candidates:`;
+    for (const c of pd.candidates) {
+      const isSuggested = c.targetId === pd.suggestionTargetId ? " [SUGGESTED — most recent]" : "";
+      const fileBit = c.fileName ? ` — file "${c.fileName}"` : "";
+      ctx += `\n- ${c.shortId}${fileBit}${isSuggested}`;
+    }
+    ctx += `
+
+RULES:
+- ${pd.category === "design" ? "For PLUGIN-BOUND tools (\`figmaconsole_figma_execute\`, \`figmaconsole_figma_create_child\`, \`figmaconsole_figma_set_*\`, \`figma_plugin_execute\`), you MUST first ask the user which ${targetWord} to target." : `For CODE tool calls (any tool routing through a code MCP), you MUST first ask the user which ${targetWord} to use.`}
+- ${pd.category === "design" ? "For READ-ONLY tools (\`figmaconsole_figma_get_*\`, \`figma_*\`) used with an explicit fileUrl, NO disambiguation is needed — those work without a paired plugin." : ""}
+- Use this exact QCM format. The \`QCM_META\` block carries the targetId mapping so the UI can update the Target selector at click time:
+
+<!-- QCM_START -->
+<!-- QCM_META: ${JSON.stringify({ category: pd.category, map })} -->
+${choices.map((c) => `- [CHOICE] ${c}`).join("\n")}
+<!-- QCM_END -->
+
+- Suggest "${suggestionDisplay}" since it was most recently active, but ALWAYS defer to the user. Do NOT pick silently.
+- If you nonetheless attempt a plugin-bound tool call without a confirmed target, the worker will reject with \`AMBIGUOUS_TARGET\` — recover by emitting the QCM above and retrying after the user picks.`;
+  }
+
+  // REST endpoints (always available, take fileUrl). Listed even when
+  // ACTIVE FIGMA TARGET is resolved — useful when the user asks about a
+  // DIFFERENT file than the one in the current plugin (e.g. "show me
+  // file https://www.figma.com/design/XYZ"). These tools don't need a
+  // paired plugin, just the fileUrl in args.
+  if (opts.restEndpoints && opts.restEndpoints.length > 0) {
+    ctx += `\n\n## READ-ONLY REST ENDPOINTS (work without a paired plugin)`;
+    for (const r of opts.restEndpoints) {
+      ctx += `\n- **${r.label}** (${r.presetType}) — use \`${r.presetType === "figma_console" ? "figmaconsole_figma_get_*" : "figma_*"}\` tools with an explicit fileUrl in arguments.`;
+    }
+    ctx += `\n\nRULES:
+- These endpoints DO NOT require a paired plugin. They work for ANY Figma file the user has read access to, given a fileUrl.
+- Use them when the user references a file by URL, when no plugin is paired, or when the disambiguation is pending and the action is read-only.`;
   }
 
   // Connected agents

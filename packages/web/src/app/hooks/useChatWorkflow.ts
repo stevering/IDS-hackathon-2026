@@ -14,6 +14,7 @@
 
 import { useState, useRef, useCallback, useEffect } from "react";
 import { createClient } from "@/lib/supabase/client";
+import type { PendingDisambiguation, RestEndpointInfo } from "@/lib/chat-dynamic-context";
 
 // ---------------------------------------------------------------------------
 // Types (compatible with AI SDK UIMessage shape)
@@ -134,6 +135,21 @@ type UseChatWorkflowParams = {
   // V2: focus instance IDs from TargetSelector
   designInstanceId?: string;
   codeInstanceId?: string;
+  /**
+   * When the design or code resolver returns `kind: "ambiguous"`, the
+   * frontend forwards this to the worker so the system prompt can request
+   * a QCM disambiguation from the LLM. `figmaPluginClientId` will be
+   * undefined in this case (intentional — plugin-bound tools must wait
+   * for the user's pick).
+   */
+  pendingDisambiguation?: PendingDisambiguation;
+  /**
+   * Read-only design REST endpoints (figma_console / figma_mcp) that work
+   * with an explicit fileUrl regardless of plugin pairing. Listed in the
+   * system prompt so the LLM knows it can serve read queries even when
+   * no plugin is paired.
+   */
+  restEndpoints?: RestEndpointInfo[];
 };
 
 // ---------------------------------------------------------------------------
@@ -155,6 +171,8 @@ export function useChatWorkflow({
   activeTarget,
   designInstanceId,
   codeInstanceId,
+  pendingDisambiguation,
+  restEndpoints,
 }: UseChatWorkflowParams): UseChatWorkflowReturn {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [status, setStatus] = useState<ChatWorkflowStatus>("idle");
@@ -226,6 +244,10 @@ export function useChatWorkflow({
   keyIdRef.current = keyId;
   const activeTargetRef = useRef(activeTarget);
   activeTargetRef.current = activeTarget;
+  const pendingDisambiguationRef = useRef(pendingDisambiguation);
+  pendingDisambiguationRef.current = pendingDisambiguation;
+  const restEndpointsRef = useRef(restEndpoints);
+  restEndpointsRef.current = restEndpoints;
 
   // ── Reset workflow state when conversation changes ──────────────────────
   // CRITICAL: workflowIdRef persists across renders as a mutable ref. When the
@@ -980,6 +1002,8 @@ export function useChatWorkflow({
         source: sourceRef.current,
         keyId: keyIdRef.current,
         activeTarget: activeTargetRef.current,
+        pendingDisambiguation: pendingDisambiguationRef.current,
+        restEndpoints: restEndpointsRef.current,
       };
 
       if (workflowIdRef.current) {

@@ -7,7 +7,7 @@ export type DotStatus = "active" | "offline" | "not-configured";
 
 export type TargetItem = {
   id: string;
-  kind: "plugin" | "mcp";
+  kind: "plugin" | "mcp" | "auto";
   label: string;
   subtitle?: string;
   status: DotStatus;
@@ -52,22 +52,29 @@ export function TargetSelector({ items, label, tooltip, emptyDescription, select
 
   const activeItems = items.filter((i) => i.status === "active");
   const selectedItem = items.find((i) => i.id === selected);
+  const autoItem = items.find((i) => i.kind === "auto");
 
-  // Auto-select when exactly one active item; deselect when none active
+  // Default to "auto" when nothing is selected and an Auto entry exists.
+  // Without the Auto entry (older selectors), keep the legacy single-active
+  // auto-selection so users with one MCP instance don't have to click.
   useEffect(() => {
-    if (activeItems.length === 1 && selected !== activeItems[0].id) {
-      onSelect(activeItems[0].id);
-    } else if (activeItems.length === 0 && selected !== null) {
-      onSelect(null);
+    if (selected === null) {
+      if (autoItem) {
+        onSelect(autoItem.id);
+      } else if (activeItems.length === 1) {
+        onSelect(activeItems[0].id);
+      }
     }
-  }, [activeItems, selected, onSelect]);
+  }, [selected, autoItem, activeItems, onSelect]);
 
-  // Deselect if the selected item is no longer active
+  // If the selected item goes offline, fall back to "auto" if available so the
+  // user keeps a working target instead of a silently-broken pick. Without
+  // Auto, fall back to null (legacy behavior).
   useEffect(() => {
     if (selected && selectedItem && selectedItem.status !== "active") {
-      onSelect(null);
+      onSelect(autoItem?.id ?? null);
     }
-  }, [selected, selectedItem, onSelect]);
+  }, [selected, selectedItem, autoItem, onSelect]);
 
   const handleClose = useCallback(() => setOpen(false), []);
 

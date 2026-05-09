@@ -751,6 +751,74 @@ function rewriteNoPluginConnectedError(): string {
   return "Guardian plugin is not running in Figma. Ask the user to open Figma Desktop and launch the Guardian plugin, then retry. (Pairing is automatic — no manual code entry needed.)";
 }
 
+// ---------------------------------------------------------------------------
+// Plugin-bound tool guard (AMBIGUOUS_TARGET)
+// ---------------------------------------------------------------------------
+
+/**
+ * Tools on `figma_console` (Southleft) that require a paired Figma plugin —
+ * they execute code inside the plugin via cloud relay or direct bridge.
+ * Read-only `figma_get_*` tools work via fileUrl REST and don't need pairing.
+ *
+ * NOTE: this list is convention-based (not in MCP tool metadata). When a new
+ * write tool is added on the Southleft side, mirror it here or the worker
+ * will silently route it without a pairing check.
+ */
+const FIGMA_CONSOLE_PLUGIN_BOUND_TOOLS = new Set<string>([
+  "figma_execute",
+  "figma_create_child",
+  "figma_set_fills",
+  "figma_set_image_fill",
+  "figma_set_strokes",
+  "figma_set_text",
+  "figma_resize_node",
+  "figma_move_node",
+  "figma_clone_node",
+  "figma_delete_node",
+  "figma_rename_node",
+  "figma_set_description",
+  "figma_capture_screenshot",
+]);
+
+/**
+ * Returns true when `toolName` requires a paired Figma plugin to succeed.
+ * Used by `executeMCPTool` and `executeMCPToolV2` to refuse with a structured
+ * `AMBIGUOUS_TARGET` error before contacting the MCP server, when the user
+ * picked "Auto" with multiple plugins active (resolver returns `ambiguous`,
+ * worker receives `pluginClientId === undefined`).
+ *
+ * `serverId` is the V1 server registry id (`figma_console` /
+ * `figma_console_local`) or — for V2 — the preset_type (`figma_console`).
+ */
+export function requiresPluginPairing(
+  serverId: string,
+  toolName: string,
+): boolean {
+  if (serverId === "figma_console" || serverId === "figma_console_local") {
+    return FIGMA_CONSOLE_PLUGIN_BOUND_TOOLS.has(toolName);
+  }
+  return false;
+}
+
+/**
+ * Build the structured error returned to the LLM when a plugin-bound tool is
+ * called without a paired plugin. The `AMBIGUOUS_TARGET:` prefix is matched
+ * against in the LLM system prompt so the model knows to emit a QCM
+ * disambiguation block instead of retrying.
+ */
+function ambiguousTargetError(toolName: string): { success: false; result: unknown; error: string } {
+  const text =
+    `AMBIGUOUS_TARGET: tool '${toolName}' requires a paired Figma plugin, but the ` +
+    "user selected 'Auto' with multiple plugins connected (or no plugin connected). " +
+    "Emit a QCM_FORMAT block (with QCM_META) asking the user which plugin to target, " +
+    "then retry once the user picks. Do NOT retry without pairing — it will fail again.";
+  return {
+    success: false,
+    error: text,
+    result: { content: [{ type: "text", text }], isError: true },
+  };
+}
+
 export async function executeMCPTool(params: {
   userId: string;
   serverId: string;
@@ -768,6 +836,19 @@ export async function executeMCPTool(params: {
   const serverDef = getServerDef(params.serverId);
   if (!serverDef) {
     return { success: false, error: `Unknown MCP server: ${params.serverId}` };
+  }
+
+  // ── AMBIGUOUS_TARGET guard ──────────────────────────────────────────────
+  // The frontend resolver returns `pluginClientId === undefined` for "auto"
+  // mode with 0 or 2+ plugins active. Plugin-bound tools (write/exec on
+  // figma_console) need a specific plugin — refuse upfront so the LLM emits
+  // a QCM disambiguation block instead of contacting Southleft with a
+  // pairing-state mismatch that would error out with a less actionable
+  // message. Read-only `figma_get_*` tools fall through (they work via
+  // fileUrl REST without a paired plugin).
+  if (requiresPluginPairing(params.serverId, params.toolName) && !params.pluginClientId) {
+    log.warn("AMBIGUOUS_TARGET — refusing plugin-bound tool without pairing");
+    return ambiguousTargetError(params.toolName);
   }
 
   // ── Figma Console interceptor: figma_pair_plugin ───────────────────────────

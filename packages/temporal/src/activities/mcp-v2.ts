@@ -19,7 +19,7 @@ import {
 } from "@guardian/orchestrations";
 import type { LLMToolDefinition } from "@guardian/orchestrations";
 import { callBridgedMCP } from "./mcp-bridge-client.js";
-import { pairFCCloudRelay } from "./mcp.js";
+import { pairFCCloudRelay, requiresPluginPairing } from "./mcp.js";
 import {
   refreshOAuthTokenIfNeeded,
   forceRefreshOAuthToken,
@@ -423,6 +423,28 @@ async function discoverBridgedInstance(
 }
 
 // ---------------------------------------------------------------------------
+// AMBIGUOUS_TARGET guard helper (V2)
+// ---------------------------------------------------------------------------
+
+/**
+ * Same shape as `ambiguousTargetError` in mcp.ts — duplicated here so V2 can
+ * return without depending on a non-exported helper. Kept in sync by hand:
+ * the message is read by the LLM via the system prompt rule.
+ */
+function ambiguousTargetErrorV2(toolName: string): { success: false; result: unknown; error: string } {
+  const text =
+    `AMBIGUOUS_TARGET: tool '${toolName}' requires a paired Figma plugin, but the ` +
+    "user selected 'Auto' with multiple plugins connected (or no plugin connected). " +
+    "Emit a QCM_FORMAT block (with QCM_META) asking the user which plugin to target, " +
+    "then retry once the user picks. Do NOT retry without pairing — it will fail again.";
+  return {
+    success: false,
+    error: text,
+    result: { content: [{ type: "text", text }], isError: true },
+  };
+}
+
+// ---------------------------------------------------------------------------
 // executeMCPToolV2 — instance-based execution
 // ---------------------------------------------------------------------------
 
@@ -445,6 +467,19 @@ export async function executeMCPToolV2(params: {
 
   if (!inst) {
     return { success: false, error: `Instance ${params.instanceId} not found or disabled` };
+  }
+
+  // ── AMBIGUOUS_TARGET guard ──────────────────────────────────────────────
+  // See `executeMCPTool` in mcp.ts for the full rationale. V2 uses preset_type
+  // as the server-id key (the V1 registry id is the same string for the cloud
+  // figma_console preset). Local figma_console_local instances also pair via
+  // the same plugin bridge, so they share the same plugin-bound tool list.
+  if (
+    requiresPluginPairing(inst.preset_type, params.toolName) &&
+    !params.pluginClientId
+  ) {
+    log.warn("AMBIGUOUS_TARGET — refusing plugin-bound tool without pairing");
+    return ambiguousTargetErrorV2(params.toolName);
   }
 
   // ── Figma Console interceptor: figma_pair_plugin ───────────────────────────

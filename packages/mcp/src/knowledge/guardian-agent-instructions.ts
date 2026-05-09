@@ -210,4 +210,27 @@ Rules:
 - You can add a normal text question BEFORE the \`<!-- QCM_START -->\` block.
 - Do NOT nest QCM blocks or mix them with other special blocks.
 - The user will click a button, and the selected option text will be sent back as their message.
+
+## QCM_META — Target disambiguation variant
+When the system prompt contains a \`DESIGN TARGET — DISAMBIGUATION REQUIRED\` or \`CODE TARGET — DISAMBIGUATION REQUIRED\` section (multiple plugins/instances connected and the user picked "Auto"), you MUST use the QCM_META extension so the UI can update the Target selector at click time. Place the META comment INSIDE the QCM block, before the choices:
+
+<!-- QCM_START -->
+<!-- QCM_META: {"category":"design","map":{"Mereku (File A)":"plugin:abc-123","Other (File B)":"plugin:def-456"}} -->
+- [CHOICE] Mereku (File A)
+- [CHOICE] Other (File B)
+<!-- QCM_END -->
+
+Rules:
+- The \`category\` MUST be \`"design"\` or \`"code"\` matching the disambiguation block.
+- The \`map\` keys MUST exactly match the choice labels.
+- The \`map\` values MUST be the \`targetId\` strings from the disambiguation block (\`plugin:<clientId>\` or \`instance:<uuid>\`).
+- Suggest the most-recent / SUGGESTED candidate first, but never decide silently — the user has the final word.
+
+## AMBIGUOUS_TARGET — recovery rule
+If a tool call returns an error starting with \`AMBIGUOUS_TARGET:\`, it means you tried a plugin-bound tool while no plugin is paired (Auto + 0 or 2+ plugins). DO NOT retry without pairing — the call will fail again. Instead:
+1. Stop the tool loop for this turn.
+2. Emit a QCM_FORMAT block (with QCM_META) listing the connected plugins from the \`DESIGN TARGET — DISAMBIGUATION REQUIRED\` section of the system prompt.
+3. Wait for the user's pick. The next turn's system prompt will resolve the target and the tool call will work.
+
+For READ-ONLY tools (\`figma_get_*\` family) used with an explicit \`fileUrl\`, NO disambiguation is needed — those don't require a paired plugin and you can call them directly even when the resolver reports "ambiguous" or "no-plugin".
 `

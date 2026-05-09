@@ -2,7 +2,19 @@ import { cleanOrphanedTags } from "./markdown-utils";
 
 export type ContentSegment = { kind: "content"; text: string };
 export type DetailsSegment = { kind: "details"; text: string; streaming: boolean };
-export type QCMSegment = { kind: "qcm"; choices: string[] };
+/**
+ * Optional QCM_META carried in an HTML comment inside the QCM block. When the
+ * LLM emits target-disambiguation choices, the meta maps each rendered label
+ * back to a TargetSelector id ("plugin:<clientId>" or "instance:<uuid>") so a
+ * click can update React state in addition to sending the choice text as a
+ * new user message. Format:
+ *   <!-- QCM_META: {"category":"design","map":{"Mereku (File A)":"plugin:abc",...}} -->
+ */
+export type QCMMeta = {
+  category: "design" | "code";
+  map: Record<string, string>;
+};
+export type QCMSegment = { kind: "qcm"; choices: string[]; meta?: QCMMeta };
 export type MCPErrorSegment = { kind: "mcp-error"; errorText: string };
 export type MCPStatusSegment = { kind: "mcp-status"; status: "connecting" | "connected" | "error" };
 export type AnalyzeBtnSegment = { kind: "analyze-btn" };
@@ -24,7 +36,7 @@ export function parseStructuredContent(text: string, isStreamingMsg: boolean = f
   const detailsRegex = /(?:```\s*)?<!-- DETAILS_START -->([\s\S]*?)<!-- DETAILS_END -->(?:\s*```)?/g;
 
   const detailsBlocks: { index: number; length: number; text: string; streaming: boolean }[] = [];
-  const qcmBlocks: { index: number; length: number; choices: string[] }[] = [];
+  const qcmBlocks: { index: number; length: number; choices: string[]; meta?: QCMMeta }[] = [];
   const mcpErrorBlocks: { index: number; length: number; errorText: string }[] = [];
   const mcpStatusBlocks: { index: number; length: number; status: "connecting" | "connected" | "error" }[] = [];
 
@@ -34,14 +46,28 @@ export function parseStructuredContent(text: string, isStreamingMsg: boolean = f
   }
 
   const qcmRegex = /<!-- QCM_START -->([\s\S]*?)<!-- QCM_END -->/g;
+  const qcmMetaRegex = /<!--\s*QCM_META:\s*(\{[\s\S]*?\})\s*-->/;
   while ((match = qcmRegex.exec(cleanedText)) !== null) {
-    const choices = match[1]
+    const inner = match[1];
+    let meta: QCMMeta | undefined;
+    const metaMatch = qcmMetaRegex.exec(inner);
+    if (metaMatch) {
+      try {
+        const parsed = JSON.parse(metaMatch[1]) as QCMMeta;
+        if (parsed && typeof parsed === "object" && parsed.map && typeof parsed.map === "object") {
+          meta = parsed;
+        }
+      } catch {
+        // Malformed QCM_META — ignore, choices still render.
+      }
+    }
+    const choices = inner
       .split("\n")
       .map(l => l.trim())
       .filter(l => l.startsWith("- [CHOICE] "))
       .map(l => l.replace("- [CHOICE] ", ""));
     if (choices.length > 0) {
-      qcmBlocks.push({ index: match.index, length: match[0].length, choices });
+      qcmBlocks.push({ index: match.index, length: match[0].length, choices, meta });
     }
   }
 
@@ -116,7 +142,8 @@ export function parseStructuredContent(text: string, isStreamingMsg: boolean = f
     if (block.kind === "details") {
       segments.push({ kind: "details", text: block.text, streaming: block.streaming });
     } else if (block.kind === "qcm") {
-      segments.push({ kind: "qcm", choices: (block as typeof qcmBlocks[number] & { kind: "qcm" }).choices });
+      const qcmBlock = block as typeof qcmBlocks[number] & { kind: "qcm" };
+      segments.push({ kind: "qcm", choices: qcmBlock.choices, meta: qcmBlock.meta });
     } else if (block.kind === "mcp-error") {
       segments.push({ kind: "mcp-error", errorText: (block as typeof mcpErrorBlocks[number] & { kind: "mcp-error" }).errorText });
     } else if (block.kind === "analyze-btn") {

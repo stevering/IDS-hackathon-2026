@@ -149,6 +149,14 @@ export async function chatWorkflow(params: ChatWorkflowParams): Promise<void> {
   // old BYOK model even after the user switched to the included free tier.
   let currentModel: string | undefined = params.model;
 
+  // Current effective Figma plugin clientId — mirror of `currentModel` for the
+  // paired Figma plugin. Updated from every chatNewMessage signal's
+  // `pluginClientIdOverride` so the user can switch the paired plugin
+  // per-message (e.g. via the LLM's QCM disambiguation flow). Discovery is
+  // still seeded with `params.figmaPluginClientId` (we don't re-discover MCP
+  // tools mid-conversation), but tool execution uses `currentPluginClientId`.
+  let currentPluginClientId: string | undefined = params.figmaPluginClientId;
+
   // Pending messages from signals
   const pendingMessages: ChatNewMessagePayload[] = [];
 
@@ -173,6 +181,10 @@ export async function chatWorkflow(params: ChatWorkflowParams): Promise<void> {
   setHandler(chatNewMessageSignal, (msg) => {
     if (msg.modelOverride) {
       currentModel = msg.modelOverride;
+    }
+    if (msg.pluginClientIdOverride !== undefined) {
+      // null → unpair (REST-only mode), string → pair to that plugin.
+      currentPluginClientId = msg.pluginClientIdOverride ?? undefined;
     }
     pendingMessages.push(msg);
   });
@@ -534,19 +546,34 @@ export async function chatWorkflow(params: ChatWorkflowParams): Promise<void> {
         }
 
         try {
-          if ((tc.name === "guardian_figma_execute" || tc.name === "figma_plugin_execute") && params.figmaPluginClientId) {
-            // Figma code execution via plugin bridge (direct Supabase Realtime)
-            const code = (tc.arguments.code as string) ?? "";
-            const result = await executeFigmaCode({
-              pluginClientId: params.figmaPluginClientId,
-              userId: params.userId,
-              code,
-              workflowId,
-            });
-            toolResult = result.success
-              ? JSON.stringify(result.result ?? { success: true })
-              : formatToolError(tc.name, result.error, { source: "Figma plugin" });
-            isError = !result.success;
+          if (tc.name === "guardian_figma_execute" || tc.name === "figma_plugin_execute") {
+            if (!currentPluginClientId) {
+              // Mirror the AMBIGUOUS_TARGET error returned by mcp.ts for
+              // figma_console plugin-bound tools: the LLM must emit a QCM
+              // before retrying. Without this branch the call would silently
+              // fall through to the unknown-tool path and the LLM would never
+              // learn it needs to disambiguate.
+              const text =
+                `AMBIGUOUS_TARGET: tool '${tc.name}' requires a paired Figma plugin, but the ` +
+                "user selected 'Auto' with multiple plugins connected (or no plugin connected). " +
+                "Emit a QCM_FORMAT block (with QCM_META) asking the user which plugin to target, " +
+                "then retry once the user picks. Do NOT retry without pairing — it will fail again.";
+              toolResult = JSON.stringify({ content: [{ type: "text", text }], isError: true });
+              isError = true;
+            } else {
+              // Figma code execution via plugin bridge (direct Supabase Realtime)
+              const code = (tc.arguments.code as string) ?? "";
+              const result = await executeFigmaCode({
+                pluginClientId: currentPluginClientId,
+                userId: params.userId,
+                code,
+                workflowId,
+              });
+              toolResult = result.success
+                ? JSON.stringify(result.result ?? { success: true })
+                : formatToolError(tc.name, result.error, { source: "Figma plugin" });
+              isError = !result.success;
+            }
           } else if (tc.name === "guardian_load_tool_group") {
             // Smart Tool Selection: dynamically load a tool group into the session.
             const groupId = (tc.arguments.group_id as string) ?? "";
@@ -617,7 +644,7 @@ export async function chatWorkflow(params: ChatWorkflowParams): Promise<void> {
               manifest: instanceManifest,
               toolName: tc.name,
               args: tc.arguments,
-              pluginClientId: params.figmaPluginClientId,
+              pluginClientId: currentPluginClientId,
             });
             toolResult = result.success
               ? JSON.stringify(result.result ?? { success: true })
@@ -633,7 +660,7 @@ export async function chatWorkflow(params: ChatWorkflowParams): Promise<void> {
                 instanceId: resolved.instanceId,
                 toolName: resolved.rawName,
                 arguments: tc.arguments,
-                pluginClientId: params.figmaPluginClientId,
+                pluginClientId: currentPluginClientId,
               });
               toolResult = result.success
                 ? JSON.stringify(result.result ?? { success: true })
@@ -650,7 +677,7 @@ export async function chatWorkflow(params: ChatWorkflowParams): Promise<void> {
                 serverId: resolvedV1.serverId,
                 toolName: resolvedV1.rawName,
                 arguments: tc.arguments,
-                pluginClientId: params.figmaPluginClientId,
+                pluginClientId: currentPluginClientId,
               });
               toolResult = result.success
                 ? JSON.stringify(result.result ?? { success: true })
@@ -665,7 +692,7 @@ export async function chatWorkflow(params: ChatWorkflowParams): Promise<void> {
               serverId: resolved.serverId,
               toolName: resolved.rawName,
               arguments: tc.arguments,
-              pluginClientId: params.figmaPluginClientId,
+              pluginClientId: currentPluginClientId,
             });
             toolResult = result.success
               ? JSON.stringify(result.result ?? { success: true })

@@ -16,6 +16,8 @@ import {
   type FigmaPluginContext,
   type ConnectedAgent,
   type ActiveTarget,
+  type PendingDisambiguation,
+  type RestEndpointInfo,
 } from "@/lib/chat-dynamic-context";
 import { enforceFreeTierQuota } from "@/lib/chat-quota";
 
@@ -45,6 +47,7 @@ export async function POST(request: Request) {
     selectedNode, figmaPluginContext, connectedAgents, isLocalPlugin, source, keyId,
     activeTarget,
     designInstanceId, codeInstanceId,
+    pendingDisambiguation, restEndpoints,
   } = body as {
     conversationId: string;
     message: string;
@@ -63,6 +66,8 @@ export async function POST(request: Request) {
     designInstanceId?: string;
     /** V2: focus Code MCP instance ID (from TargetSelector) */
     codeInstanceId?: string;
+    pendingDisambiguation?: PendingDisambiguation;
+    restEndpoints?: RestEndpointInfo[];
   };
 
   if (!conversationId || !message) {
@@ -131,6 +136,8 @@ export async function POST(request: Request) {
       source,
       keyLabel,
       activeTarget,
+      pendingDisambiguation,
+      restEndpoints,
     });
     const systemPrompt = GUARDIAN_SYSTEM_PROMPT + dynamicCtx;
 

@@ -13,6 +13,13 @@ import { useFigmaPlugin, pushPluginEvent, type PluginEvent, type FigmaPluginCont
 import { useFigmaExecuteChannel } from "./hooks/useFigmaExecuteChannel";
 import { useClientRegistry } from "./hooks/useClientRegistry";
 import { TargetSelector, type TargetItem } from "@/components/TargetSelector";
+import {
+  resolveDesignTarget,
+  resolveCodeTarget,
+  summarizeDesignResolution,
+  summarizeCodeResolution,
+  type TargetSelection,
+} from "@/lib/target-resolution";
 import { useUserMCPInstances } from "./hooks/useUserMCPInstances";
 import { UserMenu } from "@/components/UserMenu";
 import { EditableClientId } from "@/components/EditableClientId";
@@ -782,33 +789,32 @@ export default function Home() {
   const collaborators: CollaboratorInfo[] = [];
   const timerRemainingMs: number | null = null;
 
-  const [selectedDesignTarget, setSelectedDesignTarget] = useState<string | null>(null);
-  const [selectedCodeTarget, setSelectedCodeTarget] = useState<string | null>(null);
+  const [selectedDesignTarget, setSelectedDesignTarget] = useState<TargetSelection>(null);
+  const [selectedCodeTarget, setSelectedCodeTarget] = useState<TargetSelection>(null);
 
   // New MCP instances hook (Phase 4) — sources TargetSelector items
   const mcpInstances = useUserMCPInstances();
 
-  // Seed the TargetSelector selection from user_category_defaults (DB) once
-  // instances are loaded, so the chat starts with the user's preferred focus
-  // instead of null. Without this, the first Send fires with
-  // designInstanceId=undefined and the chatWorkflow falls back to V1 legacy
-  // → the LLM never sees local instances like figmadesktop as focus tools.
-  // Only seeds if the user hasn't made an explicit choice this session.
+  // Seed the TargetSelector to "auto" once instances have loaded. Auto resolves
+  // dynamically via `resolveDesignTarget()` / `resolveCodeTarget()` so the user
+  // sees the live target choice in the dropdown subtitle (e.g. "→ Mereku
+  // (file A)" or "→ ambiguous (2 plugins)"), and the LLM disambiguates via
+  // QCM_FORMAT when it can't decide.
+  //
+  // The legacy `user_category_defaults` (DB) hint is no longer auto-applied —
+  // explicit picks are restored when the user clicks them, but the default
+  // experience is always "auto" so users with multiple plugins/MCPs aren't
+  // silently locked onto one instance.
   const defaultsApplied = useRef(false);
   useEffect(() => {
     if (defaultsApplied.current) return;
     if (mcpInstances.loading) return;
-    if (mcpInstances.instances.length === 0) return;
     defaultsApplied.current = true;
 
-    if (selectedDesignTarget === null && mcpInstances.defaults.design) {
-      setSelectedDesignTarget(`instance:${mcpInstances.defaults.design}`);
-    }
-    if (selectedCodeTarget === null && mcpInstances.defaults.code) {
-      setSelectedCodeTarget(`instance:${mcpInstances.defaults.code}`);
-    }
+    if (selectedDesignTarget === null) setSelectedDesignTarget("auto");
+    if (selectedCodeTarget === null) setSelectedCodeTarget("auto");
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mcpInstances.loading, mcpInstances.instances.length, mcpInstances.defaults.design, mcpInstances.defaults.code]);
+  }, [mcpInstances.loading]);
 
 
 
@@ -972,8 +978,31 @@ export default function Home() {
   // ── Target items for Design and Code selectors ──────────────────────
   // ── TargetSelector data (Phase 4 — sourced from user_mcp_instances) ──
 
+  // Resolve the design target from the current selection + presence + MCP
+  // instances. The output drives:
+  //  - the "Auto" entry's subtitle in the TargetSelector
+  //  - figmaPluginClientId sent to the workflow (paired plugin or undefined)
+  //  - the system-prompt sections (ACTIVE FIGMA TARGET vs DISAMBIGUATION REQUIRED)
+  //  - the worker's AMBIGUOUS_TARGET guard for plugin-bound tools
+  const designResolution = useMemo(
+    () => resolveDesignTarget(selectedDesignTarget, mcpInstances.instances, clients),
+    [selectedDesignTarget, mcpInstances.instances, clients],
+  );
+
   const designTargets: TargetItem[] = useMemo(() => {
     const items: TargetItem[] = [];
+
+    // "Auto" entry — first in the list, always active. Subtitle reflects the
+    // resolver's current decision so the user sees what target will be used.
+    items.push({
+      id: "auto",
+      kind: "auto",
+      label: "Auto",
+      subtitle: summarizeDesignResolution(designResolution),
+      status: "active",
+      tooltip: "Auto-resolves based on what you ask",
+      description: "Auto-resolve based on your message. If multiple plugins are connected, Guardian asks you to confirm via QCM before plugin-bound actions.",
+    });
 
     // Live Figma plugins from presence (unchanged — not MCP, direct Guardian protocol)
     const plugins = clients.filter(c => c.type === "figma-plugin");
@@ -1016,10 +1045,25 @@ export default function Home() {
     }
 
     return items;
-  }, [clients, mcpInstances.instances]);
+  }, [clients, mcpInstances.instances, designResolution]);
+
+  const codeResolution = useMemo(
+    () => resolveCodeTarget(selectedCodeTarget, mcpInstances.instances),
+    [selectedCodeTarget, mcpInstances.instances],
+  );
 
   const codeTargets: TargetItem[] = useMemo(() => {
     const items: TargetItem[] = [];
+
+    items.push({
+      id: "auto",
+      kind: "auto",
+      label: "Auto",
+      subtitle: summarizeCodeResolution(codeResolution),
+      status: "active",
+      tooltip: "Auto-resolves based on what you ask",
+      description: "Auto-resolve based on your message. If multiple code MCPs are connected, Guardian asks you to confirm via QCM.",
+    });
 
     // Code MCP instances from user_mcp_instances (cloud + local)
     for (const inst of mcpInstances.instances.filter(i => i.category === "code" && i.enabled)) {
@@ -1038,7 +1082,7 @@ export default function Home() {
     }
 
     return items;
-  }, [mcpInstances.instances]);
+  }, [mcpInstances.instances, codeResolution]);
 
   const handleModelDropdownClose = useCallback(() => {
     setModelDropdownOpen(false);
@@ -1483,49 +1527,61 @@ export default function Home() {
   const focusDesignInstanceId = selectedDesignTarget?.startsWith("instance:") ? selectedDesignTarget.slice(9) : undefined;
   const focusCodeInstanceId = selectedCodeTarget?.startsWith("instance:") ? selectedCodeTarget.slice(9) : undefined;
 
-  // Extract plugin clientId from TargetSelector if the user selected a plugin
-  // as design target. This allows figma_plugin_execute and Southleft cloud relay
-  // pairing to work when the webapp runs in a regular browser tab (not inside
-  // the Figma plugin iframe).
-  const selectedDesignItem = designTargets.find((t) => t.id === selectedDesignTarget);
-  const targetPluginClientId = selectedDesignItem?.kind === "plugin"
-    ? selectedDesignItem.clientId
-    : undefined;
-  // Fallback: when the user picks a Figma Console MCP instance (or anything
-  // non-plugin), the workflow still needs a pluginClientId to broadcast the
-  // cloud-relay pairing code to a live plugin. Pick any connected Figma plugin
-  // from presence — there's usually only one, and it's the same plugin the
-  // user sees the selectedNode from.
-  const presencePluginClientId = clients.find((c) => c.type === "figma-plugin")?.clientId;
-
-  // Resolve the routing target to a structured object for the system prompt.
-  // The LLM does not implicitly know which plugin its `figmaconsole_*` calls
-  // route to — it just calls the tool and the worker (`pairFCCloudRelay`)
-  // binds Southleft's cloud relay to whichever plugin matches `figmaPluginClientId`.
-  // Surfacing the target here lets the LLM answer questions like "which file
-  // are we in?" without an extra tool call, and makes plugin-switch UX explicit.
-  const resolvedPluginClientId = targetPluginClientId ?? (isFigmaPlugin ? myClientId : undefined) ?? presencePluginClientId;
-  const activeTargetClient = resolvedPluginClientId
-    ? clients.find((c) => c.clientId === resolvedPluginClientId)
-    : undefined;
-  const activeTarget = activeTargetClient && activeTargetClient.type === "figma-plugin"
-    ? {
-        shortId: activeTargetClient.shortId,
-        label: activeTargetClient.label,
-        fileName: activeTargetClient.figmaContext?.fileName,
-        fileKey: activeTargetClient.fileKey,
-        fileUrl: activeTargetClient.figmaContext?.fileUrl ?? undefined,
-      }
-    : undefined;
+  // Resolve the routing target. designResolution drives:
+  //  - figmaPluginClientId sent to the workflow (used for both Realtime
+  //    broadcast pair codes and direct figma_plugin_execute routing)
+  //  - the system-prompt section: ACTIVE FIGMA TARGET vs DISAMBIGUATION REQUIRED
+  //  - the worker's AMBIGUOUS_TARGET guard for plugin-bound tools
+  //
+  // When the webapp runs INSIDE the plugin iframe (isFigmaPlugin), there is by
+  // definition exactly one local plugin (myClientId) — the resolver's auto path
+  // will already pick it from presence, so no special-case needed here.
+  const resolvedPluginClientId = designResolution.pairedPluginClientId;
+  const activeTarget =
+    designResolution.pairing.kind === "explicit" || designResolution.pairing.kind === "auto-resolved"
+      ? {
+          shortId: designResolution.pairing.plugin.shortId,
+          label: designResolution.pairing.plugin.label,
+          fileName: designResolution.pairing.plugin.fileName,
+          fileKey: designResolution.pairing.plugin.fileKey,
+          fileUrl: designResolution.pairing.plugin.fileUrl,
+        }
+      : undefined;
+  const pendingDisambiguation =
+    designResolution.pairing.kind === "ambiguous"
+      ? {
+          category: "design" as const,
+          candidates: designResolution.pairing.candidates.map((p) => ({
+            targetId: `plugin:${p.clientId}`,
+            shortId: p.shortId,
+            label: p.label,
+            fileName: p.fileName,
+            fileKey: p.fileKey,
+          })),
+          suggestionTargetId: `plugin:${designResolution.pairing.suggestion.clientId}`,
+        }
+      : codeResolution.pairing.kind === "ambiguous"
+        ? {
+            category: "code" as const,
+            candidates: codeResolution.pairing.candidates.map((c) => ({
+              targetId: `instance:${c.instanceId}`,
+              shortId: c.label,
+              label: c.label,
+            })),
+            suggestionTargetId: `instance:${codeResolution.pairing.suggestion.instanceId}`,
+          }
+        : undefined;
+  const restEndpoints = designResolution.restEndpoints;
 
   const chatWorkflow = useChatWorkflow({
     conversationId: activeConversationId,
     model: selectedModel || undefined,
     mcpServerIds: temporalMcpServerIds,
-    // Priority: (1) plugin selected in TargetSelector → its clientId
-    //           (2) webapp running inside Figma plugin iframe → own clientId
-    //           (3) any plugin in Realtime presence → enables auto-pairing of the cloud relay
-    //           (4) no plugin available → undefined (skips pairing + plugin execute)
+    // Resolved by `resolveDesignTarget()`:
+    //  - explicit pick → that plugin's clientId
+    //  - "auto" + 1 plugin active → that plugin's clientId
+    //  - "auto" + 2+ plugins → undefined (LLM disambiguates via QCM)
+    //  - "auto" + 0 plugins → undefined (REST-only mode)
     figmaPluginClientId: resolvedPluginClientId,
     enabled: true,
     selectedNode,
@@ -1537,6 +1593,8 @@ export default function Home() {
     designInstanceId: focusDesignInstanceId ?? undefined,
     codeInstanceId: focusCodeInstanceId ?? undefined,
     activeTarget,
+    pendingDisambiguation,
+    restEndpoints,
   });
 
   // Chat variables — Temporal-only since the April 2026 cleanup.
@@ -2526,7 +2584,22 @@ export default function Home() {
                             return <DetailsBlock key={sj} text={structSeg.text} isStreaming={structSeg.streaming} />;
                           }
                           if (structSeg.kind === "qcm") {
-                            return <QCMBlock key={sj} choices={structSeg.choices} onSelect={(choice) => { shouldAutoScroll.current = true; sendMessage({ text: choice }); }} disabled={isLoading} />;
+                            return (
+                              <QCMBlock
+                                key={sj}
+                                choices={structSeg.choices}
+                                meta={structSeg.meta}
+                                onTargetChoice={(category, targetId) => {
+                                  if (category === "design") {
+                                    setSelectedDesignTarget(targetId as TargetSelection);
+                                  } else {
+                                    setSelectedCodeTarget(targetId as TargetSelection);
+                                  }
+                                }}
+                                onSelect={(choice) => { shouldAutoScroll.current = true; sendMessage({ text: choice }); }}
+                                disabled={isLoading}
+                              />
+                            );
                           }
                           if (structSeg.kind === "mcp-error") {
                             return (
@@ -3065,7 +3138,7 @@ export default function Home() {
                       tooltip="Select which design tool receives commands"
                       emptyDescription="All design integrations are disabled. Enable Figma MCP, Plugin, or Console in settings."
                       selected={selectedDesignTarget}
-                      onSelect={setSelectedDesignTarget}
+                      onSelect={(id) => setSelectedDesignTarget(id as TargetSelection)}
                     />
                     <TargetSelector
                       items={codeTargets}
@@ -3073,7 +3146,7 @@ export default function Home() {
                       tooltip="Select which code tool to use"
                       emptyDescription="All code integrations are disabled. Enable Code Editor or GitHub MCP in settings."
                       selected={selectedCodeTarget}
-                      onSelect={setSelectedCodeTarget}
+                      onSelect={(id) => setSelectedCodeTarget(id as TargetSelection)}
                     />
                   </div>
                   {/* Right: model picker + send */}

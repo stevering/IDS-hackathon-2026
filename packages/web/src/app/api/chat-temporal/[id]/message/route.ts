@@ -16,6 +16,8 @@ import {
   type FigmaPluginContext,
   type ConnectedAgent,
   type ActiveTarget,
+  type PendingDisambiguation,
+  type RestEndpointInfo,
 } from "@/lib/chat-dynamic-context";
 import { enforceFreeTierQuota } from "@/lib/chat-quota";
 
@@ -68,6 +70,8 @@ export async function POST(
     // user's selected local instance (e.g. figmadesktop).
     designInstanceId,
     codeInstanceId,
+    pendingDisambiguation,
+    restEndpoints,
   } = body as {
     conversationId: string;
     message: string;
@@ -84,6 +88,8 @@ export async function POST(
     activeTarget?: ActiveTarget;
     designInstanceId?: string;
     codeInstanceId?: string;
+    pendingDisambiguation?: PendingDisambiguation;
+    restEndpoints?: RestEndpointInfo[];
   };
 
   if (!message) {
@@ -174,6 +180,11 @@ export async function POST(
           content: message,
           images,
           modelOverride: resolvedModel,
+          // null = "unpair this turn" (REST-only); undefined = "no change".
+          // The frontend sends `figmaPluginClientId: undefined` when the
+          // resolver returns `ambiguous` or `no-plugin`, so we map that
+          // explicitly to null to clear the worker's currentPluginClientId.
+          pluginClientIdOverride: figmaPluginClientId ?? null,
         });
         log.info("signalled existing workflow", { conv: conversationId, model: resolvedModel });
         return NextResponse.json({ workflowId, conversationId, action: "signalled" });
@@ -239,6 +250,8 @@ export async function POST(
       source,
       keyLabel,
       activeTarget,
+      pendingDisambiguation,
+      restEndpoints,
     });
     const systemPrompt = GUARDIAN_SYSTEM_PROMPT + dynamicCtx;
 

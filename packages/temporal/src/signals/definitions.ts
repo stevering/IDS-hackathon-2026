@@ -116,6 +116,15 @@ export type ChatNewMessagePayload = {
    * workflow keeps using its previous model.
    */
   modelOverride?: string;
+  /**
+   * Optional Figma plugin clientId override for this turn. Mirrors
+   * `modelOverride` so the user can switch the paired plugin per-message
+   * (e.g. via the QCM disambiguation flow). Semantics:
+   *   - `string`     → use this plugin for plugin-bound tool calls this turn
+   *   - `null`       → unpair (REST-only mode this turn)
+   *   - `undefined`  → keep the previous turn's value (no change)
+   */
+  pluginClientIdOverride?: string | null;
 };
 
 /** Chat workflow status returned by chatStatusQuery */

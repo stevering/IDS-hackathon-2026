@@ -461,3 +461,115 @@ the case where the **channel subscription itself** fails (not the plugin):
 - A 10 s `subscribeGuardTimer` covers the case where the subscribe callback
   never fires at all (silent network blackhole) — without this guard the
   activity would hang for the full 3-minute `startToCloseTimeout`.
+
+## Auto target resolution + LLM-driven disambiguation
+
+The chat workflow's TargetSelector ("Design" / "Code" pickers above the
+prompt input) is wired to a structured resolver — replacing the silent
+cascade fallback that used to pick a plugin without telling the user when
+multiple were running.
+
+### Selection model
+
+```ts
+type TargetSelection =
+  | "auto"                   // resolver picks based on what's connected
+  | `plugin:${string}`       // explicit Figma plugin clientId
+  | `instance:${string}`     // explicit MCP instance UUID
+  | null;                    // initial state (resolver defaults to "auto")
+```
+
+The default for both Design and Code is `"auto"`. When the user explicitly
+clicks a plugin or instance the selection becomes that target's id.
+
+### Resolver outputs (`packages/web/src/lib/target-resolution.ts`)
+
+`resolveDesignTarget(selection, mcpInstances, clients)` returns:
+
+- `pairedPluginClientId` — sent to the worker as `figmaPluginClientId`
+- `pairing` — one of:
+  - `explicit` — user picked a plugin and it's still active
+  - `auto-resolved` — Auto + exactly 1 plugin active
+  - `ambiguous` — Auto + 2+ plugins active (`pairedPluginClientId =
+    undefined`, suggestion = most-recent-in-presence)
+  - `no-plugin` — Auto + 0 plugins active
+- `restEndpoints` — always-available read-only `figma_*_get_*` REST
+  endpoints (work with `fileUrl`, no pairing needed)
+
+`resolveCodeTarget(selection, mcpInstances)` mirrors the design resolver
+without the plugin dimension (Code MCPs don't pair with a plugin).
+
+### LLM-driven disambiguation flow
+
+1. Resolver returns `kind: "ambiguous"` → `figmaPluginClientId = undefined`
+   and `pendingDisambiguation` is forwarded through `useChatWorkflow` →
+   `/api/chat-temporal/{start,[id]/message}` → `buildDynamicContext`.
+2. The system prompt grows a `DESIGN TARGET — DISAMBIGUATION REQUIRED`
+   section listing connected plugins + instructions to emit a QCM with
+   `QCM_META`.
+3. The LLM emits:
+   ```
+   <!-- QCM_START -->
+   <!-- QCM_META: {"category":"design","map":{"Mereku (File A)":"plugin:abc",...}} -->
+   - [CHOICE] Mereku (File A)
+   - [CHOICE] Other (File B)
+   <!-- QCM_END -->
+   ```
+4. The user clicks → `QCMBlock.onTargetChoice` updates
+   `selectedDesignTarget` to `plugin:<clientId>` AND fires
+   `sendMessage({text: choice})`. The next turn carries the resolved plugin
+   AND the choice text as the user message.
+5. The worker's `chatNewMessageSignal` handler updates
+   `currentPluginClientId` from `pluginClientIdOverride`. All tool-call
+   sites in `chat.ts` (`executeFigmaCode`, `executeMCPTool`,
+   `executeMCPToolV2`, `executeGuardianMetaTool`) now use
+   `currentPluginClientId` instead of the workflow-start value.
+
+### Worker safety net — `AMBIGUOUS_TARGET`
+
+Even if the LLM ignores the system prompt and calls a plugin-bound tool
+with no pairing, the worker refuses upfront:
+
+- `mcp.ts::requiresPluginPairing(serverId, toolName)` is the convention
+  source-of-truth. Currently covers the `figma_console` write+execute
+  family (`figma_execute`, `figma_set_*`, `figma_create_child`, etc.).
+  Read-only `figma_get_*` tools fall through.
+- `executeMCPTool` and `executeMCPToolV2` return a structured
+  `{ success: false, error: "AMBIGUOUS_TARGET: ..." }` BEFORE contacting
+  Southleft.
+- `chat.ts` returns the same structured error inline for
+  `figma_plugin_execute` / `guardian_figma_execute` when
+  `currentPluginClientId === undefined`.
+
+The LLM is taught (`guardian-agent-instructions.ts`) to recover by
+emitting a QCM_FORMAT block on `AMBIGUOUS_TARGET` errors and waiting for
+the user's pick before retrying.
+
+### Per-message switching
+
+The `chatNewMessage` signal payload carries `pluginClientIdOverride?:
+string | null` (mirroring `modelOverride`). The
+`/api/chat-temporal/[id]/message` route forwards every send's
+`figmaPluginClientId` (or `null` when the resolver is ambiguous /
+no-plugin) so the user can change targets at any message — including via
+the QCM disambiguation flow described above.
+
+Discovery (`discoverMCPTools`) and the initial `pairFCCloudRelay` still
+use `params.figmaPluginClientId` from workflow start: the tool list is
+fixed for the workflow's lifetime. The `lastPairedPluginByUser` cache in
+`mcp.ts` re-pairs Southleft's cloud relay on plugin switch (commit
+`684db21`).
+
+### Files
+
+- Frontend resolver: `packages/web/src/lib/target-resolution.ts`
+- Selector UI: `packages/web/src/components/TargetSelector.tsx`
+- Wire-up: `packages/web/src/app/page.tsx`
+- System-prompt sections: `packages/web/src/lib/chat-dynamic-context.ts`
+- QCM_META parser: `packages/web/src/lib/content-parsing.ts`
+- QCM click handler: `packages/web/src/components/chat/QCMBlock.tsx`
+- Signal type: `packages/temporal/src/signals/definitions.ts`
+- Workflow override: `packages/temporal/src/workflows/chat.ts`
+- Worker guards: `packages/temporal/src/activities/mcp.ts`,
+  `packages/temporal/src/activities/mcp-v2.ts`
+- LLM prompt: `packages/mcp/src/knowledge/guardian-agent-instructions.ts`
