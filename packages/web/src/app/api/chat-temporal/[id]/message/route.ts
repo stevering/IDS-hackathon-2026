@@ -72,6 +72,8 @@ export async function POST(
     codeInstanceId,
     pendingDisambiguation,
     restEndpoints,
+    designPairingKind,
+    codePairingKind,
   } = body as {
     conversationId: string;
     message: string;
@@ -90,6 +92,8 @@ export async function POST(
     codeInstanceId?: string;
     pendingDisambiguation?: PendingDisambiguation;
     restEndpoints?: RestEndpointInfo[];
+    designPairingKind?: "explicit" | "auto-resolved" | "ambiguous" | "no-plugin";
+    codePairingKind?: "explicit" | "auto-resolved" | "ambiguous" | "none";
   };
 
   if (!message) {
@@ -269,6 +273,8 @@ export async function POST(
       activeTarget,
       pendingDisambiguation,
       restEndpoints,
+      designPairingKind,
+      codePairingKind,
     });
     const systemPrompt = GUARDIAN_SYSTEM_PROMPT + dynamicCtx;
 

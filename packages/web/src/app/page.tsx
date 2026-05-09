@@ -1595,6 +1595,8 @@ export default function Home() {
     activeTarget,
     pendingDisambiguation,
     restEndpoints,
+    designPairingKind: designResolution.pairing.kind,
+    codePairingKind: codeResolution.pairing.kind,
   });
 
   // Chat variables — Temporal-only since the April 2026 cleanup.

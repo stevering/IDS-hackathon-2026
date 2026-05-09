@@ -431,14 +431,34 @@ async function discoverBridgedInstance(
  * return without depending on a non-exported helper. Kept in sync by hand:
  * the message is read by the LLM via the system prompt rule.
  */
-function ambiguousTargetErrorV2(toolName: string): { success: false; result: unknown; error: string } {
+/**
+ * V2 mirror of `plugInBoundRefusal` in mcp.ts. Kept duplicated to avoid V1↔V2
+ * cross-import; messages are kept in sync by hand.
+ */
+function plugInBoundRefusalV2(
+  toolName: string,
+  hasPendingDisambig: boolean,
+): { success: false; result: unknown; error: string } {
+  if (hasPendingDisambig) {
+    const text =
+      `AMBIGUOUS_TARGET: tool '${toolName}' is plugin-bound but the user picked "Auto" ` +
+      "with multiple Figma plugins connected. Call `request_target_disambiguation({ preamble?: \"...\" })` " +
+      "to delegate the choice to the user — the worker emits a deterministic QCM from the candidate list. " +
+      "Do NOT format a QCM yourself, do NOT call `guardian_list_instances`, do NOT retry this tool " +
+      "until the user picks — it will fail again with the same error.";
+    return {
+      success: false,
+      error: text,
+      result: { content: [{ type: "text", text }], isError: true },
+    };
+  }
   const text =
-    `AMBIGUOUS_TARGET: tool '${toolName}' is plugin-bound but the user picked "Auto" ` +
-    "with multiple Figma plugins connected. Look at the `DESIGN TARGET — DISAMBIGUATION REQUIRED` " +
-    "section at the top of your system prompt: copy the QCM_START block from there VERBATIM as your " +
-    "next response (with QCM_META JSON included). Do NOT call `guardian_list_instances` — the " +
-    "candidate plugins are already listed in that section. Do NOT retry the tool until the user " +
-    "picks — it will fail again with the same error.";
+    `NO_PLUGIN_PAIRED: tool '${toolName}' is plugin-bound but no Figma plugin is paired. ` +
+    "There is NO disambiguation to perform — do NOT call `request_target_disambiguation`. " +
+    "Look at the `DESIGN — NO PLUGIN PAIRED` or `DESIGN — UNAVAILABLE` section in your system prompt: " +
+    "either fall back to read-only REST tools with an explicit fileUrl (if available), or ask the user " +
+    "(in plain text) to open the Guardian plugin in Figma Desktop / enable Figma Console / enable " +
+    "figma_desktop_mcp via the companion. Do NOT retry this tool.";
   return {
     success: false,
     error: text,
@@ -456,6 +476,8 @@ export async function executeMCPToolV2(params: {
   toolName: string;
   arguments: Record<string, unknown>;
   pluginClientId?: string;
+  /** See `executeMCPTool.hasPendingDisambig` in mcp.ts. */
+  hasPendingDisambig?: boolean;
 }): Promise<{ success: boolean; result?: unknown; error?: string }> {
   const log = createLogger("mcp-v2-exec", { u: params.userId.slice(0, 8), tool: params.toolName });
   const supabase = createServiceClient();
@@ -480,8 +502,12 @@ export async function executeMCPToolV2(params: {
     requiresPluginPairing(inst.preset_type, params.toolName) &&
     !params.pluginClientId
   ) {
-    log.warn("AMBIGUOUS_TARGET — refusing plugin-bound tool without pairing");
-    return ambiguousTargetErrorV2(params.toolName);
+    log.warn(
+      params.hasPendingDisambig
+        ? "AMBIGUOUS_TARGET — refusing plugin-bound tool, disambig pending"
+        : "NO_PLUGIN_PAIRED — refusing plugin-bound tool, no plugin available",
+    );
+    return plugInBoundRefusalV2(params.toolName, !!params.hasPendingDisambig);
   }
 
   // ── Figma Console interceptor: figma_pair_plugin ───────────────────────────

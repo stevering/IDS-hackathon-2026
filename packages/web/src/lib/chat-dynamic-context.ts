@@ -101,6 +101,14 @@ export type BuildDynamicContextOpts = {
   activeTarget?: ActiveTarget;
   pendingDisambiguation?: PendingDisambiguation;
   restEndpoints?: RestEndpointInfo[];
+  /**
+   * Resolver-output kinds, forwarded by the frontend so the system prompt can
+   * render the right section per state. We don't infer from activeTarget /
+   * pendingDisambiguation alone because (a) we want to be explicit about the
+   * "no-plugin" branch and (b) code-vs-design state needs to be disjoint.
+   */
+  designPairingKind?: "explicit" | "auto-resolved" | "ambiguous" | "no-plugin";
+  codePairingKind?: "explicit" | "auto-resolved" | "ambiguous" | "none";
 };
 
 // ---------------------------------------------------------------------------
@@ -145,6 +153,46 @@ DO NOT:
 - Format a QCM block yourself for target disambiguation (the worker does it deterministically).
 - Call \`guardian_list_instances\` — the candidates are right above.
 - Retry plugin-bound tools after \`AMBIGUOUS_TARGET\` — call \`request_target_disambiguation\` instead.`;
+  }
+
+  // ── PRIORITY 0bis: design no-plugin state ────────────────────────────────
+  // When no Figma plugin is paired, the LLM MUST know what's still possible
+  // (REST tools with explicit fileUrl) and what's not (any plugin-bound tool).
+  // We branch on whether REST endpoints (figma_console / figma_mcp) are
+  // actually connected — saying "use REST" when no REST is available would
+  // mislead the LLM.
+  //
+  // This block is rendered only when there's no pendingDisambiguation
+  // (otherwise the disambig section above already takes priority).
+  if (opts.designPairingKind === "no-plugin" && !opts.pendingDisambiguation) {
+    const restList = opts.restEndpoints ?? [];
+    if (restList.length > 0) {
+      ctx += `## DESIGN — NO PLUGIN PAIRED, REST AVAILABLE
+No Figma plugin is paired for this conversation, but read-only REST endpoints ARE connected:`;
+      for (const r of restList) {
+        ctx += `\n- **${r.label}** (${r.presetType}) — call \`${r.presetType === "figma_console" ? "figmaconsole_figma_get_*" : "figma_*"}\` tools with an explicit \`fileUrl\` in arguments.`;
+      }
+      ctx += `
+
+REQUIRED ACTION (you are the intent classifier):
+1. **Read-only with a fileUrl the user gave (or you can derive)** → call the REST tool directly. This works without pairing.
+2. **Plugin-bound** (write, execute code, read current selection without a fileUrl) → DO NOT call those tools. Instead, ask the user (in plain text, no QCM needed) to either: open the Guardian plugin in Figma Desktop, OR provide a Figma file URL so you can use REST tools.
+3. **Conversational** → answer in text.
+
+DO NOT call \`figmaconsole_figma_execute\`, \`figmaconsole_figma_set_*\`, \`figmaconsole_figma_create_child\`, \`figma_plugin_execute\` — they will fail with \`NO_PLUGIN_PAIRED\`.`;
+    } else {
+      ctx += `## DESIGN — UNAVAILABLE
+No Figma plugin is paired AND no read-only design MCP (figma_console cloud / figma_mcp companion) is connected. You CANNOT serve any design-related tool call.
+
+REQUIRED ACTION:
+- Ask the user (in plain text) to enable a design capability:
+  - Open the Guardian plugin in Figma Desktop (full read+write via plugin), OR
+  - Enable Figma Console (FC Cloud) in the account settings (read-only via fileUrl), OR
+  - Enable the figma_desktop_mcp via the Guardian companion app (read-only via Figma Desktop).
+- For any other (non-design) request, proceed normally.
+
+DO NOT call any \`figmaconsole_*\`, \`figma_*\`, or \`figma_plugin_execute\` tool — none will work.`;
+    }
   }
 
   // Selected Figma node

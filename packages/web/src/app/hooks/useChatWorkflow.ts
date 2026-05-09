@@ -150,6 +150,13 @@ type UseChatWorkflowParams = {
    * no plugin is paired.
    */
   restEndpoints?: RestEndpointInfo[];
+  /**
+   * Resolver-output kinds. Forwarded so the worker's system prompt can
+   * render the right "no plugin / unavailable" section AND the worker's
+   * AMBIGUOUS_TARGET error can differentiate "ambig" vs "no plugin".
+   */
+  designPairingKind?: "explicit" | "auto-resolved" | "ambiguous" | "no-plugin";
+  codePairingKind?: "explicit" | "auto-resolved" | "ambiguous" | "none";
 };
 
 // ---------------------------------------------------------------------------
@@ -173,6 +180,8 @@ export function useChatWorkflow({
   codeInstanceId,
   pendingDisambiguation,
   restEndpoints,
+  designPairingKind,
+  codePairingKind,
 }: UseChatWorkflowParams): UseChatWorkflowReturn {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [status, setStatus] = useState<ChatWorkflowStatus>("idle");
@@ -248,6 +257,10 @@ export function useChatWorkflow({
   pendingDisambiguationRef.current = pendingDisambiguation;
   const restEndpointsRef = useRef(restEndpoints);
   restEndpointsRef.current = restEndpoints;
+  const designPairingKindRef = useRef(designPairingKind);
+  designPairingKindRef.current = designPairingKind;
+  const codePairingKindRef = useRef(codePairingKind);
+  codePairingKindRef.current = codePairingKind;
 
   // ── Reset workflow state when conversation changes ──────────────────────
   // CRITICAL: workflowIdRef persists across renders as a mutable ref. When the
@@ -1004,6 +1017,8 @@ export function useChatWorkflow({
         activeTarget: activeTargetRef.current,
         pendingDisambiguation: pendingDisambiguationRef.current,
         restEndpoints: restEndpointsRef.current,
+        designPairingKind: designPairingKindRef.current,
+        codePairingKind: codePairingKindRef.current,
       };
 
       if (workflowIdRef.current) {

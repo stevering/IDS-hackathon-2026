@@ -806,14 +806,46 @@ export function requiresPluginPairing(
  * against in the LLM system prompt so the model knows to emit a QCM
  * disambiguation block instead of retrying.
  */
-function ambiguousTargetError(toolName: string): { success: false; result: unknown; error: string } {
+/**
+ * Error returned when a plugin-bound tool is called without a paired plugin.
+ * Two distinct cases (the worker tells which one applies via
+ * `hasPendingDisambig`):
+ *
+ *   - "ambiguous"  → multiple plugins connected, user picked "Auto" → LLM
+ *                    must call `request_target_disambiguation` so the worker
+ *                    emits a deterministic QCM.
+ *   - "no-plugin"  → no plugin connected at all → LLM should fall back to
+ *                    REST tools (if any) or ask the user to enable a design
+ *                    capability. There is NO disambig to do.
+ *
+ * Mixing these two cases in one error message proved confusing for the LLM
+ * (see commit fix(disambig)) — kimi-k2.5 read "AMBIGUOUS_TARGET" + "or no
+ * plugin connected" and improvised a generic "open Guardian plugin" reply.
+ */
+function plugInBoundRefusal(
+  toolName: string,
+  hasPendingDisambig: boolean,
+): { success: false; result: unknown; error: string } {
+  if (hasPendingDisambig) {
+    const text =
+      `AMBIGUOUS_TARGET: tool '${toolName}' is plugin-bound but the user picked "Auto" ` +
+      "with multiple Figma plugins connected. Call `request_target_disambiguation({ preamble?: \"...\" })` " +
+      "to delegate the choice to the user — the worker emits a deterministic QCM from the candidate list. " +
+      "Do NOT format a QCM yourself, do NOT call `guardian_list_instances`, do NOT retry this tool " +
+      "until the user picks — it will fail again with the same error.";
+    return {
+      success: false,
+      error: text,
+      result: { content: [{ type: "text", text }], isError: true },
+    };
+  }
   const text =
-    `AMBIGUOUS_TARGET: tool '${toolName}' is plugin-bound but the user picked "Auto" ` +
-    "with multiple Figma plugins connected. Look at the `DESIGN TARGET — DISAMBIGUATION REQUIRED` " +
-    "section at the top of your system prompt: copy the QCM_START block from there VERBATIM as your " +
-    "next response (with QCM_META JSON included). Do NOT call `guardian_list_instances` — the " +
-    "candidate plugins are already listed in that section. Do NOT retry the tool until the user " +
-    "picks — it will fail again with the same error.";
+    `NO_PLUGIN_PAIRED: tool '${toolName}' is plugin-bound but no Figma plugin is paired. ` +
+    "There is NO disambiguation to perform — do NOT call `request_target_disambiguation` (it has nothing to disambiguate). " +
+    "Look at the `DESIGN — NO PLUGIN PAIRED` or `DESIGN — UNAVAILABLE` section in your system prompt: " +
+    "either fall back to read-only REST tools with an explicit fileUrl (if available), or ask the user " +
+    "(in plain text) to open the Guardian plugin in Figma Desktop / enable Figma Console / enable " +
+    "figma_desktop_mcp via the companion. Do NOT retry this tool.";
   return {
     success: false,
     error: text,
@@ -828,6 +860,13 @@ export async function executeMCPTool(params: {
   arguments: Record<string, unknown>;
   agentId?: string;
   pluginClientId?: string;
+  /**
+   * `true` when the workflow's `currentPendingDisambiguation` is set —
+   * lets this activity return AMBIGUOUS_TARGET (asking the LLM to call
+   * `request_target_disambiguation`) instead of NO_PLUGIN_PAIRED. See
+   * `plugInBoundRefusal` for rationale.
+   */
+  hasPendingDisambig?: boolean;
 }): Promise<{ success: boolean; result?: unknown; error?: string }> {
   const log = createLogger("mcp-exec", {
     u: params.userId.slice(0, 8),
@@ -849,8 +888,12 @@ export async function executeMCPTool(params: {
   // message. Read-only `figma_get_*` tools fall through (they work via
   // fileUrl REST without a paired plugin).
   if (requiresPluginPairing(params.serverId, params.toolName) && !params.pluginClientId) {
-    log.warn("AMBIGUOUS_TARGET — refusing plugin-bound tool without pairing");
-    return ambiguousTargetError(params.toolName);
+    log.warn(
+      params.hasPendingDisambig
+        ? "AMBIGUOUS_TARGET — refusing plugin-bound tool, disambig pending"
+        : "NO_PLUGIN_PAIRED — refusing plugin-bound tool, no plugin available",
+    );
+    return plugInBoundRefusal(params.toolName, !!params.hasPendingDisambig);
   }
 
   // ── Figma Console interceptor: figma_pair_plugin ───────────────────────────

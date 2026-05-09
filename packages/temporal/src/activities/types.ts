@@ -124,6 +124,9 @@ export interface MCPActivities {
     arguments: Record<string, unknown>;
     agentId?: string;
     pluginClientId?: string;
+    /** True when the workflow's currentPendingDisambiguation is set. Lets
+     *  the activity choose between AMBIGUOUS_TARGET and NO_PLUGIN_PAIRED. */
+    hasPendingDisambig?: boolean;
   }): Promise<{ success: boolean; result?: unknown; error?: string }>;
 
   pairFCCloudRelay(params: {
@@ -171,6 +174,8 @@ export interface MCPV2Activities {
     toolName: string;
     arguments: Record<string, unknown>;
     pluginClientId?: string;
+    /** See `MCPActivities.executeMCPTool.hasPendingDisambig`. */
+    hasPendingDisambig?: boolean;
   }): Promise<{ success: boolean; result?: unknown; error?: string }>;
 }
 

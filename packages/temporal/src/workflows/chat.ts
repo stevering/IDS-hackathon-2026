@@ -691,18 +691,18 @@ export async function chatWorkflow(params: ChatWorkflowParams): Promise<void> {
         try {
           if (tc.name === "guardian_figma_execute" || tc.name === "figma_plugin_execute") {
             if (!currentPluginClientId) {
-              // Mirror the AMBIGUOUS_TARGET error returned by mcp.ts for
-              // figma_console plugin-bound tools: the LLM must emit a QCM
-              // before retrying. Without this branch the call would silently
-              // fall through to the unknown-tool path and the LLM would never
-              // learn it needs to disambiguate.
-              const text =
-                `AMBIGUOUS_TARGET: tool '${tc.name}' is plugin-bound but the user picked "Auto" ` +
-                "with multiple Figma plugins connected. Look at the `DESIGN TARGET — DISAMBIGUATION REQUIRED` " +
-                "section at the top of your system prompt: copy the QCM_START block from there VERBATIM as your " +
-                "next response (with QCM_META JSON included). Do NOT call `guardian_list_instances` — the " +
-                "candidate plugins are already listed in that section. Do NOT retry the tool until the user " +
-                "picks — it will fail again with the same error.";
+              // Mirror the refusal returned by mcp.ts for figma_console
+              // plugin-bound tools — branch on whether disambiguation is
+              // pending so the LLM picks the right recovery action.
+              const text = currentPendingDisambiguation
+                ? `AMBIGUOUS_TARGET: tool '${tc.name}' is plugin-bound but the user picked "Auto" ` +
+                  "with multiple Figma plugins connected. Call `request_target_disambiguation({ preamble?: \"...\" })` " +
+                  "to delegate the choice to the user — the worker emits a deterministic QCM. " +
+                  "Do NOT format a QCM yourself, do NOT retry this tool until the user picks."
+                : `NO_PLUGIN_PAIRED: tool '${tc.name}' is plugin-bound but no Figma plugin is paired. ` +
+                  "Do NOT call `request_target_disambiguation` (nothing to disambiguate). " +
+                  "Fall back to read-only REST tools with an explicit fileUrl, or ask the user (in plain text) " +
+                  "to open the Guardian plugin in Figma Desktop / enable Figma Console / enable figma_desktop_mcp.";
               toolResult = JSON.stringify({ content: [{ type: "text", text }], isError: true });
               isError = true;
             } else {
@@ -806,6 +806,7 @@ export async function chatWorkflow(params: ChatWorkflowParams): Promise<void> {
                 toolName: resolved.rawName,
                 arguments: tc.arguments,
                 pluginClientId: currentPluginClientId,
+                hasPendingDisambig: !!currentPendingDisambiguation,
               });
               toolResult = result.success
                 ? JSON.stringify(result.result ?? { success: true })
@@ -823,6 +824,7 @@ export async function chatWorkflow(params: ChatWorkflowParams): Promise<void> {
                 toolName: resolvedV1.rawName,
                 arguments: tc.arguments,
                 pluginClientId: currentPluginClientId,
+                hasPendingDisambig: !!currentPendingDisambiguation,
               });
               toolResult = result.success
                 ? JSON.stringify(result.result ?? { success: true })
@@ -838,6 +840,7 @@ export async function chatWorkflow(params: ChatWorkflowParams): Promise<void> {
               toolName: resolved.rawName,
               arguments: tc.arguments,
               pluginClientId: currentPluginClientId,
+              hasPendingDisambig: !!currentPendingDisambiguation,
             });
             toolResult = result.success
               ? JSON.stringify(result.result ?? { success: true })

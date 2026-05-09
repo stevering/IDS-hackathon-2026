@@ -48,6 +48,7 @@ export async function POST(request: Request) {
     activeTarget,
     designInstanceId, codeInstanceId,
     pendingDisambiguation, restEndpoints,
+    designPairingKind, codePairingKind,
   } = body as {
     conversationId: string;
     message: string;
@@ -68,6 +69,8 @@ export async function POST(request: Request) {
     codeInstanceId?: string;
     pendingDisambiguation?: PendingDisambiguation;
     restEndpoints?: RestEndpointInfo[];
+    designPairingKind?: "explicit" | "auto-resolved" | "ambiguous" | "no-plugin";
+    codePairingKind?: "explicit" | "auto-resolved" | "ambiguous" | "none";
   };
 
   if (!conversationId || !message) {
@@ -138,6 +141,8 @@ export async function POST(request: Request) {
       activeTarget,
       pendingDisambiguation,
       restEndpoints,
+      designPairingKind,
+      codePairingKind,
     });
     const systemPrompt = GUARDIAN_SYSTEM_PROMPT + dynamicCtx;
 
