@@ -433,10 +433,12 @@ async function discoverBridgedInstance(
  */
 function ambiguousTargetErrorV2(toolName: string): { success: false; result: unknown; error: string } {
   const text =
-    `AMBIGUOUS_TARGET: tool '${toolName}' requires a paired Figma plugin, but the ` +
-    "user selected 'Auto' with multiple plugins connected (or no plugin connected). " +
-    "Emit a QCM_FORMAT block (with QCM_META) asking the user which plugin to target, " +
-    "then retry once the user picks. Do NOT retry without pairing — it will fail again.";
+    `AMBIGUOUS_TARGET: tool '${toolName}' is plugin-bound but the user picked "Auto" ` +
+    "with multiple Figma plugins connected. Look at the `DESIGN TARGET — DISAMBIGUATION REQUIRED` " +
+    "section at the top of your system prompt: copy the QCM_START block from there VERBATIM as your " +
+    "next response (with QCM_META JSON included). Do NOT call `guardian_list_instances` — the " +
+    "candidate plugins are already listed in that section. Do NOT retry the tool until the user " +
+    "picks — it will fail again with the same error.";
   return {
     success: false,
     error: text,

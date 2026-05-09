@@ -110,6 +110,52 @@ export type BuildDynamicContextOpts = {
 export function buildDynamicContext(opts: BuildDynamicContextOpts): string {
   let ctx = "";
 
+  // ── PRIORITY 0: target disambiguation ────────────────────────────────────
+  // When the resolver is "ambiguous", this MUST appear before anything else
+  // — the LLM cannot make any plugin-bound tool call until the user picks.
+  // Putting it at the top forces the model to read the rule before it sees
+  // the SELECTED NODE / PLUGIN CONTEXT blocks (which would otherwise prime it
+  // toward "let me just inspect the selection" via figmaconsole_figma_execute).
+  if (opts.pendingDisambiguation) {
+    const pd = opts.pendingDisambiguation;
+    const categoryLabel = pd.category === "design" ? "DESIGN" : "CODE";
+    const targetWord = pd.category === "design" ? "Figma plugin" : "code MCP";
+    const map: Record<string, string> = {};
+    for (const c of pd.candidates) {
+      const display = c.fileName ? `${c.shortId} (${c.fileName})` : c.shortId;
+      map[display] = c.targetId;
+    }
+    const choices = Object.keys(map);
+    const suggestion = pd.candidates.find((c) => c.targetId === pd.suggestionTargetId);
+    const suggestionDisplay = suggestion
+      ? (suggestion.fileName ? `${suggestion.shortId} (${suggestion.fileName})` : suggestion.shortId)
+      : choices[0];
+    ctx += `## ${categoryLabel} TARGET — DISAMBIGUATION REQUIRED (READ FIRST)
+**${pd.candidates.length} ${targetWord}s are connected** and the user picked "Auto". You CANNOT call any plugin-bound tool until the user picks one. There is NO need to call \`guardian_list_instances\` — the candidates are listed below.
+
+Candidates:`;
+    for (const c of pd.candidates) {
+      const isSuggested = c.targetId === pd.suggestionTargetId ? " [SUGGESTED — most recent]" : "";
+      const fileBit = c.fileName ? ` — file "${c.fileName}"` : "";
+      ctx += `\n- ${c.shortId}${fileBit}${isSuggested}`;
+    }
+    ctx += `
+
+REQUIRED ACTION (verbatim):
+Emit this QCM block as your response. Copy it EXACTLY — the QCM_META JSON drives the UI's Target selector update on click.
+
+<!-- QCM_START -->
+<!-- QCM_META: ${JSON.stringify({ category: pd.category, map })} -->
+${choices.map((c) => `- [CHOICE] ${c}`).join("\n")}
+<!-- QCM_END -->
+
+You MAY add a one-line text question before the \`<!-- QCM_START -->\` line (e.g. "Quel plugin cibler ?"). Suggest "${suggestionDisplay}" — but do NOT pick silently.
+
+EXCEPTIONS — these tools work WITHOUT picking a plugin:
+- ${pd.category === "design" ? "READ-ONLY \`figmaconsole_figma_get_*\` and \`figma_*\` tools called with an explicit fileUrl in arguments — they hit the REST API, no pairing needed." : ""}
+- DO NOT call \`figmaconsole_figma_execute\`, \`figmaconsole_figma_set_*\`, \`figmaconsole_figma_create_child\`, \`figma_plugin_execute\` or any write tool until the user picks. The worker will reject these with \`AMBIGUOUS_TARGET\` and you will have wasted a turn.`;
+  }
+
   // Selected Figma node
   if (opts.selectedNode) {
     const { nodeUrl, nodes } = opts.selectedNode;
@@ -166,48 +212,7 @@ RULES:
 - If the user asks to switch to a different plugin/file, instruct them to change the selection in the Target selector — Guardian will re-pair automatically. Do NOT attempt to drive other plugins from \`figmaconsole_*\` calls.`;
   }
 
-  // Disambiguation required — user picked "Auto" and the resolver found
-  // multiple candidates. The LLM must ask the user via QCM_FORMAT before
-  // any plugin-bound tool call. The QCM_META block lets the UI map the
-  // chosen label back to the targetId so the TargetSelector updates on click.
-  if (opts.pendingDisambiguation) {
-    const pd = opts.pendingDisambiguation;
-    const categoryLabel = pd.category === "design" ? "DESIGN" : "CODE";
-    const targetWord = pd.category === "design" ? "Figma plugin" : "code MCP";
-    const map: Record<string, string> = {};
-    for (const c of pd.candidates) {
-      const display = c.fileName ? `${c.shortId} (${c.fileName})` : c.shortId;
-      map[display] = c.targetId;
-    }
-    const choices = Object.keys(map);
-    const suggestion = pd.candidates.find((c) => c.targetId === pd.suggestionTargetId);
-    const suggestionDisplay = suggestion
-      ? (suggestion.fileName ? `${suggestion.shortId} (${suggestion.fileName})` : suggestion.shortId)
-      : choices[0];
-    ctx += `\n\n## ${categoryLabel} TARGET — DISAMBIGUATION REQUIRED
-The user selected "Auto" and ${pd.candidates.length} ${targetWord}s are connected. Guardian cannot route plugin-bound tool calls without knowing which one to target.
-
-Candidates:`;
-    for (const c of pd.candidates) {
-      const isSuggested = c.targetId === pd.suggestionTargetId ? " [SUGGESTED — most recent]" : "";
-      const fileBit = c.fileName ? ` — file "${c.fileName}"` : "";
-      ctx += `\n- ${c.shortId}${fileBit}${isSuggested}`;
-    }
-    ctx += `
-
-RULES:
-- ${pd.category === "design" ? "For PLUGIN-BOUND tools (\`figmaconsole_figma_execute\`, \`figmaconsole_figma_create_child\`, \`figmaconsole_figma_set_*\`, \`figma_plugin_execute\`), you MUST first ask the user which ${targetWord} to target." : `For CODE tool calls (any tool routing through a code MCP), you MUST first ask the user which ${targetWord} to use.`}
-- ${pd.category === "design" ? "For READ-ONLY tools (\`figmaconsole_figma_get_*\`, \`figma_*\`) used with an explicit fileUrl, NO disambiguation is needed — those work without a paired plugin." : ""}
-- Use this exact QCM format. The \`QCM_META\` block carries the targetId mapping so the UI can update the Target selector at click time:
-
-<!-- QCM_START -->
-<!-- QCM_META: ${JSON.stringify({ category: pd.category, map })} -->
-${choices.map((c) => `- [CHOICE] ${c}`).join("\n")}
-<!-- QCM_END -->
-
-- Suggest "${suggestionDisplay}" since it was most recently active, but ALWAYS defer to the user. Do NOT pick silently.
-- If you nonetheless attempt a plugin-bound tool call without a confirmed target, the worker will reject with \`AMBIGUOUS_TARGET\` — recover by emitting the QCM above and retrying after the user picks.`;
-  }
+  // (DISAMBIGUATION REQUIRED block was rendered at the top of this function.)
 
   // REST endpoints (always available, take fileUrl). Listed even when
   // ACTIVE FIGMA TARGET is resolved — useful when the user asks about a

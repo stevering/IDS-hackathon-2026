@@ -220,7 +220,23 @@ export async function POST(request: Request) {
       .eq("id", conversationId)
       .eq("user_id", userId);
 
-    log.info("chatWorkflow started", { conv: conversationId, model: resolvedModel, mcpServerIds: (mcpServerIds ?? []).join(",") || null, mcpServerCount: mcpServerIds?.length ?? 0, figmaPluginClientId: figmaPluginClientId ?? null, hasDynamicCtx: dynamicCtx.length > 0, designInstanceId: designInstanceId ?? null, codeInstanceId: codeInstanceId ?? null });
+    log.info("chatWorkflow started", {
+      conv: conversationId,
+      model: resolvedModel,
+      mcpServerIds: (mcpServerIds ?? []).join(",") || null,
+      mcpServerCount: mcpServerIds?.length ?? 0,
+      figmaPluginClientId: figmaPluginClientId ?? null,
+      hasDynamicCtx: dynamicCtx.length > 0,
+      designInstanceId: designInstanceId ?? null,
+      codeInstanceId: codeInstanceId ?? null,
+      // Auto-target diagnostics — true when the frontend resolver said
+      // "ambiguous" and forwarded the candidate list. If figmaPluginClientId
+      // is null AND this is false, either the resolver returned "no-plugin"
+      // (0 plugins) or the wire-up dropped the disambiguation payload.
+      hasDisambig: !!pendingDisambiguation,
+      disambigCandidateCount: pendingDisambiguation?.candidates.length ?? 0,
+      restEndpointCount: restEndpoints?.length ?? 0,
+    });
 
     return NextResponse.json({ workflowId, conversationId });
   } catch (err) {
