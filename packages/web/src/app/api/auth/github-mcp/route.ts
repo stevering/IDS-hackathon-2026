@@ -104,11 +104,11 @@ export async function GET(request: NextRequest) {
   }
 }
 
-function alreadyConnectedHtml(tokensJson: string | null, targetOrigin: string): string {
+function alreadyConnectedHtml(_tokensJson: string | null, targetOrigin: string): string {
   return `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>GitHub — Connected</title></head><body>
   <script>
-    var tokensJson = ${JSON.stringify(tokensJson)};
-    if (window.opener) { try { window.opener.postMessage({ type: 'github-oauth-complete', success: true, tokensJson: tokensJson }, ${JSON.stringify(targetOrigin)}); } catch(e) {} }
+    // Tokens are persisted server-side (httpOnly cookie + Supabase Vault).
+    if (window.opener) { try { window.opener.postMessage({ type: 'github-oauth-complete', success: true }, ${JSON.stringify(targetOrigin)}); } catch(e) {} }
     window.close();
   </script>
   </body></html>`;

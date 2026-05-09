@@ -134,7 +134,8 @@ export async function GET(request: NextRequest) {
     writeOAuthResult(session, { type: "figma-mcp-auth", success: true, tokens: tokensJson ? { figma_mcp_tokens: tokensJson } : undefined });
     return new NextResponse(
       `<!DOCTYPE html><html><head><meta charset="UTF-8"></head><body><script>
-        if (window.opener) { try { window.opener.postMessage({ type: 'figma-oauth-complete', success: true, tokensJson: ${JSON.stringify(tokensJson ?? null)} }, ${JSON.stringify(baseUrl)}); } catch(e) {} }
+        // Tokens are persisted server-side (httpOnly cookie + Supabase Vault).
+        if (window.opener) { try { window.opener.postMessage({ type: 'figma-oauth-complete', success: true }, ${JSON.stringify(baseUrl)}); } catch(e) {} }
         window.close();
       </script></body></html>`,
       { headers: { "Content-Type": "text/html" } }

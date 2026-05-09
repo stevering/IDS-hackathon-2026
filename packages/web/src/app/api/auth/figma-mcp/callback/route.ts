@@ -171,12 +171,10 @@ export async function GET(request: NextRequest) {
     <p class="close-hint" id="close-hint">Authentication complete — you can close this tab.</p>
   </div>
   <script>
-    var tokensJson = ${JSON.stringify(tokensJson ?? null)};
-    if (tokensJson) {
-      try { localStorage.setItem('figma_mcp_tokens', tokensJson); } catch(e) {}
-    }
+    // Tokens are persisted server-side (httpOnly cookie + Supabase Vault).
+    // We notify the opener with a success flag only — never the raw tokens.
     if (window.opener) {
-      try { window.opener.postMessage({ type: 'figma-oauth-complete', success: true, tokensJson: tokensJson }, ${JSON.stringify(baseUrl)}); } catch(e) {}
+      try { window.opener.postMessage({ type: 'figma-oauth-complete', success: true }, ${JSON.stringify(baseUrl)}); } catch(e) {}
     }
     window.close();
     setTimeout(function() {

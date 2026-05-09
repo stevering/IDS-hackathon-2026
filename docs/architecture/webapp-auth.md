@@ -105,9 +105,40 @@ The shell of the chat UI fires many parallel requests on mount (`useGuardianPres
 
 ## OAuth callback postMessage security
 
-All OAuth callback routes (Figma MCP, GitHub MCP, Southleft MCP) return HTML pages that notify the opener window via `window.opener.postMessage()`. The `targetOrigin` parameter is set to the server-computed base URL (`getBaseUrl()` or `requestOrigin(request)`) — never `'*'`. This prevents a malicious site from opening the callback URL and intercepting OAuth tokens via `window.opener`.
+All OAuth callback routes (Figma MCP, GitHub MCP, Southleft MCP) return HTML pages that notify the opener window via `window.opener.postMessage()`. The `targetOrigin` parameter is set to the server-computed base URL (`getBaseUrl()` or `requestOrigin(request)`) — never `'*'`. This prevents a malicious site from opening the callback URL and intercepting the success signal via `window.opener`.
+
+Since the 2026-05-03 RGPD audit (P0 #2), these popup messages **never carry tokens** — they are now `{type: '<provider>-oauth-complete', success: true}` flags only. Tokens stay server-side (httpOnly cookies + Supabase Vault). The opener queries `/api/auth/<provider>/status` to confirm connection state.
 
 Files: `api/auth/{figma-mcp,github-mcp,southleft-mcp}/{route,callback/route}.ts`, `page.tsx`.
+
+## Webapp → Figma plugin postMessage security (P0 #1, 2026-05-03)
+
+The webapp runs inside the Figma plugin's `ui.html` iframe at a parent origin we don't know at build time. Previously, all `window.parent.postMessage(..., "*")` calls allowed any malicious page that embedded the webapp to intercept `AUTH_STATE`, `CONNECT_FC_PORT`, `CONNECT_FC_CLOUD_RELAY`, and `EXECUTE_CODE` payloads.
+
+The fix routes every outbound parent post through `lib/parent-postmessage.ts`:
+
+- `recordParentOrigin(origin)` — called from the inbound message listener once the source has been validated as `window.parent`. Caches the parent's `event.origin` for subsequent posts.
+- `postMessageToParent(message)` — sends to the cached origin. Falls back to `"*"` only on the first outbound message (Figma's sandboxed null-origin iframes only accept `"*"`).
+
+Once the plugin has spoken (e.g. `set-theme` ~50 ms after iframe load), every subsequent outbound message is targeted, so `EXECUTE_CODE` and relay codes never broadcast.
+
+Files: `lib/parent-postmessage.ts`, `app/hooks/useFigmaPlugin.ts`, `app/hooks/useFigmaExecuteChannel.ts`, `app/page.tsx`, `app/(auth)/login/page.tsx`.
+
+## OAuth token storage (post-audit, 2026-05-03)
+
+Third-party MCP OAuth tokens (Figma, GitHub, Figma Console / Southleft) are persisted in two places:
+
+1. **httpOnly cookie** scoped to the webapp origin (used when the webapp runs as a top-level page).
+2. **Supabase Vault** via `upsert_mcp_connection(p_server_id, p_tokens_json, p_scopes, p_expires_at)` (used by Temporal workers and by the webapp when it runs inside the Figma plugin iframe — `SameSite=Lax` cookies are not sent on cross-site fetches in that context).
+
+The status endpoints `/api/auth/{figma-mcp,github-mcp,southleft-mcp}/status` check both:
+
+- Cookie path (fast, top-level).
+- Supabase Vault via `user_mcp_connections` (works in iframe context — the user's Supabase session is `SameSite=None` and reaches the API).
+
+Tokens are **never** written to `localStorage`. Prior to the 2026-05-03 audit, three keys (`figma_mcp_tokens`, `github_mcp_tokens`, `southleft_access_token`) were dual-written to `localStorage` to work around the SameSite issue — XSS could exfiltrate them. Removed completely.
+
+Files: `api/auth/{figma-mcp,github-mcp,southleft-mcp}/status/route.ts`, callback HTML in `api/auth/.../{route,callback/route}.ts`, `app/page.tsx`, `app/(main)/account/page.tsx`.
 
 ## Other defenses (kept regardless of root cause)
 

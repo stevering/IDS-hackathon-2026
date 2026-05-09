@@ -122,12 +122,9 @@ export async function GET(request: NextRequest) {
     <p class="close-hint" id="close-hint">Authentication complete — you can close this tab.</p>
   </div>
   <script>
-    var tokensJson = ${JSON.stringify(tokensJson ?? null)};
-    if (tokensJson) {
-      try { localStorage.setItem('github_mcp_tokens', tokensJson); } catch(e) {}
-    }
+    // Tokens are persisted server-side (httpOnly cookie + Supabase Vault).
     if (window.opener) {
-      try { window.opener.postMessage({ type: 'github-oauth-complete', success: true, tokensJson: tokensJson }, ${JSON.stringify(baseUrl)}); } catch(e) {}
+      try { window.opener.postMessage({ type: 'github-oauth-complete', success: true }, ${JSON.stringify(baseUrl)}); } catch(e) {}
     }
     window.close();
     setTimeout(function() {

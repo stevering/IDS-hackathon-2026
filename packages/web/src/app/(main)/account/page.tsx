@@ -1232,10 +1232,6 @@ export default function AccountPage() {
                   setDisconnectingService(cp.preset_type);
                   try {
                     await fetch(`/api/user/mcp-instances?id=${encodeURIComponent(cp.instance.id)}`, { method: "DELETE" });
-                    // Also clean legacy localStorage tokens
-                    if (cp.preset_type === "figma_mcp") localStorage.removeItem("figma_mcp_tokens");
-                    if (cp.preset_type === "github") localStorage.removeItem("github_mcp_tokens");
-                    if (cp.preset_type === "figma_console") localStorage.removeItem("southleft_access_token");
                     await mcpHook.reload();
                     await loadData();
                   } finally {

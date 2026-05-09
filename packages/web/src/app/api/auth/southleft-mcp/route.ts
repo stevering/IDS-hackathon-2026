@@ -20,15 +20,15 @@ function requestOrigin(request: NextRequest): string {
 }
 
 /** Self-contained popup HTML — avoids navigating to auth-guarded pages. */
-function successHtml(accessToken: string | undefined, targetOrigin: string): string {
+function successHtml(targetOrigin: string): string {
   return `<!DOCTYPE html>
 <html lang="en"><head><meta charset="UTF-8"><title>Figma Console — Connected</title>
 <style>*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}body{min-height:100vh;display:flex;align-items:center;justify-content:center;background:#0d0d0d;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#fff}.card{text-align:center;padding:48px 40px;background:#161616;border:1px solid rgba(255,255,255,.08);border-radius:16px;max-width:360px;width:100%}.icon{width:56px;height:56px;border-radius:50%;background:rgba(52,211,153,.12);border:1px solid rgba(52,211,153,.3);display:flex;align-items:center;justify-content:center;margin:0 auto 20px;font-size:24px}h1{font-size:20px;font-weight:600;margin-bottom:8px}.subtitle{font-size:14px;color:rgba(255,255,255,.5);margin-bottom:24px;line-height:1.5}.close-hint{display:none;font-size:13px;color:rgba(255,255,255,.3);background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.08);border-radius:8px;padding:10px 16px}</style></head>
 <body><div class="card"><div class="icon">✓</div><h1>Connected!</h1><p class="subtitle">Figma Console is now connected.<br>Returning to the plugin…</p><p class="close-hint" id="close-hint">Authentication complete — you can close this tab.</p></div>
 <script>
-var token = ${JSON.stringify(accessToken ?? null)};
-if(token){localStorage.setItem('southleft_access_token',token);}
-if(window.opener){try{window.opener.postMessage({type:'southleft-oauth-complete',accessToken:token},${JSON.stringify(targetOrigin)});}catch(e){}}
+// Tokens are persisted server-side (httpOnly cookie + Supabase Vault).
+// We notify the opener with a success flag only — never the raw access_token.
+if(window.opener){try{window.opener.postMessage({type:'southleft-oauth-complete',success:true},${JSON.stringify(targetOrigin)});}catch(e){}}
 window.close();
 setTimeout(function(){document.getElementById('close-hint').style.display='block';},200);
 </script></body></html>`;
@@ -78,7 +78,7 @@ export async function GET(request: NextRequest) {
     });
 
     // Return self-contained HTML so the popup never navigates to an auth-guarded page
-    const html = successHtml(existingTokens?.access_token, origin);
+    const html = successHtml(origin);
     const response = new NextResponse(html, {
       headers: { "Content-Type": "text/html" },
     });
