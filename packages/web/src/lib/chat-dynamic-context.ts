@@ -155,6 +155,22 @@ DO NOT:
 - Retry plugin-bound tools after \`AMBIGUOUS_TARGET\` — call \`request_target_disambiguation\` instead.`;
   }
 
+  // ── PRIORITY 0ter: code "none" state ─────────────────────────────────────
+  // No code MCP instance is configured + ready. The LLM has no code tools
+  // in its catalog and would otherwise improvise (invent tool names, or
+  // claim it can do code things). Tell it explicitly so it asks the user.
+  if (opts.codePairingKind === "none") {
+    ctx += `## CODE — NOT CONFIGURED
+No Code MCP instance is enabled and connected for this conversation. There are NO \`code_*\` / \`cursor_*\` / \`vscode_*\` / similar tools in your catalog.
+
+REQUIRED ACTION:
+- For code-related requests (read a repo file, edit a file, run a command in the IDE, etc.): ask the user (in plain text) to add and enable a Code MCP instance from the account settings. List a few common options if helpful (Cursor, VS Code, Claude Code, etc.).
+- For non-code requests, proceed normally.
+- DO NOT invent code tool names. DO NOT pretend to read files you cannot reach.
+
+`;
+  }
+
   // ── PRIORITY 0bis: design no-plugin state ────────────────────────────────
   // When no Figma plugin is paired, the LLM MUST know what's still possible
   // (REST tools with explicit fileUrl) and what's not (any plugin-bound tool).
