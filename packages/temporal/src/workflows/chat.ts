@@ -197,6 +197,17 @@ export async function chatWorkflow(params: ChatWorkflowParams): Promise<void> {
   let currentCodePairingKind: ChatWorkflowParams["codePairingKind"] = params.codePairingKind;
   let currentDesignPairingKind: ChatWorkflowParams["designPairingKind"] = params.designPairingKind;
 
+  // Pending user pick from a QCM click. Set by the chatNewMessage signal
+  // handler when the route forwards a `qcmResolution` payload. The
+  // `request_target_disambiguation` tool's execution awaits this via
+  // `condition()` (Temporal-native long-running tool execution — same
+  // pattern as Claude Code's `AskUserQuestion`: the tool call blocks
+  // until the user responds, then returns the answer as the tool result).
+  // Cleared by the consuming tool branch.
+  let pendingQCMResolution:
+    | { targetId: string; choiceLabel: string; category: "design" | "code" }
+    | undefined;
+
   // Pending messages from signals
   const pendingMessages: ChatNewMessagePayload[] = [];
 
@@ -237,7 +248,17 @@ export async function chatWorkflow(params: ChatWorkflowParams): Promise<void> {
     if (msg.codePairingKindOverride !== undefined) {
       currentCodePairingKind = msg.codePairingKindOverride ?? undefined;
     }
-    pendingMessages.push(msg);
+    if (msg.qcmResolution) {
+      // Click on a QCM choice = TOOL RESPONSE for the in-flight
+      // `request_target_disambiguation` call (option C, blocking pattern).
+      // The tool's execution is awaiting this via `condition()` — once
+      // we set this, it wakes up and returns the result. We DO NOT
+      // push to pendingMessages because this isn't a fresh user turn:
+      // the agent is mid-turn, executing a long-running tool.
+      pendingQCMResolution = msg.qcmResolution;
+    } else {
+      pendingMessages.push(msg);
+    }
   });
 
   setHandler(chatCancelSignal, () => {
@@ -608,89 +629,6 @@ export async function chatWorkflow(params: ChatWorkflowParams): Promise<void> {
         toolCalls: llmResult.toolCalls,
       });
 
-      // ── Deterministic disambiguation short-circuit ─────────────────────
-      // If the LLM signaled "I need the user to pick a target" by calling
-      // `request_target_disambiguation`, we DON'T execute any tools and we
-      // DON'T re-invoke the LLM this turn. We just synthesize the QCM block
-      // from the current candidate list and emit it as the assistant
-      // response. The frontend's QCMBlock click handler will fire next turn
-      // with the resolved targetId, and the LLM resumes normally.
-      //
-      // This makes the QCM emission 100% deterministic — no model
-      // instruction-following required for the QCM format.
-      const disambigTc = llmResult.toolCalls.find((t) => t.name === "request_target_disambiguation");
-      if (disambigTc) {
-        const pd = currentPendingDisambiguation;
-        if (!pd || pd.candidates.length === 0) {
-          // The LLM called the tool but no disambig is pending. Either the
-          // user already picked between LLM dispatch and now, or the LLM
-          // hallucinated. Tell it to retry without the tool.
-          const errMsg = JSON.stringify({
-            content: [{ type: "text", text: "request_target_disambiguation called but no disambiguation is currently pending. Proceed without it — call read-only tools or answer in text." }],
-            isError: true,
-          });
-          messages.push({ role: "tool", content: errMsg, toolCallId: disambigTc.id });
-          // Also persist for F5 recovery
-          await persistChatMessage({
-            conversationId: params.conversationId,
-            role: "assistant",
-            content: `Tool: ${disambigTc.name}`,
-            userId: params.userId,
-            parts: [{ type: "dynamic-tool", toolName: disambigTc.name, toolCallId: disambigTc.id, input: disambigTc.arguments, state: "error", output: { content: [{ type: "text", text: errMsg }], isError: true } }],
-          });
-          status = "streaming";
-          continue; // re-loop to LLM with the error tool result
-        }
-
-        const preambleArg = (disambigTc.arguments?.preamble as string | undefined)?.trim();
-        const qcmContent = buildDisambiguationQCM(pd, preambleArg);
-
-        // Persist as a fresh assistant message (independent from the tool-call
-        // bubble — the tool bubble itself is hidden from the user).
-        await persistChatMessage({
-          conversationId: params.conversationId,
-          role: "assistant",
-          content: qcmContent,
-          userId: params.userId,
-          metadata: { synthetic: "disambiguation", finishReason: "stop" },
-        });
-
-        // Broadcast text_complete so the frontend renders the QCM and stops
-        // the streaming spinner. `hasToolCalls: false` tells the client this
-        // IS the final message for the turn.
-        try {
-          await broadcastChatEvent({
-            conversationId: params.conversationId,
-            event: "text_complete",
-            payload: { content: qcmContent, hasToolCalls: false, finishReason: "stop" },
-          });
-        } catch {
-          // Non-fatal — the persisted message will appear on next reload
-        }
-
-        // Acknowledge the tool call to the LLM history (no-op semantics —
-        // we never re-enter the LLM this turn) and persist for F5 recovery.
-        messages.push({
-          role: "tool",
-          content: JSON.stringify({ content: [{ type: "text", text: "Disambiguation QCM emitted to user. Wait for the user's pick before continuing." }], isError: false }),
-          toolCallId: disambigTc.id,
-        });
-        await persistChatMessage({
-          conversationId: params.conversationId,
-          role: "assistant",
-          content: `Tool: ${disambigTc.name}`,
-          userId: params.userId,
-          parts: [{ type: "dynamic-tool", toolName: disambigTc.name, toolCallId: disambigTc.id, input: disambigTc.arguments, state: "output-available", output: { content: [{ type: "text", text: "QCM emitted" }], isError: false } }],
-        });
-
-        // Push the synthesized assistant turn into the in-memory history so
-        // the next LLM call (after user picks) sees the conversation flow.
-        messages.push({ role: "assistant", content: qcmContent });
-
-        status = "idle";
-        return;
-      }
-
       for (const tc of llmResult.toolCalls) {
         let toolResult: string;
         let isError = false;
@@ -707,7 +645,86 @@ export async function chatWorkflow(params: ChatWorkflowParams): Promise<void> {
         }
 
         try {
-          if (tc.name === "guardian_figma_execute" || tc.name === "figma_plugin_execute") {
+          if (tc.name === "request_target_disambiguation") {
+            // ── Blocking long-running tool execution ──────────────────────
+            // Pattern: same as Claude Code's `AskUserQuestion`. The tool's
+            // execution is "ask the user to pick", which means:
+            //   1. Emit the QCM (synthetic assistant msg + broadcast).
+            //   2. AWAIT the user's click via Temporal `condition()` —
+            //      Temporal workflows can block for hours; this is the
+            //      idiomatic way to suspend until a signal arrives.
+            //   3. Return the click as the tool result.
+            //
+            // The LLM history then has a clean `[tool_call → tool_result(picked: X)]`
+            // pair, with no mid-conversation mutation or placeholder shenanigans.
+            const pd = currentPendingDisambiguation;
+            if (!pd || pd.candidates.length === 0) {
+              const text = "request_target_disambiguation called but no disambiguation is currently pending. Proceed without it — call read-only tools or answer in text.";
+              toolResult = JSON.stringify({ content: [{ type: "text", text }], isError: true });
+              isError = true;
+            } else {
+              // Build + emit the QCM as a fresh assistant message (separate
+              // from the tool-call bubble so the buttons render cleanly).
+              const preambleArg = (tc.arguments?.preamble as string | undefined)?.trim();
+              const qcmContent = buildDisambiguationQCM(pd, preambleArg);
+              await persistChatMessage({
+                conversationId: params.conversationId,
+                role: "assistant",
+                content: qcmContent,
+                userId: params.userId,
+                metadata: { synthetic: "disambiguation", finishReason: "stop" },
+              });
+              try {
+                await broadcastChatEvent({
+                  conversationId: params.conversationId,
+                  event: "text_complete",
+                  payload: { content: qcmContent, hasToolCalls: false, finishReason: "stop" },
+                });
+              } catch { /* non-fatal */ }
+
+              // Block until the user clicks (sets pendingQCMResolution via
+              // signal handler) OR types something else (pendingMessages
+              // grows) OR times out. 10 minutes is generous for a user
+              // stepping away briefly.
+              const QCM_TIMEOUT_MS = 10 * 60_000;
+              await condition(
+                () => pendingQCMResolution !== undefined || pendingMessages.length > 0,
+                QCM_TIMEOUT_MS,
+              );
+
+              if (pendingQCMResolution) {
+                const r = pendingQCMResolution;
+                pendingQCMResolution = undefined;
+                toolResult = JSON.stringify({
+                  content: [{
+                    type: "text",
+                    text: `User picked: ${r.choiceLabel} (targetId=${r.targetId}, category=${r.category}). Continue with the original action using this target.`,
+                  }],
+                  isError: false,
+                });
+                isError = false;
+              } else if (pendingMessages.length > 0) {
+                // User typed instead of clicking. Abort the disambig; the
+                // typed message will be processed on the next outer-loop
+                // iteration as a fresh user turn.
+                toolResult = JSON.stringify({
+                  content: [{
+                    type: "text",
+                    text: "User typed a message instead of clicking the QCM. Disambiguation aborted — the user's message will be processed next.",
+                  }],
+                  isError: true,
+                });
+                isError = true;
+              } else {
+                // Timed out (10 min)
+                toolResult = JSON.stringify({
+                  content: [{ type: "text", text: "User did not respond to the disambiguation within 10 minutes." }],
+                  isError: true,
+                });
+                isError = true;
+              }
+            }
+          } else if (tc.name === "guardian_figma_execute" || tc.name === "figma_plugin_execute") {
             if (!currentPluginClientId) {
               // Mirror the refusal returned by mcp.ts for figma_console
               // plugin-bound tools — branch on whether disambiguation is

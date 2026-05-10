@@ -4,13 +4,37 @@ import type { QCMMeta } from "@/lib/content-parsing";
 
 type Props = {
   choices: string[];
+  /**
+   * Fallback for non-target QCMs (project pickers, etc.). When `meta` is
+   * present (target disambiguation), `onQCMResolve` is preferred — see
+   * the click handler. `onSelect` remains for the legacy generic-QCM path.
+   */
   onSelect: (choice: string) => void;
   disabled: boolean;
   meta?: QCMMeta;
+  /**
+   * Updates the local TargetSelector state when a target QCM choice is
+   * picked. Always called (synchronously) before the resolution flow
+   * fires, so the selector reflects the user's pick immediately.
+   */
   onTargetChoice?: (category: "design" | "code", targetId: string) => void;
+  /**
+   * Sends the click as a TOOL RESPONSE to the worker (option C) instead
+   * of as a free-form user message. When provided AND `meta` is present,
+   * `onSelect` is NOT called — the click is fully resolved via this
+   * dedicated path. The worker replaces the prior
+   * `request_target_disambiguation` tool result with the resolution and
+   * resumes the LLM loop without polluting the LLM history with a
+   * redundant user message.
+   */
+  onQCMResolve?: (
+    category: "design" | "code",
+    targetId: string,
+    choiceLabel: string,
+  ) => void;
 };
 
-export function QCMBlock({ choices, onSelect, disabled, meta, onTargetChoice }: Props) {
+export function QCMBlock({ choices, onSelect, disabled, meta, onTargetChoice, onQCMResolve }: Props) {
   return (
     <div className="my-3 flex flex-wrap gap-2">
       {choices.map((choice, i) => (
@@ -18,9 +42,15 @@ export function QCMBlock({ choices, onSelect, disabled, meta, onTargetChoice }: 
           key={i}
           onClick={() => {
             if (disabled) return;
-            if (meta && onTargetChoice) {
+            if (meta) {
               const targetId = meta.map[choice];
-              if (targetId) onTargetChoice(meta.category, targetId);
+              if (targetId) {
+                onTargetChoice?.(meta.category, targetId);
+                if (onQCMResolve) {
+                  onQCMResolve(meta.category, targetId, choice);
+                  return; // option C path — do NOT also call onSelect
+                }
+              }
             }
             onSelect(choice);
           }}

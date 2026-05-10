@@ -74,6 +74,12 @@ export async function POST(
     restEndpoints,
     designPairingKind,
     codePairingKind,
+    // Option C disambig (blocking-tool-execution pattern): when the user
+    // clicks a QCM choice, the frontend sends this. The route persists the
+    // user bubble in DB for UI consistency and forwards `qcmResolution` in
+    // the chatNewMessage signal. The worker's awaiting tool execution
+    // wakes up via `condition()` and returns the pick as the tool result.
+    qcmResolution,
   } = body as {
     conversationId: string;
     message: string;
@@ -94,6 +100,7 @@ export async function POST(
     restEndpoints?: RestEndpointInfo[];
     designPairingKind?: "explicit" | "auto-resolved" | "ambiguous" | "no-plugin";
     codePairingKind?: "explicit" | "auto-resolved" | "ambiguous" | "none";
+    qcmResolution?: { targetId: string; choiceLabel: string; category: "design" | "code" };
   };
 
   if (!message) {
@@ -169,7 +176,9 @@ export async function POST(
       if (workflowConvId && workflowConvId === conversationId) {
         workflowMatchesConv = true;
 
-        // Save user message, then signal the workflow
+        // Save user message, then signal the workflow.
+        // For QCM resolutions, tag the metadata so F5/replay can identify
+        // the bubble (and the UI could style it differently if needed).
         await supabase.rpc("save_message", {
           p_conversation_id: conversationId,
           p_role: "user",
@@ -177,7 +186,9 @@ export async function POST(
           p_parts: [{ type: "text", text: message }],
           p_sender_client_id: null,
           p_sender_short_id: null,
-          p_metadata: {},
+          p_metadata: qcmResolution
+            ? { qcmResolution: { targetId: qcmResolution.targetId, category: qcmResolution.category } }
+            : {},
         });
 
         await handle.signal("chatNewMessage", {
@@ -208,6 +219,10 @@ export async function POST(
             : null,
           designPairingKindOverride: designPairingKind ?? null,
           codePairingKindOverride: codePairingKind ?? null,
+          // Option C: QCM click → tool response. The worker's blocking
+          // `request_target_disambiguation` execution awaits this via
+          // `condition()` and returns it as the tool result.
+          qcmResolution: qcmResolution ?? undefined,
         });
         log.info("signalled existing workflow", { conv: conversationId, model: resolvedModel });
         return NextResponse.json({ workflowId, conversationId, action: "signalled" });

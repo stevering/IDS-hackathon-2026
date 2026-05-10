@@ -50,6 +50,19 @@ export type UseChatWorkflowReturn = {
   messages: ChatMessage[];
   sendMessage: (msg: { text: string; forceConversationId?: string }) => void;
   /**
+   * Send the user's QCM click as a TOOL RESPONSE (option C in the disambig
+   * design). Behaves like `sendMessage` for UI / DB persistence (the user
+   * bubble appears with `choiceLabel` as text), but the worker treats it
+   * as a resolution for the prior `request_target_disambiguation` call —
+   * it replaces the placeholder tool result and resumes the LLM loop
+   * without adding a fresh user message to the LLM history.
+   */
+  resolveDisambiguation: (args: {
+    category: "design" | "code";
+    targetId: string;
+    choiceLabel: string;
+  }) => void;
+  /**
    * Abort the current generation by signalling `chatCancel` to the running
    * Temporal workflow. No-op if no workflow is attached (status === "idle" or
    * no workflow id known). Because Temporal runs in the cloud, this is the
@@ -1103,6 +1116,87 @@ export function useChatWorkflow({
     }
   }, [conversationId, enabled, model, mcpServerIds, figmaPluginClientId, subscribeToStream]);
 
+  // ── Resolve disambiguation (option C) ───────────────────────────────────
+  // The user clicked a choice in the worker-emitted QCM. Semantically this
+  // is a TOOL RESPONSE for the prior `request_target_disambiguation` call,
+  // not a free user message. POST to /message with the `qcmResolution`
+  // marker — the route persists the user bubble (UI consistency) AND
+  // updates the matching tool-call DB row, then signals the worker which
+  // replaces the placeholder tool result and resumes the LLM loop without
+  // pushing a fresh user message into the LLM history.
+  const resolveDisambiguation = useCallback(
+    async ({ category, targetId, choiceLabel }: { category: "design" | "code"; targetId: string; choiceLabel: string }) => {
+      const effectiveConvId = conversationId;
+      if (!effectiveConvId || !enabled) return;
+
+      setError(undefined);
+      setWorkflowPhase(null);
+
+      // Optimistic UI: show the user's click as a regular bubble. The
+      // backend persists the same content with metadata.qcmResolution so
+      // F5/replay sees this bubble too.
+      const userMsgId = `user-${Date.now()}`;
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: userMsgId,
+          role: "user",
+          content: choiceLabel,
+          parts: [{ type: "text", text: choiceLabel }],
+          createdAt: new Date(),
+        },
+      ]);
+
+      const dynamicContext = {
+        selectedNode: selectedNodeRef.current ?? undefined,
+        figmaPluginContext: figmaPluginContextRef.current ?? undefined,
+        connectedAgents: connectedAgentsRef.current,
+        isLocalPlugin: isLocalPluginRef.current,
+        source: sourceRef.current,
+        keyId: keyIdRef.current,
+        activeTarget: activeTargetRef.current,
+        pendingDisambiguation: pendingDisambiguationRef.current,
+        restEndpoints: restEndpointsRef.current,
+        designPairingKind: designPairingKindRef.current,
+        codePairingKind: codePairingKindRef.current,
+      };
+
+      try {
+        if (!workflowIdRef.current) {
+          console.warn("[ChatWorkflow] resolveDisambiguation called with no workflowId — falling back to sendMessage");
+          // Without an active workflow we cannot resolve a tool call.
+          // Fall back to a regular message so the chat doesn't dead-end.
+          sendMessage({ text: choiceLabel });
+          return;
+        }
+        const res = await fetch(`/api/chat-temporal/${workflowIdRef.current}/message`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            conversationId: effectiveConvId,
+            message: choiceLabel,
+            model,
+            mcpServerIds,
+            figmaPluginClientId,
+            designInstanceId,
+            codeInstanceId,
+            qcmResolution: { category, targetId, choiceLabel },
+            ...dynamicContext,
+          }),
+        });
+        if (!res.ok) throw new Error(`Disambig resolution failed: ${res.status}`);
+        const result: { workflowId: string; conversationId: string } = await res.json();
+        workflowIdRef.current = result.workflowId;
+        subscribeToStream(effectiveConvId, result.workflowId);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : String(err));
+        setStatus("error");
+      }
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [conversationId, enabled, model, mcpServerIds, figmaPluginClientId, designInstanceId, codeInstanceId, subscribeToStream],
+  );
+
   // ── Cancel in-flight generation ─────────────────────────────────────────
   // Sends POST /api/chat-temporal/{wf}/cancel which in turn signals the
   // `chatCancel` signal on the workflow. Temporal runs in the cloud, so
@@ -1140,7 +1234,7 @@ export function useChatWorkflow({
     };
   }, []);
 
-  return { messages, messagesConvId, sendMessage, cancelMessage, status, error, loaded, setMessages, mcpDiscoveryFailures, clearMCPDiscoveryFailures, workflowPhase };
+  return { messages, messagesConvId, sendMessage, resolveDisambiguation, cancelMessage, status, error, loaded, setMessages, mcpDiscoveryFailures, clearMCPDiscoveryFailures, workflowPhase };
 }
 
 // ---------------------------------------------------------------------------

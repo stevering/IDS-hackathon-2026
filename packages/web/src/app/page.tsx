@@ -2631,6 +2631,10 @@ export default function Home() {
                                     setSelectedCodeTarget(targetId as TargetSelection);
                                   }
                                 }}
+                                onQCMResolve={(category, targetId, choiceLabel) => {
+                                  shouldAutoScroll.current = true;
+                                  chatWorkflow.resolveDisambiguation({ category, targetId, choiceLabel });
+                                }}
                                 onSelect={(choice) => { shouldAutoScroll.current = true; sendMessage({ text: choice }); }}
                                 disabled={isLoading}
                               />

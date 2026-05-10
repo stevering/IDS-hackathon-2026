@@ -144,6 +144,27 @@ export type ChatNewMessagePayload = {
    *  unset / not applicable; `undefined` means "no change from previous". */
   designPairingKindOverride?: "explicit" | "auto-resolved" | "ambiguous" | "no-plugin" | null;
   codePairingKindOverride?: "explicit" | "auto-resolved" | "ambiguous" | "none" | null;
+  /**
+   * QCM resolution payload — set by `/message` route when the user clicks
+   * a choice in the disambiguation QCM emitted by the worker. Semantically,
+   * this is a TOOL RESULT for the prior `request_target_disambiguation`
+   * call (not a fresh user message). The worker:
+   *   1. Finds the matching tool result in `messages[]` (by toolCallId)
+   *      and replaces its content with `{ resolved, targetId, choiceLabel }`.
+   *   2. Triggers a new LLM turn WITHOUT adding the user message to
+   *      `messages[]` — the LLM continues from the resolved tool result.
+   *
+   * The user message is still persisted in DB (with metadata flag) so the
+   * UI shows the user's click as a regular bubble for visual consistency.
+   *
+   * Architectural note: this is option C in the disambig design discussion
+   * — the click is a tool response, not a free user message.
+   */
+  qcmResolution?: {
+    targetId: string;
+    choiceLabel: string;
+    category: "design" | "code";
+  };
 };
 
 /** Chat workflow status returned by chatStatusQuery */
