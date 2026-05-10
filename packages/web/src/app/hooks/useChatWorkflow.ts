@@ -839,7 +839,39 @@ export function useChatWorkflow({
           finishReason?: string;
         };
         console.log("[ChatWorkflow] text_complete received", { hasToolCalls, contentLen: content?.length, finishReason, msgId: streamingMsgRef.current?.id });
-        if (!streamingMsgRef.current) return;
+
+        // ── Synthetic-message path ──────────────────────────────────────
+        // The worker can broadcast `text_complete` for a message it
+        // generated server-side WITHOUT a prior streaming sequence —
+        // e.g. the deterministic disambiguation QCM emitted by chat.ts
+        // when the LLM calls `request_target_disambiguation`. In that
+        // case streamingMsgRef is null (the prior LLM turn finished
+        // with `hasToolCalls: true` which clears the ref), so the
+        // legacy early-return below would silently drop the synthetic
+        // content and leave the UI stuck on a tool_executing spinner
+        // until the user F5s and the message reappears from DB.
+        //
+        // Detect: no streaming ref + non-empty content + hasToolCalls=false
+        // + finishReason="stop". Append a fresh assistant message and
+        // return to idle. This stays inert for normal flows because
+        // they always have an active streamingMsgRef when text_complete
+        // arrives.
+        if (!streamingMsgRef.current) {
+          if (content && content.length > 0 && hasToolCalls === false) {
+            const syntheticId = `synth-${Date.now()}`;
+            setMessages((prev) => [
+              ...prev,
+              {
+                id: syntheticId,
+                role: "assistant" as const,
+                content,
+                parts: buildFinalParts(content, reasoning),
+              },
+            ]);
+            setStatus("idle");
+          }
+          return;
+        }
 
         const msgId = streamingMsgRef.current.id;
 
