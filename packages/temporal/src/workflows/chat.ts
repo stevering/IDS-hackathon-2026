@@ -695,10 +695,19 @@ export async function chatWorkflow(params: ChatWorkflowParams): Promise<void> {
               if (pendingQCMResolution) {
                 const r = pendingQCMResolution;
                 pendingQCMResolution = undefined;
+                // Be VERY explicit about which tools to call next. Weaker
+                // models (kimi-k2.5 observed) tend to hallucinate tool
+                // names like `guardian_get_selection_context` or
+                // `functions_guardian_run_action` after disambig is
+                // resolved — they fall back to training-data names that
+                // sound right rather than the actual catalog.
+                const nextStepHint = r.category === "design"
+                  ? "To proceed: call `figmaconsole_figma_execute` with JS code that reads `figma.currentPage.selection` (or whatever the user asked for). For read-only file queries, use `figmaconsole_figma_get_file_data` / `figmaconsole_figma_get_styles` etc. with a fileUrl. DO NOT invent tool names — only call tools listed in your catalog."
+                  : "To proceed: call the tool from this instance's catalog that fulfills the user's original request. DO NOT invent tool names — only call tools listed in your catalog.";
                 toolResult = JSON.stringify({
                   content: [{
                     type: "text",
-                    text: `User picked: ${r.choiceLabel} (targetId=${r.targetId}, category=${r.category}). Continue with the original action using this target.`,
+                    text: `User picked: ${r.choiceLabel} (targetId=${r.targetId}, category=${r.category}). The paired ${r.category === "design" ? "Figma plugin" : "code MCP instance"} is now resolved. ${nextStepHint}`,
                   }],
                   isError: false,
                 });
