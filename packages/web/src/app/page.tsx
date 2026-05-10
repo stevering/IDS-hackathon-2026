@@ -1245,9 +1245,42 @@ export default function Home() {
 
   useEffect(() => {
     const handleMessage = (event: MessageEvent) => {
+      // Defense-in-depth on selectedNode population. The historical bug:
+      // a standalone browser tab's `selectedNode` was getting polluted with
+      // stale data (e.g. a `?node-id=10-6` extracted from a Figma URL of a
+      // node that no longer existed), causing the LLM to hallucinate tool
+      // calls against non-existent nodes.
+      //
+      // Triple gate — ALL must hold for `setSelectedNode` to fire:
+      //
+      //   1. event.source === window.parent — message must come from the
+      //      iframe parent (the Figma plugin's ui.html). Rejects self-posts
+      //      from browser extensions / injected scripts / the webapp's own
+      //      JS in the same window. Note: for standalone browser tabs,
+      //      window.parent === window, so the second clause below catches
+      //      that case explicitly.
+      //
+      //   2. event.source !== window — reject self-posts even if the first
+      //      clause passes (it does in standalone tabs because parent IS
+      //      window). A legitimate plugin message has window.parent that
+      //      is a DIFFERENT window than self.
+      //
+      //   3. isFigmaPluginRef.current — the webapp must have already
+      //      received a `figpal-init` handshake from the plugin (set by
+      //      useFigmaPlugin only when the same source check passes). This
+      //      is a redundant safety belt: if (1) and (2) hold, this should
+      //      automatically be true, but pinning it makes the invariant
+      //      explicit and survives future refactors.
+      //
+      // Standalone browser tabs (where users send messages while the plugin
+      // runs in a separate Figma Desktop process) never satisfy (1)+(2),
+      // so selectedNode stays null and the LLM uses a tool call to read
+      // the live selection through the paired plugin's cloud relay.
+      if (event.source !== window.parent || event.source === window) return;
       if (event.data && typeof event.data === "object" &&
           (event.data.type === "selection-changed" || event.data.type === "response") &&
           "data" in event.data && event.data.data) {
+        if (!isFigmaPluginRef.current) return;
         const d = event.data.data as { nodes?: unknown[]; image?: string | null; nodeUrl?: string | null };
         const d2 = { nodes: d.nodes ?? [], image: d.image ?? null, nodeUrl: d.nodeUrl ?? null };
         setSelectedNode(d2);

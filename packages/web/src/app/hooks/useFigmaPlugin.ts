@@ -154,8 +154,21 @@ export function useFigmaPlugin() {
       // Figma plugin UIs run in null-origin iframes, making event.origin
       // unreliable ("null", internal Figma URLs, etc.). Instead, we check
       // event.source which is the window reference — cannot be spoofed.
-      // Accept messages from: parent window (plugin ui.html) or self (HMR).
-      if (event.source !== window.parent && event.source !== window) return;
+      //
+      // Triple gate (history: standalone browser tabs were getting
+      // selectedNode polluted with stale Figma node IDs because self-posts
+      // from injected scripts / browser extensions were satisfying the
+      // older `event.source === window` clause):
+      //   1. source MUST be the iframe parent (the plugin's ui.html)
+      //   2. source MUST NOT be self (rejects self-posts in standalone
+      //      tabs where window.parent === window and the first clause
+      //      would otherwise allow them)
+      //
+      // In a real plugin embed, window.parent !== window so both clauses
+      // hold. In a standalone browser tab, window.parent === window so
+      // the second clause blocks every message and isFigmaPlugin stays
+      // false — which is correct (no plugin context here).
+      if (event.source !== window.parent || event.source === window) return;
 
       // Cache the parent origin so subsequent outbound posts can target it
       // instead of using "*" (audit P0 #1: prevents arbitrary parents from
