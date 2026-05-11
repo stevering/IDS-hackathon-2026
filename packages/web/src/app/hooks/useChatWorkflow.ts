@@ -1161,6 +1161,28 @@ export function useChatWorkflow({
         codePairingKind: codePairingKindRef.current,
       };
 
+      // Derive routing IDs directly from `targetId` — DO NOT rely on the
+      // React closure values (figmaPluginClientId, designInstanceId,
+      // codeInstanceId), which are stale at click time: this callback was
+      // created while the resolver was still "ambiguous" so those props
+      // were undefined. The click itself decides the routing — trust it.
+      let resolvedPluginClientId = figmaPluginClientId;
+      let resolvedDesignInstanceId = designInstanceId;
+      let resolvedCodeInstanceId = codeInstanceId;
+      if (category === "design") {
+        if (targetId.startsWith("plugin:")) {
+          resolvedPluginClientId = targetId.slice("plugin:".length);
+          resolvedDesignInstanceId = undefined;
+        } else if (targetId.startsWith("instance:")) {
+          resolvedPluginClientId = undefined;
+          resolvedDesignInstanceId = targetId.slice("instance:".length);
+        }
+      } else if (category === "code") {
+        if (targetId.startsWith("instance:")) {
+          resolvedCodeInstanceId = targetId.slice("instance:".length);
+        }
+      }
+
       try {
         if (!workflowIdRef.current) {
           console.warn("[ChatWorkflow] resolveDisambiguation called with no workflowId — falling back to sendMessage");
@@ -1177,9 +1199,9 @@ export function useChatWorkflow({
             message: choiceLabel,
             model,
             mcpServerIds,
-            figmaPluginClientId,
-            designInstanceId,
-            codeInstanceId,
+            figmaPluginClientId: resolvedPluginClientId,
+            designInstanceId: resolvedDesignInstanceId,
+            codeInstanceId: resolvedCodeInstanceId,
             qcmResolution: { category, targetId, choiceLabel },
             ...dynamicContext,
           }),
