@@ -1208,8 +1208,19 @@ export function useChatWorkflow({
         });
         if (!res.ok) throw new Error(`Disambig resolution failed: ${res.status}`);
         const result: { workflowId: string; conversationId: string } = await res.json();
+        const prevWorkflowId = workflowIdRef.current;
         workflowIdRef.current = result.workflowId;
-        subscribeToStream(effectiveConvId, result.workflowId);
+        // Only resubscribe if the workflow actually changed. For QCM
+        // resolution, the workflow is still alive (blocked on `condition()`),
+        // so the route returns the same workflowId and the existing channel
+        // is fine. Calling `subscribeToStream` here would unsubscribe and
+        // resubscribe to the same Realtime channel — Realtime broadcasts are
+        // NOT persisted, so the `tool_call_result` emitted by the worker
+        // right after it unblocks would land in the gap and be lost, leaving
+        // the `request_target_disambiguation` tool card stuck in "running".
+        if (result.workflowId !== prevWorkflowId) {
+          subscribeToStream(effectiveConvId, result.workflowId);
+        }
       } catch (err) {
         setError(err instanceof Error ? err.message : String(err));
         setStatus("error");
