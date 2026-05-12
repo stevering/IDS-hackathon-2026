@@ -659,9 +659,17 @@ export async function chatWorkflow(params: ChatWorkflowParams): Promise<void> {
             // pair, with no mid-conversation mutation or placeholder shenanigans.
             const pd = currentPendingDisambiguation;
             if (!pd || pd.candidates.length === 0) {
-              const text = "request_target_disambiguation called but no disambiguation is currently pending. Proceed without it — call read-only tools or answer in text.";
-              toolResult = JSON.stringify({ content: [{ type: "text", text }], isError: true });
-              isError = true;
+              // Soft refusal — NOT a hard error. Some LLMs (e.g. Kimi) emit
+              // an empty response when they see `isError:true` here, which
+              // crashes the streaming activity ("0 tokens, 0 tool calls").
+              // Return success + clear guidance so the LLM can continue the
+              // loop and answer conversationally.
+              const pairedHint = currentPluginClientId
+                ? ` The Figma plugin is already paired (clientId=${currentPluginClientId}); you can call plugin-bound tools directly.`
+                : "";
+              const text = `No disambiguation needed — the target is already resolved or the user's question doesn't require a paired plugin.${pairedHint} Answer the user's question now: call a read-only tool with an explicit fileUrl, call a plugin-bound tool directly, or respond in text. DO NOT call request_target_disambiguation again.`;
+              toolResult = JSON.stringify({ content: [{ type: "text", text }], isError: false });
+              isError = false;
             } else {
               // Build + emit the QCM as a fresh assistant message (separate
               // from the tool-call bubble so the buttons render cleanly).
