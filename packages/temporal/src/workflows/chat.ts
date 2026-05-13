@@ -211,6 +211,14 @@ export async function chatWorkflow(params: ChatWorkflowParams): Promise<void> {
   let currentCodePairingKind: ChatWorkflowParams["codePairingKind"] = params.codePairingKind;
   let currentDesignPairingKind: ChatWorkflowParams["designPairingKind"] = params.designPairingKind;
 
+  // Flips to true while the `request_target_disambiguation` tool is blocked
+  // on `condition()` waiting for the user's QCM click. Lets the signal
+  // handler distinguish a legit QCM resolution (wakes up the tool) from an
+  // orphan one (the LLM auto-formatted a markdown QCM, the user clicked,
+  // but no tool was awaiting — push as a user msg so the loop progresses
+  // instead of dropping the click silently).
+  let awaitingQCMResolution = false;
+
   // Pending user pick from a QCM click. Set by the chatNewMessage signal
   // handler when the route forwards a `qcmResolution` payload. The
   // `request_target_disambiguation` tool's execution awaits this via
@@ -269,13 +277,32 @@ export async function chatWorkflow(params: ChatWorkflowParams): Promise<void> {
       currentAvailableCodeInstances = msg.availableCodeInstancesOverride;
     }
     if (msg.qcmResolution) {
-      // Click on a QCM choice = TOOL RESPONSE for the in-flight
-      // `request_target_disambiguation` call (option C, blocking pattern).
-      // The tool's execution is awaiting this via `condition()` — once
-      // we set this, it wakes up and returns the result. We DO NOT
-      // push to pendingMessages because this isn't a fresh user turn:
-      // the agent is mid-turn, executing a long-running tool.
-      pendingQCMResolution = msg.qcmResolution;
+      if (awaitingQCMResolution) {
+        // Legit path: `request_target_disambiguation` is blocked on
+        // `condition()` — set the flag, the tool wakes up, returns the
+        // pick as its tool result. No pendingMessages push: the agent is
+        // mid-turn, executing a long-running tool.
+        pendingQCMResolution = msg.qcmResolution;
+      } else {
+        // Orphan QCM click: the LLM auto-formatted a markdown QCM as a
+        // text response (against instructions) — there's no tool awaiting
+        // this click. Without this branch the click would be silently
+        // dropped and the conversation would stall (observed in conv
+        // 9cc86916 — 5h gap between click and the next user retry).
+        //
+        // Recover by promoting the click to a user message. We prepend a
+        // hint so the LLM knows the user has now picked and can act on it
+        // (with the routing IDs already updated above via the
+        // pluginClientIdOverride sibling field). The original choice text
+        // is preserved so the bubble matches what the user clicked.
+        const hint = msg.qcmResolution.category === "design"
+          ? `[The user picked target: ${msg.qcmResolution.choiceLabel} (${msg.qcmResolution.targetId}). The Figma plugin is now paired — proceed with the original plugin-bound action directly via figmaconsole_figma_execute or figma_plugin_execute; do NOT call request_target_disambiguation again for this turn.]`
+          : `[The user picked code instance: ${msg.qcmResolution.choiceLabel} (${msg.qcmResolution.targetId}). Proceed with the original code-bound action directly; do NOT call request_target_disambiguation again for this turn.]`;
+        pendingMessages.push({
+          ...msg,
+          content: `${msg.qcmResolution.choiceLabel}\n\n${hint}`,
+        });
+      }
     } else {
       pendingMessages.push(msg);
     }
@@ -779,10 +806,15 @@ export async function chatWorkflow(params: ChatWorkflowParams): Promise<void> {
               // grows) OR times out. 10 minutes is generous for a user
               // stepping away briefly.
               const QCM_TIMEOUT_MS = 10 * 60_000;
-              await condition(
-                () => pendingQCMResolution !== undefined || pendingMessages.length > 0,
-                QCM_TIMEOUT_MS,
-              );
+              awaitingQCMResolution = true;
+              try {
+                await condition(
+                  () => pendingQCMResolution !== undefined || pendingMessages.length > 0,
+                  QCM_TIMEOUT_MS,
+                );
+              } finally {
+                awaitingQCMResolution = false;
+              }
 
               if (pendingQCMResolution) {
                 const r = pendingQCMResolution;

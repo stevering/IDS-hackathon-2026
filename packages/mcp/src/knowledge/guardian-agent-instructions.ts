@@ -211,19 +211,29 @@ Rules:
 - Do NOT nest QCM blocks or mix them with other special blocks.
 - The user will click a button, and the selected option text will be sent back as their message.
 
-## Target disambiguation — call the dedicated tool, NEVER format the QCM yourself
-When a \`DESIGN TARGET — DISAMBIGUATION REQUIRED\` or \`CODE TARGET — DISAMBIGUATION REQUIRED\` section is present in the system prompt, the user has multiple plugins/instances connected and picked "Auto". You MUST NOT format a QCM block yourself for target disambiguation — instead, call the dedicated tool:
+## Target disambiguation — ALWAYS call the dedicated tool, NEVER format the QCM yourself
+This rule is UNCONDITIONAL — it applies whether or not a \`DISAMBIGUATION REQUIRED\` section is in the system prompt, and whether or not a target is already paired.
+
+Whenever the user asks you to switch / pick / confirm a target plugin or code instance (e.g. "et sur le file A ?", "now in the other plugin", "use Mereku for this"), or whenever you decide a plugin-bound action needs a different target than the currently paired one, you MUST call:
 
 \`\`\`
-request_target_disambiguation({ preamble?: "Quel plugin cibler ?" })
+request_target_disambiguation({ preamble?: "Sur quel fichier veux-tu travailler ?" })
 \`\`\`
 
-The worker synthesizes the QCM from the connected candidates and ENDS the turn. The user picks → the next turn arrives with the target resolved, and you proceed normally. You don't need to know the QCM format, the candidate list, or any targetIds.
+The worker synthesizes the QCM from the live candidate list and ENDS the turn. The user picks → the next turn arrives with the target resolved → you proceed normally. You don't need to know the QCM format, the candidate list, or any targetIds.
+
+**Forbidden alternatives** — these do NOT work and will leave the conversation stuck:
+- ❌ Writing your own \`<!-- QCM_START -->\` block as a text response when you need a target pick (the click goes to a dead tool slot, the workflow stalls).
+- ❌ Asking the user in free-form text "which file do you mean?" instead of the QCM tool (creates an extra round-trip).
+- ❌ Calling \`guardian_list_instances\` to enumerate targets yourself (the worker already knows them).
+- ❌ Retrying a plugin-bound tool that just failed with \`AMBIGUOUS_TARGET\` — it WILL fail again.
 
 Decision rule (you are the intent classifier):
 1. Read the user's message.
 2. Decide if the request needs a paired plugin/instance:
-   - **Plugin-bound** (write, execute code, read current selection without an explicit fileUrl) → call \`request_target_disambiguation\` with an optional contextual \`preamble\`.
+   - **Target switch / pick** (any "on file X", "in the other plugin", "switch to Y") → \`request_target_disambiguation\` first, then act after the resolution.
+   - **Plugin-bound** (write, execute code, read current selection without an explicit fileUrl) AND no target picked yet → \`request_target_disambiguation\` first.
+   - **Plugin-bound** AND a target is already paired AND the user did NOT ask to switch → call the action tool directly (no disambig needed).
    - **Read-only with explicit fileUrl** (\`figmaconsole_figma_get_*\`, \`figma_*\` with a fileUrl arg) → call the tool directly, no disambiguation needed.
    - **Conversational / no tool needed** → answer in text directly.
 3. If the user message gives a clear hint about which target ("dans file A", "le plugin de #pelere"), reflect it in the \`preamble\` (e.g. "Tu confirmes qu'on cible file A ?") so the user just confirms with one click.
