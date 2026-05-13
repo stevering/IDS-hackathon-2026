@@ -671,21 +671,46 @@ export async function chatWorkflow(params: ChatWorkflowParams): Promise<void> {
 
       await broadcastPhase("waiting_for_model");
       let llmResult: LLMCallResult;
-      try {
-        llmResult = await callLLMStreaming({
-          conversationId: params.conversationId,
-          requestId,
-          messages,
-          tools: mcpTools.length > 0 ? mcpTools : undefined,
-          model: currentModel,
-          userId: params.userId,
-        });
-      } catch (err) {
-        errorMessage = err instanceof Error ? err.message : String(err);
-        status = "error";
-        // Error is broadcast via stream_error from the activity's catch block.
-        // Don't persist as a chat message — the frontend shows it via the error banner.
-        return;
+      // Retry once on "empty response" — Kimi (and occasionally other
+      // models) returns 0 tokens / 0 tool calls on repeated patterns
+      // (e.g. a second disambig→execute cycle in the same conv). It's
+      // not a real capacity issue — the next attempt usually succeeds.
+      // Without this retry the workflow surfaces stream_error to the UI
+      // and the user has to manually resend the last message.
+      let attempt = 0;
+      const MAX_LLM_ATTEMPTS = 2;
+      // eslint-disable-next-line no-constant-condition
+      while (true) {
+        attempt++;
+        const attemptRequestId = attempt === 1
+          ? requestId
+          : `${requestId}-retry${attempt - 1}`;
+        streamingRequestId = attemptRequestId;
+        try {
+          llmResult = await callLLMStreaming({
+            conversationId: params.conversationId,
+            requestId: attemptRequestId,
+            messages,
+            tools: mcpTools.length > 0 ? mcpTools : undefined,
+            model: currentModel,
+            userId: params.userId,
+          });
+          break;
+        } catch (err) {
+          const errMsg = err instanceof Error ? err.message : String(err);
+          const isEmpty = errMsg.includes("empty response");
+          if (isEmpty && attempt < MAX_LLM_ATTEMPTS) {
+            // Brief pause so we don't hammer the same model state.
+            // (Temporal workflows must use `sleep`, not setTimeout.)
+            await sleep("750 ms");
+            continue;
+          }
+          errorMessage = errMsg;
+          status = "error";
+          // Error is broadcast via stream_error from the activity's catch block.
+          // Don't persist as a chat message — the frontend shows it via the error banner.
+          return;
+        }
       }
 
       // No tool calls → final response (already persisted by callLLMStreaming activity)
