@@ -1541,12 +1541,23 @@ export default function Home() {
 
   // Map enabledMcps UI keys to Temporal MCP server IDs
   const temporalMcpServerIds = useMemo(() => {
-    const ids: string[] = [];
-    if (enabledMcps.figma) ids.push("figma_mcp");
-    if (enabledMcps.figmaConsole) ids.push("figma_console");
-    if (enabledMcps.github) ids.push("github");
-    return ids;
-  }, [enabledMcps.figma, enabledMcps.figmaConsole, enabledMcps.github]);
+    // Source of truth: `user_mcp_instances.enabled` (DB) — i.e. what the
+    // user actually toggled in Account > Developers. We previously used
+    // `enabledMcps` (localStorage, default `{ figma: true, ... }`) which
+    // is disjoint from the DB state: turning figma_mcp off in the account
+    // had no effect here, so the worker still discovered `figma_execute`
+    // and the LLM picked it over `figma_plugin_execute`, hitting a 401 in
+    // a doom-loop. Read the DB-backed `mcpInstances` instead.
+    const ids = new Set<string>();
+    for (const inst of mcpInstances.instances) {
+      if (!inst.enabled) continue;
+      // Map preset_type → legacy serverId expected by the worker's discovery.
+      if (inst.preset_type === "figma_mcp") ids.add("figma_mcp");
+      else if (inst.preset_type === "figma_console") ids.add("figma_console");
+      else if (inst.preset_type === "github") ids.add("github");
+    }
+    return Array.from(ids);
+  }, [mcpInstances.instances]);
 
   // Build connected agents list for Temporal context (same logic as legacy body())
   const temporalConnectedAgents = useMemo(() =>
