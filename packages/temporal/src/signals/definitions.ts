@@ -145,6 +145,18 @@ export type ChatNewMessagePayload = {
   designPairingKindOverride?: "explicit" | "auto-resolved" | "ambiguous" | "no-plugin" | null;
   codePairingKindOverride?: "explicit" | "auto-resolved" | "ambiguous" | "none" | null;
   /**
+   * Always-on list of active design plugins / code MCP instances. Distinct
+   * from `pendingDisambiguationOverride` (which only carries the candidates
+   * when the resolver is in the "ambiguous" state). These lists let the
+   * worker synthesize a "switch" QCM in `request_target_disambiguation`
+   * even when the user has already picked a target — e.g. mid-conversation
+   * "et sur le file A ?" after we paired with file B. Semantics:
+   *   - array     → set/replace the currentAvailable* list
+   *   - undefined → keep the previous turn's value
+   */
+  availableDesignPluginsOverride?: { targetId: string; shortId: string; label: string; fileName?: string; fileKey?: string }[];
+  availableCodeInstancesOverride?: { targetId: string; shortId: string; label: string }[];
+  /**
    * QCM resolution payload — set by `/message` route when the user clicks
    * a choice in the disambiguation QCM emitted by the worker. Semantically,
    * this is a TOOL RESULT for the prior `request_target_disambiguation`

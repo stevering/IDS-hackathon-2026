@@ -170,6 +170,24 @@ type UseChatWorkflowParams = {
    */
   designPairingKind?: "explicit" | "auto-resolved" | "ambiguous" | "no-plugin";
   codePairingKind?: "explicit" | "auto-resolved" | "ambiguous" | "none";
+  /**
+   * Always-on list of active design plugins (regardless of pairing kind).
+   * Lets the worker synthesize a "switch" QCM via
+   * `request_target_disambiguation` when the user wants to retarget
+   * mid-conversation (e.g. "et sur le file A ?" after picking file B).
+   */
+  availableDesignPlugins?: Array<{
+    targetId: string;
+    shortId: string;
+    label: string;
+    fileName?: string;
+    fileKey?: string;
+  }>;
+  availableCodeInstances?: Array<{
+    targetId: string;
+    shortId: string;
+    label: string;
+  }>;
 };
 
 // ---------------------------------------------------------------------------
@@ -195,6 +213,8 @@ export function useChatWorkflow({
   restEndpoints,
   designPairingKind,
   codePairingKind,
+  availableDesignPlugins,
+  availableCodeInstances,
 }: UseChatWorkflowParams): UseChatWorkflowReturn {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [status, setStatus] = useState<ChatWorkflowStatus>("idle");
@@ -274,6 +294,10 @@ export function useChatWorkflow({
   designPairingKindRef.current = designPairingKind;
   const codePairingKindRef = useRef(codePairingKind);
   codePairingKindRef.current = codePairingKind;
+  const availableDesignPluginsRef = useRef(availableDesignPlugins);
+  availableDesignPluginsRef.current = availableDesignPlugins;
+  const availableCodeInstancesRef = useRef(availableCodeInstances);
+  availableCodeInstancesRef.current = availableCodeInstances;
 
   // ── Reset workflow state when conversation changes ──────────────────────
   // CRITICAL: workflowIdRef persists across renders as a mutable ref. When the
@@ -1064,6 +1088,8 @@ export function useChatWorkflow({
         restEndpoints: restEndpointsRef.current,
         designPairingKind: designPairingKindRef.current,
         codePairingKind: codePairingKindRef.current,
+        availableDesignPlugins: availableDesignPluginsRef.current,
+        availableCodeInstances: availableCodeInstancesRef.current,
       };
 
       if (workflowIdRef.current) {
@@ -1159,6 +1185,8 @@ export function useChatWorkflow({
         restEndpoints: restEndpointsRef.current,
         designPairingKind: designPairingKindRef.current,
         codePairingKind: codePairingKindRef.current,
+        availableDesignPlugins: availableDesignPluginsRef.current,
+        availableCodeInstances: availableCodeInstancesRef.current,
       };
 
       // Derive routing IDs directly from `targetId` — DO NOT rely on the

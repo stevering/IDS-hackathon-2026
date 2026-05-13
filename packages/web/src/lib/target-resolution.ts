@@ -68,6 +68,14 @@ export type DesignResolution = {
   /** Plugin paired for plugin-bound tools — undefined if ambig or no-plugin. */
   pairedPluginClientId: string | undefined;
   pairing: DesignPairing;
+  /**
+   * All currently-active plugins (independent of `pairing.kind`). Lets the
+   * worker construct a "switch" QCM when the user wants to retarget mid-conv
+   * (e.g. asks "et sur file A ?" after we already paired with file B).
+   * `pairing.candidates` only exists for `kind: "ambiguous"`; this field is
+   * the always-on superset.
+   */
+  availablePlugins: PluginCandidate[];
   /** Always-available REST endpoints (work with fileUrl, no pairing needed). */
   restEndpoints: RestEndpoint[];
 };
@@ -80,6 +88,8 @@ export type CodePairing =
 
 export type CodeResolution = {
   pairing: CodePairing;
+  /** All currently-active code MCP instances — same role as `availablePlugins`. */
+  availableInstances: { instanceId: string; label: string; presetType: string }[];
 };
 
 // ---------------------------------------------------------------------------
@@ -143,6 +153,7 @@ export function resolveDesignTarget(
       return {
         pairedPluginClientId: plugin.clientId,
         pairing: { kind: "explicit", plugin },
+        availablePlugins: plugins,
         restEndpoints,
       };
     }
@@ -156,6 +167,7 @@ export function resolveDesignTarget(
       return {
         pairedPluginClientId: undefined,
         pairing: { kind: "no-plugin" },
+        availablePlugins: plugins,
         restEndpoints,
       };
     }
@@ -167,6 +179,7 @@ export function resolveDesignTarget(
     return {
       pairedPluginClientId: undefined,
       pairing: { kind: "no-plugin" },
+      availablePlugins: plugins,
       restEndpoints,
     };
   }
@@ -174,12 +187,14 @@ export function resolveDesignTarget(
     return {
       pairedPluginClientId: plugins[0].clientId,
       pairing: { kind: "auto-resolved", plugin: plugins[0] },
+      availablePlugins: plugins,
       restEndpoints,
     };
   }
   return {
     pairedPluginClientId: undefined,
     pairing: { kind: "ambiguous", candidates: plugins, suggestion: plugins[0] },
+    availablePlugins: plugins,
     restEndpoints,
   };
 }
@@ -204,19 +219,19 @@ export function resolveCodeTarget(
     const instanceId = selection.slice("instance:".length);
     const inst = candidates.find((c) => c.instanceId === instanceId);
     if (inst) {
-      return { pairing: { kind: "explicit", instance: inst } };
+      return { pairing: { kind: "explicit", instance: inst }, availableInstances: candidates };
     }
   }
 
   if (candidates.length === 0) {
-    return { pairing: { kind: "none" } };
+    return { pairing: { kind: "none" }, availableInstances: candidates };
   }
   if (candidates.length === 1) {
-    return { pairing: { kind: "auto-resolved", instance: candidates[0] } };
+    return { pairing: { kind: "auto-resolved", instance: candidates[0] }, availableInstances: candidates };
   }
   // No reliable "most recent" signal for MCP instances (they're persistent).
   // Suggest the first; future: use last-used timestamp per instance.
-  return { pairing: { kind: "ambiguous", candidates, suggestion: candidates[0] } };
+  return { pairing: { kind: "ambiguous", candidates, suggestion: candidates[0] }, availableInstances: candidates };
 }
 
 // ---------------------------------------------------------------------------

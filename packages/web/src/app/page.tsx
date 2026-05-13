@@ -1630,6 +1630,22 @@ export default function Home() {
     restEndpoints,
     designPairingKind: designResolution.pairing.kind,
     codePairingKind: codeResolution.pairing.kind,
+    // Always-on lists — lets the worker synthesize a switch QCM when the
+    // LLM asks for disambiguation mid-conv (e.g. "et sur le file A ?")
+    // even though the user has already picked a plugin. Without this, the
+    // worker would soft-refuse and the LLM would have no way to retarget.
+    availableDesignPlugins: designResolution.availablePlugins.map((p) => ({
+      targetId: `plugin:${p.clientId}`,
+      shortId: p.shortId,
+      label: p.label,
+      fileName: p.fileName,
+      fileKey: p.fileKey,
+    })),
+    availableCodeInstances: codeResolution.availableInstances.map((c) => ({
+      targetId: `instance:${c.instanceId}`,
+      shortId: c.label,
+      label: c.label,
+    })),
   });
 
   // Chat variables — Temporal-only since the April 2026 cleanup.

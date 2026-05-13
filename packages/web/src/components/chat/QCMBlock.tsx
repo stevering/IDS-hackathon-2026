@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import type { QCMMeta } from "@/lib/content-parsing";
 
 type Props = {
@@ -35,35 +36,48 @@ type Props = {
 };
 
 export function QCMBlock({ choices, onSelect, disabled, meta, onTargetChoice, onQCMResolve }: Props) {
+  // Track which choice was picked locally so we can disable the whole block
+  // once the user has answered. Prevents stray re-clicks from creating
+  // ghost user messages or signalling the worker after the question has
+  // already been resolved. Persists across re-renders because the parent
+  // keeps a stable `key` on this block.
+  const [picked, setPicked] = useState<string | null>(null);
+  const blockDisabled = disabled || picked !== null;
   return (
     <div className="my-3 flex flex-wrap gap-2">
-      {choices.map((choice, i) => (
-        <button
-          key={i}
-          onClick={() => {
-            if (disabled) return;
-            if (meta) {
-              const targetId = meta.map[choice];
-              if (targetId) {
-                onTargetChoice?.(meta.category, targetId);
-                if (onQCMResolve) {
-                  onQCMResolve(meta.category, targetId, choice);
-                  return; // option C path — do NOT also call onSelect
+      {choices.map((choice, i) => {
+        const isPickedChoice = picked === choice;
+        return (
+          <button
+            key={i}
+            onClick={() => {
+              if (blockDisabled) return;
+              setPicked(choice);
+              if (meta) {
+                const targetId = meta.map[choice];
+                if (targetId) {
+                  onTargetChoice?.(meta.category, targetId);
+                  if (onQCMResolve) {
+                    onQCMResolve(meta.category, targetId, choice);
+                    return; // option C path — do NOT also call onSelect
+                  }
                 }
               }
-            }
-            onSelect(choice);
-          }}
-          disabled={disabled}
-          className={`px-4 py-2 rounded-lg text-sm font-medium border transition-colors ${
-            disabled
-              ? "bg-white/5 border-white/10 text-white/30 cursor-not-allowed"
-              : "bg-blue-600/20 border-blue-500/30 text-blue-300 hover:bg-blue-600/30 hover:border-blue-500/50 cursor-pointer"
-          }`}
-        >
-          {choice}
-        </button>
-      ))}
+              onSelect(choice);
+            }}
+            disabled={blockDisabled}
+            className={`px-4 py-2 rounded-lg text-sm font-medium border transition-colors ${
+              blockDisabled
+                ? isPickedChoice
+                  ? "bg-blue-600/10 border-blue-500/40 text-blue-200/70 cursor-not-allowed"
+                  : "bg-white/5 border-white/10 text-white/30 cursor-not-allowed"
+                : "bg-blue-600/20 border-blue-500/30 text-blue-300 hover:bg-blue-600/30 hover:border-blue-500/50 cursor-pointer"
+            }`}
+          >
+            {choice}
+          </button>
+        );
+      })}
     </div>
   );
 }

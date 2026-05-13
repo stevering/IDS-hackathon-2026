@@ -74,6 +74,8 @@ export async function POST(
     restEndpoints,
     designPairingKind,
     codePairingKind,
+    availableDesignPlugins,
+    availableCodeInstances,
     // Option C disambig (blocking-tool-execution pattern): when the user
     // clicks a QCM choice, the frontend sends this. The route persists the
     // user bubble in DB for UI consistency and forwards `qcmResolution` in
@@ -100,6 +102,8 @@ export async function POST(
     restEndpoints?: RestEndpointInfo[];
     designPairingKind?: "explicit" | "auto-resolved" | "ambiguous" | "no-plugin";
     codePairingKind?: "explicit" | "auto-resolved" | "ambiguous" | "none";
+    availableDesignPlugins?: { targetId: string; shortId: string; label: string; fileName?: string; fileKey?: string }[];
+    availableCodeInstances?: { targetId: string; shortId: string; label: string }[];
     qcmResolution?: { targetId: string; choiceLabel: string; category: "design" | "code" };
   };
 
@@ -219,6 +223,11 @@ export async function POST(
             : null,
           designPairingKindOverride: designPairingKind ?? null,
           codePairingKindOverride: codePairingKind ?? null,
+          // Always-on lists (independent of pairing kind) — let the worker
+          // build a "switch" QCM when the LLM asks for disambig despite
+          // the user already having picked a target (mid-conv retarget).
+          availableDesignPluginsOverride: availableDesignPlugins,
+          availableCodeInstancesOverride: availableCodeInstances,
           // Option C: QCM click → tool response. The worker's blocking
           // `request_target_disambiguation` execution awaits this via
           // `condition()` and returns it as the tool result.
@@ -325,6 +334,8 @@ export async function POST(
           : undefined,
         designPairingKind,
         codePairingKind,
+        availableDesignPlugins,
+        availableCodeInstances,
       }],
     });
 

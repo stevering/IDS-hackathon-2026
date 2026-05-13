@@ -49,6 +49,7 @@ export async function POST(request: Request) {
     designInstanceId, codeInstanceId,
     pendingDisambiguation, restEndpoints,
     designPairingKind, codePairingKind,
+    availableDesignPlugins, availableCodeInstances,
   } = body as {
     conversationId: string;
     message: string;
@@ -71,6 +72,8 @@ export async function POST(request: Request) {
     restEndpoints?: RestEndpointInfo[];
     designPairingKind?: "explicit" | "auto-resolved" | "ambiguous" | "no-plugin";
     codePairingKind?: "explicit" | "auto-resolved" | "ambiguous" | "none";
+    availableDesignPlugins?: { targetId: string; shortId: string; label: string; fileName?: string; fileKey?: string }[];
+    availableCodeInstances?: { targetId: string; shortId: string; label: string }[];
   };
 
   if (!conversationId || !message) {
@@ -246,6 +249,8 @@ export async function POST(request: Request) {
           : undefined,
         designPairingKind,
         codePairingKind,
+        availableDesignPlugins,
+        availableCodeInstances,
       }],
     });
 

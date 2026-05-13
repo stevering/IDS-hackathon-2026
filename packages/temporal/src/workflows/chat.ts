@@ -149,6 +149,10 @@ export type ChatWorkflowParams = {
    *  silently route to the wrong instance.  */
   designPairingKind?: "explicit" | "auto-resolved" | "ambiguous" | "no-plugin";
   codePairingKind?: "explicit" | "auto-resolved" | "ambiguous" | "none";
+  /** Always-on lists of active targets — let the worker build a "switch" QCM
+   *  when the LLM asks for disambig but the user already has a target picked. */
+  availableDesignPlugins?: { targetId: string; shortId: string; label: string; fileName?: string; fileKey?: string }[];
+  availableCodeInstances?: { targetId: string; shortId: string; label: string }[];
 };
 
 // ---------------------------------------------------------------------------
@@ -190,6 +194,16 @@ export async function chatWorkflow(params: ChatWorkflowParams): Promise<void> {
   // `request_target_disambiguation` tool reads this to build the QCM block.
   let currentPendingDisambiguation: PendingDisambiguationParam | undefined =
     params.pendingDisambiguation;
+
+  // Always-on lists of active design plugins / code MCP instances. Distinct
+  // from `currentPendingDisambiguation` (which only carries candidates when
+  // the resolver is "ambiguous"). Used by `request_target_disambiguation` to
+  // synthesize a "switch" QCM when the LLM asks for disambig even though
+  // the user has already picked one (e.g. mid-conv "et sur le file A ?").
+  let currentAvailableDesignPlugins: { targetId: string; shortId: string; label: string; fileName?: string; fileKey?: string }[] =
+    params.availableDesignPlugins ?? [];
+  let currentAvailableCodeInstances: { targetId: string; shortId: string; label: string }[] =
+    params.availableCodeInstances ?? [];
 
   // Mutable resolver kinds — symmetric to the disambig state. Used by the
   // dispatch loop to refuse code-bound tool calls when code is ambig
@@ -247,6 +261,12 @@ export async function chatWorkflow(params: ChatWorkflowParams): Promise<void> {
     }
     if (msg.codePairingKindOverride !== undefined) {
       currentCodePairingKind = msg.codePairingKindOverride ?? undefined;
+    }
+    if (msg.availableDesignPluginsOverride !== undefined) {
+      currentAvailableDesignPlugins = msg.availableDesignPluginsOverride;
+    }
+    if (msg.availableCodeInstancesOverride !== undefined) {
+      currentAvailableCodeInstances = msg.availableCodeInstancesOverride;
     }
     if (msg.qcmResolution) {
       // Click on a QCM choice = TOOL RESPONSE for the in-flight
@@ -657,17 +677,53 @@ export async function chatWorkflow(params: ChatWorkflowParams): Promise<void> {
             //
             // The LLM history then has a clean `[tool_call → tool_result(picked: X)]`
             // pair, with no mid-conversation mutation or placeholder shenanigans.
-            const pd = currentPendingDisambiguation;
+            // Decide which candidate list to use:
+            //   1) Fresh ambig set from the resolver (the user hasn't picked
+            //      yet at the start of this turn) → use it as-is.
+            //   2) Otherwise, if the LLM is asking despite a resolved
+            //      target, fall back to the always-on `currentAvailable*`
+            //      lists to synthesize a "switch" QCM. This is the path for
+            //      mid-conv "et sur le file A ?" after picking file B.
+            let pd = currentPendingDisambiguation;
             if (!pd || pd.candidates.length === 0) {
-              // Soft refusal — NOT a hard error. Some LLMs (e.g. Kimi) emit
-              // an empty response when they see `isError:true` here, which
-              // crashes the streaming activity ("0 tokens, 0 tool calls").
-              // Return success + clear guidance so the LLM can continue the
-              // loop and answer conversationally.
+              // Infer category from the user's preamble (best-effort) or
+              // default to the side that has 2+ targets.
+              const preambleArg = (tc.arguments?.preamble as string | undefined)?.trim();
+              const askCategoryArg = (tc.arguments?.category as string | undefined)?.toLowerCase();
+              const designCount = currentAvailableDesignPlugins.length;
+              const codeCount = currentAvailableCodeInstances.length;
+              const category: "design" | "code" =
+                askCategoryArg === "code" ? "code"
+                  : askCategoryArg === "design" ? "design"
+                  : designCount >= 2 ? "design"
+                  : codeCount >= 2 ? "code"
+                  : "design";
+              const candidates = category === "design"
+                ? currentAvailableDesignPlugins
+                : currentAvailableCodeInstances.map((c) => ({ targetId: c.targetId, shortId: c.shortId, label: c.label }));
+              if (candidates.length >= 2) {
+                pd = {
+                  category,
+                  candidates,
+                  suggestionTargetId: candidates[0].targetId,
+                };
+                // Tag preamble for traceability (the LLM may have asked
+                // without arguments — we still emit a clean QCM).
+                if (!preambleArg) {
+                  tc.arguments = { ...(tc.arguments ?? {}), preamble: category === "design"
+                    ? "Sur quel fichier Figma veux-tu travailler ?"
+                    : "Quelle instance code veux-tu cibler ?" };
+                }
+              }
+            }
+            if (!pd || pd.candidates.length === 0) {
+              // Truly nothing to ask — soft-refuse (not a hard error so the
+              // LLM keeps the loop alive instead of returning an empty
+              // response; Kimi notably crashes on isError:true here).
               const pairedHint = currentPluginClientId
                 ? ` The Figma plugin is already paired (clientId=${currentPluginClientId}); you can call plugin-bound tools directly.`
                 : "";
-              const text = `No disambiguation needed — the target is already resolved or the user's question doesn't require a paired plugin.${pairedHint} Answer the user's question now: call a read-only tool with an explicit fileUrl, call a plugin-bound tool directly, or respond in text. DO NOT call request_target_disambiguation again.`;
+              const text = `No disambiguation needed — only one target is available or none is connected.${pairedHint} Answer the user's question now: call a read-only tool with an explicit fileUrl, call a plugin-bound tool directly, or respond in text. DO NOT call request_target_disambiguation again.`;
               toolResult = JSON.stringify({ content: [{ type: "text", text }], isError: false });
               isError = false;
             } else {
