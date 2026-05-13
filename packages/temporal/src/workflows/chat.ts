@@ -404,6 +404,14 @@ export async function chatWorkflow(params: ChatWorkflowParams): Promise<void> {
   const hasFigmaConsoleCloud = useV2
     ? instanceManifest.some((e) => e.presetType === "figma_console")
     : (params.mcpServerIds ?? []).includes("figma_console");
+  // Track which plugin we successfully paired with the FC cloud relay.
+  // Lets us trigger a (idempotent) re-pair when the user picks/switches a
+  // plugin mid-conv (Auto + 2 plugins → QCM click sets currentPluginClientId,
+  // but no `pairFCCloudRelay` happens unless we do it lazily on first tool
+  // call). pairFCCloudRelay has a probe-first that no-ops if the relay is
+  // already alive for this plugin, so calling it on every plugin change is
+  // cheap.
+  let lastPairedFCPlugin: string | undefined;
   if (hasFigmaConsoleCloud && params.figmaPluginClientId) {
     await broadcastPhase("connecting_figma");
     try {
@@ -411,11 +419,31 @@ export async function chatWorkflow(params: ChatWorkflowParams): Promise<void> {
         userId: params.userId,
         pluginClientId: params.figmaPluginClientId,
       });
+      lastPairedFCPlugin = params.figmaPluginClientId;
     } catch {
       // Non-fatal: write tools may fail but read tools still work.
       // User will see "No plugin connected to cloud relay" error on first write.
     }
   }
+
+  // Lazy re-pair: called before any figma_console tool exec when the current
+  // plugin differs from what we last paired (e.g. after a QCM-driven switch).
+  const ensureFCPairing = async (): Promise<void> => {
+    if (!hasFigmaConsoleCloud) return;
+    if (!currentPluginClientId) return;
+    if (currentPluginClientId === lastPairedFCPlugin) return;
+    try {
+      await pairFCCloudRelay({
+        userId: params.userId,
+        pluginClientId: currentPluginClientId,
+      });
+      lastPairedFCPlugin = currentPluginClientId;
+    } catch {
+      // Non-fatal — the next tool call will surface the "No cloud relay
+      // session" error and the LLM can recover (e.g. ask the user to
+      // re-open the plugin).
+    }
+  };
 
   // ── Disambiguation signaling tool (always exposed) ──────────────────────
   // The LLM calls this when it judges the user's request needs a paired
@@ -924,6 +952,12 @@ export async function chatWorkflow(params: ChatWorkflowParams): Promise<void> {
                 toolResult = JSON.stringify({ content: [{ type: "text", text }], isError: true });
                 isError = true;
               } else {
+                // Lazy re-pair if the current plugin differs from the last
+                // one we paired (e.g. user clicked a QCM choice after Auto+2
+                // plugins). Idempotent: skips if already alive.
+                if (manifestEntry?.presetType === "figma_console") {
+                  await ensureFCPairing();
+                }
                 const result = await executeMCPToolV2({
                   userId: params.userId,
                   instanceId: resolved.instanceId,
@@ -943,6 +977,9 @@ export async function chatWorkflow(params: ChatWorkflowParams): Promise<void> {
             } else {
               // Fallback: try V1 resolution (e.g., guardian_ prefix tools)
               const resolvedV1 = resolveServerForTool(tc.name);
+              if (resolvedV1.serverId === "figma_console") {
+                await ensureFCPairing();
+              }
               const result = await executeMCPTool({
                 userId: params.userId,
                 serverId: resolvedV1.serverId,
@@ -959,6 +996,9 @@ export async function chatWorkflow(params: ChatWorkflowParams): Promise<void> {
           } else {
             // Legacy V1: MCP tool execution (Guardian or external MCP servers)
             const resolved = resolveServerForTool(tc.name);
+            if (resolved.serverId === "figma_console") {
+              await ensureFCPairing();
+            }
             const result = await executeMCPTool({
               userId: params.userId,
               serverId: resolved.serverId,
