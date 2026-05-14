@@ -697,7 +697,27 @@ export async function chatWorkflow(params: ChatWorkflowParams): Promise<void> {
           });
           break;
         } catch (err) {
-          const errMsg = err instanceof Error ? err.message : String(err);
+          // Temporal wraps activity errors in ActivityFailure: the outer
+          // `.message` is "Activity task failed" and the real message lives
+          // in `.cause.message` (ApplicationFailure). Walk the cause chain
+          // so we don't miss the "empty response" signature.
+          const collectMessages = (e: unknown): string => {
+            const seen = new Set<unknown>();
+            const parts: string[] = [];
+            let cur: unknown = e;
+            while (cur && !seen.has(cur)) {
+              seen.add(cur);
+              if (cur instanceof Error) {
+                if (cur.message) parts.push(cur.message);
+                cur = (cur as { cause?: unknown }).cause;
+              } else {
+                parts.push(String(cur));
+                cur = undefined;
+              }
+            }
+            return parts.join(" | ");
+          };
+          const errMsg = collectMessages(err);
           const isEmpty = errMsg.includes("empty response");
           if (isEmpty && attempt < MAX_LLM_ATTEMPTS) {
             // Brief pause so we don't hammer the same model state.
