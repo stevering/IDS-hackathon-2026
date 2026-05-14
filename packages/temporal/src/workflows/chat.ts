@@ -699,33 +699,51 @@ export async function chatWorkflow(params: ChatWorkflowParams): Promise<void> {
         } catch (err) {
           // Temporal wraps activity errors in ActivityFailure: the outer
           // `.message` is "Activity task failed" and the real message lives
-          // in `.cause.message` (ApplicationFailure). Walk the cause chain
-          // so we don't miss the "empty response" signature.
-          const collectMessages = (e: unknown): string => {
+          // in `.cause.message` (ApplicationFailure). Some SDK versions also
+          // expose `.failure.message`. Walk the cause chain AND inspect
+          // every plausible nested field so we don't miss the "empty
+          // response" signature regardless of which shape Temporal uses.
+          const collect = (root: unknown): string => {
             const seen = new Set<unknown>();
             const parts: string[] = [];
-            let cur: unknown = e;
-            while (cur && !seen.has(cur)) {
-              seen.add(cur);
-              if (cur instanceof Error) {
-                if (cur.message) parts.push(cur.message);
-                cur = (cur as { cause?: unknown }).cause;
-              } else {
-                parts.push(String(cur));
-                cur = undefined;
+            const visit = (v: unknown) => {
+              if (!v || seen.has(v)) return;
+              seen.add(v);
+              if (typeof v === "string") { parts.push(v); return; }
+              if (v instanceof Error) {
+                if (v.message) parts.push(v.message);
+                visit((v as { cause?: unknown }).cause);
+                visit((v as { failure?: unknown }).failure);
+                return;
               }
-            }
+              if (typeof v === "object") {
+                const o = v as Record<string, unknown>;
+                if (typeof o.message === "string") parts.push(o.message);
+                if (typeof o.applicationFailureInfo === "object") {
+                  visit(o.applicationFailureInfo);
+                }
+                visit(o.cause);
+                visit(o.failure);
+              }
+            };
+            visit(root);
             return parts.join(" | ");
           };
-          const errMsg = collectMessages(err);
-          const isEmpty = errMsg.includes("empty response");
+          const errMsg = collect(err);
+          // Log so we can confirm in Railway whether the retry guard is
+          // reached and what shape the error has.
+          console.log(`[chat-retry] attempt=${attempt} errMsg="${errMsg.slice(0, 300)}"`);
+          const isEmpty = errMsg.includes("empty response")
+            || errMsg.includes("0 tokens")
+            || errMsg.includes("may be at capacity");
           if (isEmpty && attempt < MAX_LLM_ATTEMPTS) {
+            console.log(`[chat-retry] retrying LLM call (attempt ${attempt + 1}/${MAX_LLM_ATTEMPTS}) after empty response`);
             // Brief pause so we don't hammer the same model state.
             // (Temporal workflows must use `sleep`, not setTimeout.)
             await sleep("750 ms");
             continue;
           }
-          errorMessage = errMsg;
+          errorMessage = errMsg || (err instanceof Error ? err.message : String(err));
           status = "error";
           // Error is broadcast via stream_error from the activity's catch block.
           // Don't persist as a chat message — the frontend shows it via the error banner.
