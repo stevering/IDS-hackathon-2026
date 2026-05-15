@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import useSWR, { mutate as globalMutate } from "swr";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -56,9 +57,29 @@ export function useConversations(
   // doesn't silently fall back to the is_active conv and re-push /chat/<id>.
   const wantsFreshChatRef = useRef(wantsFreshChat);
   wantsFreshChatRef.current = wantsFreshChat;
-  const [conversations, setConversations] = useState<Conversation[]>([]);
+  // SWR holds the conversation list. revalidateOnFocus is disabled because
+  // the Figma plugin iframe loses/regains focus on every Figma action — without
+  // this guard we would burst-fetch /api/conversations every few seconds.
+  const swrKey = enabled && clientId ? "/api/conversations" : null;
+  const {
+    data: swrData,
+    isLoading: swrLoading,
+    mutate: mutateConversations,
+  } = useSWR<{ conversations: Conversation[] }>(
+    swrKey,
+    async (url: string) => {
+      const res = await fetch(url);
+      if (!res.ok) {
+        console.warn("[Conversations] GET /api/conversations failed:", res.status, await res.text().catch(() => ""));
+        return { conversations: [] };
+      }
+      return res.json();
+    },
+    { revalidateOnFocus: false, revalidateOnReconnect: false },
+  );
+  const conversations: Conversation[] = useMemo(() => swrData?.conversations ?? [], [swrData]);
   const [activeConversationId, setActiveConversationId] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
+  const loading = swrLoading;
   const initialized = useRef(false);
   const clientIdRef = useRef(clientId);
   clientIdRef.current = clientId;
@@ -95,88 +116,52 @@ export function useConversations(
   );
 
   // ── Load conversations ─────────────────────────────────────────────────
+  // Backed by SWR — `loadConversations` forces a revalidation and returns the
+  // refreshed list. Callers that used the old fetch-and-return shape still get
+  // a Conversation[] result.
 
-  const loadConversations = useCallback(async () => {
-    setLoading(true);
-    try {
-      // Load all conversations for this user (no client_id filter).
-      // Client badge + filter dropdown in the sidebar handle per-client views.
-      const res = await fetch("/api/conversations");
-      if (!res.ok) {
-        console.warn("[Conversations] GET /api/conversations failed:", res.status, await res.text().catch(() => ""));
-        return;
-      }
-      const { conversations: convs } = await res.json();
-      setConversations(convs ?? []);
-      return convs as Conversation[];
-    } catch (err) {
-      console.warn("[Conversations] loadConversations error:", err);
-    } finally {
-      setLoading(false);
-    }
-  }, []);
+  const loadConversations = useCallback(async (): Promise<Conversation[] | undefined> => {
+    const result = await mutateConversations();
+    return result?.conversations;
+  }, [mutateConversations]);
 
-  // ── Initial load ───────────────────────────────────────────────────────
-
-  const initInFlight = useRef(false);
+  // ── Initial conversation pick (URL-aware) ─────────────────────────────
+  // Fires once after the SWR list resolves. Phase D made the URL the source
+  // of truth for activeConversationId at the page level, so this only matters
+  // for the hook's internal `activeConversationId` state (kept for backward
+  // compatibility with consumers that still read it, e.g. the legacy
+  // ensureConversation path).
 
   useEffect(() => {
     if (!enabled || !clientId) return;
-    // Allow retry: only skip if already initialized OR currently in-flight
-    if (initialized.current || initInFlight.current) return;
-    initInFlight.current = true;
+    if (initialized.current) return;
+    if (swrLoading) return;
+    if (!swrData) return;
 
+    const convs = swrData.conversations ?? [];
     console.log("[Conversations] Initializing for clientId:", clientId);
+    console.log("[Conversations] Loaded:", convs.length, "conversations");
 
-    (async () => {
-      try {
-        const convs = await loadConversations();
-        console.log("[Conversations] Loaded:", convs?.length ?? 0, "conversations");
-        if (!convs) {
-          // Load failed (auth not ready, network error) — do NOT create a default
-          console.warn("[Conversations] Load returned undefined, skipping init");
-          return;
-        }
-        if (convs.length === 0) {
-          // No existing conversations — start in "fresh chat" mode (welcome
-          // screen). The conv is created lazily on first message send via
-          // ensureConversation, so users with no history don't end up with
-          // an empty "New conversation" placeholder in the DB.
-          console.log("[Conversations] No conversations — entering fresh-chat mode");
-          setActiveConversationId(null);
-          initialized.current = true;
-        } else if (wantsFreshChatRef.current) {
-          // /chat (no id) → fresh-chat mode, even though the user has convs.
-          // The page-level URL sync stays put on /chat; the conv is created
-          // lazily on first message via ensureConversation.
-          console.log("[Conversations] /chat (no id) — entering fresh-chat mode despite existing convs");
-          setActiveConversationId(null);
-          initialized.current = true;
-        } else {
-          // Prefer the conversation requested by the URL (/chat/<id>) when it
-          // matches one of the user's conversations. Otherwise fall back to the
-          // most recently active conv for this client, then the first conv.
-          const preferred = preferredInitialIdRef.current;
-          const fromUrl = preferred ? convs.find((c: Conversation) => c.id === preferred) : null;
-          const active = convs.find(
-            (c: Conversation) => c.is_active && c.client_id === clientId,
-          );
-          const selectedId = fromUrl?.id ?? active?.id ?? convs[0]?.id ?? null;
-          console.log(
-            "[Conversations] Selected active:",
-            selectedId,
-            fromUrl ? "(from URL)" : "(from is_active flag)",
-          );
-          setActiveConversationId(selectedId);
-          initialized.current = true;
-        }
-      } catch (err) {
-        console.warn("[Conversations] Initialization failed, will retry:", err);
-      } finally {
-        initInFlight.current = false;
-      }
-    })();
-  }, [enabled, clientId, loadConversations]);
+    if (convs.length === 0) {
+      console.log("[Conversations] No conversations — entering fresh-chat mode");
+      setActiveConversationId(null);
+    } else if (wantsFreshChatRef.current) {
+      console.log("[Conversations] /chat (no id) — entering fresh-chat mode despite existing convs");
+      setActiveConversationId(null);
+    } else {
+      const preferred = preferredInitialIdRef.current;
+      const fromUrl = preferred ? convs.find((c) => c.id === preferred) : null;
+      const active = convs.find((c) => c.is_active && c.client_id === clientId);
+      const selectedId = fromUrl?.id ?? active?.id ?? convs[0]?.id ?? null;
+      console.log(
+        "[Conversations] Selected active:",
+        selectedId,
+        fromUrl ? "(from URL)" : "(from is_active flag)",
+      );
+      setActiveConversationId(selectedId);
+    }
+    initialized.current = true;
+  }, [enabled, clientId, swrLoading, swrData]);
 
   // ── Create conversation (internal helper) ──────────────────────────────
 
@@ -205,7 +190,14 @@ export function useConversations(
         }
         const { conversation } = await res.json();
         if (conversation) {
-          setConversations((prev) => [conversation, ...prev]);
+          // Optimistically prepend to the SWR cache so the sidebar updates
+          // instantly without waiting for the next revalidation.
+          mutateConversations(
+            (prev) => prev
+              ? { conversations: [conversation, ...prev.conversations] }
+              : { conversations: [conversation] },
+            { revalidate: false },
+          );
         }
         return conversation ?? null;
       } catch (err) {
@@ -259,17 +251,18 @@ export function useConversations(
   const deleteConversation = useCallback(
     async (id: string) => {
       await fetch(`/api/conversations/${id}`, { method: "DELETE" }).catch(() => {});
-      setConversations((prev) => prev.filter((c) => c.id !== id));
+      mutateConversations(
+        (prev) => prev
+          ? { conversations: prev.conversations.filter((c) => c.id !== id) }
+          : prev,
+        { revalidate: false },
+      );
       if (activeConversationId === id) {
-        // Switch to the next available conversation
-        setConversations((prev) => {
-          const remaining = prev.filter((c) => c.id !== id);
-          setActiveConversationId(remaining[0]?.id ?? null);
-          return remaining;
-        });
+        // Internal state fallback. Page-level Phase D code drives the URL.
+        setActiveConversationId(null);
       }
     },
-    [activeConversationId],
+    [activeConversationId, mutateConversations],
   );
 
   const updateTitle = useCallback(async (id: string, title: string) => {
@@ -278,10 +271,13 @@ export function useConversations(
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ title }),
     }).catch(() => {});
-    setConversations((prev) =>
-      prev.map((c) => (c.id === id ? { ...c, title } : c)),
+    mutateConversations(
+      (prev) => prev
+        ? { conversations: prev.conversations.map((c) => (c.id === id ? { ...c, title } : c)) }
+        : prev,
+      { revalidate: false },
     );
-  }, []);
+  }, [mutateConversations]);
 
   const setActiveConversationById = useCallback(
     async (id: string) => {

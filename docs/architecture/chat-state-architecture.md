@@ -1,6 +1,6 @@
 # Chat state architecture
 
-Status: **Phase B.1 shipped** (Phase 0 + A + B.1 of [`chat-layout-based-state-hoisting`](../../internal/docs/backlog/chat-layout-based-state-hoisting.md)). Phases B.2, C, D, E remain on the backlog.
+Status: **Phases 0, A, B.1, C, D, E shipped** (see [`chat-layout-based-state-hoisting`](../../internal/docs/backlog/chat-layout-based-state-hoisting.md)). Phase B.2 (PeekBanner / ProxyModal / useOrchestrationConversation hoist) skipped — post-Phase A the page no longer remounts on sibling navigation so the rationale for hoisting `useOrchestrationConversation` falls away; PeekBanner and ProxyModal are tightly coupled to page-local state and provide marginal value for hoist.
 
 ## Goal
 
@@ -62,13 +62,41 @@ Exposed by `packages/web/src/lib/chat-shell-context.tsx`. Single hook for the pa
 
 Throws if used outside the chat layout (no fallback, fail-fast).
 
+## Phase C — SWR on `/api/conversations`
+
+`useConversations` no longer maintains its own `conversations` state. SWR holds the list under the key `"/api/conversations"`, with `revalidateOnFocus: false` (mandatory: the Figma plugin iframe loses/regains focus on every action, which would otherwise produce a burst of `/api/conversations` requests).
+
+Mutations (`createConversation`, `deleteConversation`, `updateTitle`) call `mutateConversations(updater, { revalidate: false })` so the sidebar updates instantly without a round-trip. On F5, SWR fetches once and the sidebar renders directly from the resolved data (no transient empty state).
+
+`loadConversations` is preserved as `() => mutateConversations()` for the orchestration auto-refetch path.
+
+## Phase D — URL as the source of truth
+
+The two state↔URL sync effects (`Effect 1`, `Effect 2`) plus `lastPushedIdRef` and `prevActiveIdRef` are gone. `_home.tsx` derives `activeConversationId` directly from `useParams().id`. The hook's internal `activeConversationId` state still exists for backwards compatibility but is no longer the source of truth — page-level code reads from the URL.
+
+- Sidebar `onSwitch`: `router.push('/chat/<id>')` + fire-and-forget `switchConversation(id)` (for the server-side `is_active` marker).
+- Sidebar `onCreate`: `router.push('/chat')`.
+- Sidebar `onDelete`: `deleteConversation(id)`; if it was the active conv, `router.push('/chat')`.
+- `sendMessage`: after `ensureConversation()` creates a new conv on first message, `router.push('/chat/<newId>')` to navigate. `forceConversationId` bridges the gap for the in-flight message.
+
+## Phase E — URL search params
+
+`useUrlState(key, defaultValue)` in `app/hooks/useUrlState.ts` is a tiny `[value, set]` pair backed by `useSearchParams` + `router.replace`. Default values are removed from the URL when set (keeps URLs clean).
+
+Wired so far:
+
+| Param | Replaces | Notes |
+|---|---|---|
+| `?view=developer` | `orchViewMode` localStorage | First-paint fallback to `localStorage.guardian:orchViewMode` if `?view=` is absent. localStorage is still written on toggle (legacy compat). |
+
+`?debug=` was not wired — there is no separate debug panel state in the current code (the only debug surface is a "copy debug context" button that runs synchronously).
+
 ## What's still in `_home.tsx`
 
 - Approval state + `<ApprovalOverlay>` rendering (Promise resolver dies with the conversation — intentional).
-- The header (Guardian title, `EditableClientId`, `UserMenu`, `MCPStatusBar`, `OrchestrationStatusBar`, `OrchestrationBanner`, error banners) — has dependencies on `useTemporalOrchestration` and `useOrchestrationConversation` that have not yet been hoisted.
-- `<PeekBanner>` instances (MCP errors + chat errors) — pending Phase B.2.
-- `<ProxyModal>` — pending Phase B.2.
-- The state ↔ URL sync effects (`Effect 1`, `Effect 2`, `lastPushedIdRef`, `prevActiveIdRef`) — pending Phase D (URL as source of truth).
+- The header (Guardian title, `EditableClientId`, `UserMenu`, `MCPStatusBar`, `OrchestrationStatusBar`, `OrchestrationBanner`, error banners) — depends on `useTemporalOrchestration` and `useOrchestrationConversation` (still in `_home.tsx`).
+- `<PeekBanner>` instances (MCP errors + chat errors) — not hoisted (state lives in the page).
+- `<ProxyModal>` — not hoisted (state lives in the page).
 
 ## Known regressions (B.1)
 

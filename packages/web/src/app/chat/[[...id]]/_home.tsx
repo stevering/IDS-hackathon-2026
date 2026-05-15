@@ -12,6 +12,7 @@ import { useRouter, useParams, usePathname } from "next/navigation";
 import type { GatewayModel } from "../../api/gateway-models/route";
 import { pushPluginEvent, type PluginEvent, type FigmaPluginContext, type ExecuteCodeResult } from "../../hooks/useFigmaPlugin";
 import { useChatShell } from "@/lib/chat-shell-context";
+import { useUrlState } from "../../hooks/useUrlState";
 import { TargetSelector, type TargetItem } from "@/components/TargetSelector";
 import {
   resolveDesignTarget,
@@ -568,7 +569,6 @@ export default function Home() {
     allConversations,
     childrenMap,
     activeConversation,
-    activeConversationId,
     parallelConversations,
     createConversation,
     switchConversation,
@@ -577,7 +577,6 @@ export default function Home() {
     renameConversation,
     loadConversations,
     ensureConversation,
-    setActiveConversation,
   } = shell;
 
   // ── Approval-gated executeCode wrapper ────────────────────────────
@@ -637,85 +636,19 @@ export default function Home() {
     return () => installExecuteWrapper(null);
   }, [installExecuteWrapper, gatedExecuteCode]);
 
-  // ── URL routing ─────────────────────────────────────────────────────
-  // The layout reads useParams() too and feeds urlId/wantsFreshChat into
-  // useConversations. The page keeps its own copy here for the
-  // state↔URL sync effects (Phase D will turn the URL into the SoT).
+  // ── URL is the source of truth for the active conversation ───────────
+  // The URL → state and state → URL sync effects (plus lastPushedIdRef /
+  // prevActiveIdRef) of v1 are gone. Sidebar clicks router.push directly;
+  // _home reads activeConversationId from useParams() and never owns it as
+  // state. This kills the round-trip and the "back/forward" edge cases.
   const router = useRouter();
   const routeParams = useParams();
   const pathname = usePathname();
   const urlId = Array.isArray(routeParams?.id)
     ? (routeParams.id[0] ?? null)
     : ((routeParams?.id as string | undefined) ?? null);
+  const activeConversationId = urlId;
   const wantsFreshChat = pathname === "/chat";
-
-  // ── URL ↔ activeConversationId sync ───────────────────────────────────
-  // lastPushedIdRef tracks the last id we (or the URL) acknowledged, so that
-  // state→URL and URL→state effects don't fight each other.
-  const lastPushedIdRef = useRef<string | null>(urlId);
-  const prevActiveIdRef = useRef<string | null>(null);
-
-  // Effect 1 — state → URL: when activeConversationId changes (sidebar click,
-  // create, delete, orchestration auto-switch), push the matching URL.
-  useEffect(() => {
-    const prev = prevActiveIdRef.current;
-    prevActiveIdRef.current = activeConversationId;
-
-    if (!activeConversationId) {
-      // Fresh-chat / welcome: only push /chat if we previously had an active
-      // conv (e.g., user just deleted the last one) AND the URL still carries
-      // a conv id. Avoids clobbering the URL while the hook is still loading.
-      if (prev && urlId) {
-        lastPushedIdRef.current = null;
-        router.replace("/chat", { scroll: false });
-      }
-      return;
-    }
-
-    if (urlId === activeConversationId) {
-      lastPushedIdRef.current = activeConversationId;
-      return;
-    }
-
-    // State changed and differs from URL. If lastPushedRef already equals the
-    // current state, the mismatch came from an external URL change (back/
-    // forward); let Effect 2 handle it.
-    if (lastPushedIdRef.current === activeConversationId) {
-      return;
-    }
-
-    lastPushedIdRef.current = activeConversationId;
-    router.replace(`/chat/${activeConversationId}`, { scroll: false });
-  }, [activeConversationId, urlId, router]);
-
-  // Effect 2 — URL → state: when the URL changes externally (browser back/
-  // forward, paste-link), adopt it into state. Also validates the id.
-  useEffect(() => {
-    if (urlId === lastPushedIdRef.current) return; // we pushed this
-    if (!urlId) {
-      // navigated to / or /chat — clear ref so a later state push will fire
-      lastPushedIdRef.current = null;
-      return;
-    }
-    if (urlId === activeConversationId) {
-      // State already matches; nothing to do beyond syncing the ref
-      lastPushedIdRef.current = urlId;
-      return;
-    }
-    // If state just transitioned to fresh-chat (activeConversationId === null,
-    // typically the "+ New conversation" click), Effect 1 has already pushed
-    // /chat. The URL hasn't caught up yet (urlId still holds the previous
-    // conv's id), so do NOT re-adopt it — that would defeat the fresh-chat
-    // transition. Wait for the URL to flip to /chat.
-    if (!activeConversationId) return;
-    if (allConversations.length === 0) return; // wait for hook to load
-    if (!allConversations.some((c) => c.id === urlId)) {
-      // Unknown id and state has a fallback — let Effect 1 push /chat/<active>
-      return;
-    }
-    lastPushedIdRef.current = urlId;
-    setActiveConversation(urlId);
-  }, [urlId, activeConversationId, allConversations, setActiveConversation, router]);
 
   // ── Derive workflowId from active conversation metadata ──
   // When navigating to an orchestration conversation (sidebar click, F5 restore),
@@ -1172,12 +1105,23 @@ export default function Home() {
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const orchScrollContainerRef = useRef<HTMLDivElement>(null);
   const shouldAutoScroll = useRef(true);
-  const [orchViewMode, setOrchViewMode] = useState<"chat" | "developer">(() => {
+  // URL-backed view mode (Phase E). Falls back to the legacy localStorage
+  // value on first paint so users with no ?view= param keep their preference.
+  const [urlView, setUrlView] = useUrlState("view", "chat");
+  const [legacyOrchView] = useState<"chat" | "developer">(() => {
     if (typeof window !== "undefined") {
       return (localStorage.getItem("guardian:orchViewMode") as "chat" | "developer") || "chat";
     }
     return "chat";
   });
+  const orchViewMode: "chat" | "developer" = (urlView === "developer" ? "developer" : urlView === "chat" ? "chat" : legacyOrchView);
+  const setOrchViewMode = useCallback(
+    (next: "chat" | "developer") => {
+      setUrlView(next === "chat" ? null : next);
+      localStorage.setItem("guardian:orchViewMode", next);
+    },
+    [setUrlView],
+  );
   const shouldAutoScrollOrch = useRef(true);
   const scrollRafRef = useRef<number | null>(null);
 
@@ -1687,10 +1631,13 @@ export default function Home() {
       }
       const newId = await ensureConversation();
       if (!newId) return;
-      setActiveConversation(newId);
+      // URL is the SoT — push it so the page re-renders with activeConversationId
+      // = newId on the next tick. forceConversationId bridges the gap for the
+      // in-flight rawSendMessage call.
+      router.push(`/chat/${newId}`, { scroll: false });
       rawSendMessage({ text: msg.text, forceConversationId: newId });
     },
-    [activeConversationId, rawSendMessage, ensureConversation, setActiveConversation],
+    [activeConversationId, rawSendMessage, ensureConversation, router],
   );
   const cancelMessage = chatWorkflow.cancelMessage;
   const status = chatWorkflow.status === "idle" ? "ready" as const : "streaming" as const;
@@ -1735,8 +1682,12 @@ export default function Home() {
   // When switching away from the orchestration conversation, auto-release the role
   // so the user starts fresh in the new conversation (idle mode, [ORCHESTRATE:] available).
   const handleSwitchConversation = useCallback((id: string) => {
+    // URL is the SoT. switchConversation is still called for its side-effect
+    // (PATCH is_active marker on the server) but its local state mutation is
+    // ignored now.
+    router.push(`/chat/${id}`, { scroll: false });
     switchConversation(id);
-  }, [switchConversation]);
+  }, [router, switchConversation]);
 
   const [errorVisible, setErrorVisible] = useState(false);
   useEffect(() => {
@@ -2319,9 +2270,7 @@ export default function Home() {
               errorMessage={temporal.streamError}
               viewMode={orchViewMode}
               onToggleViewMode={() => {
-                const next = orchViewMode === "chat" ? "developer" : "chat";
-                setOrchViewMode(next);
-                localStorage.setItem("guardian:orchViewMode", next);
+                setOrchViewMode(orchViewMode === "chat" ? "developer" : "chat");
               }}
               agents={temporal.agents}
             />

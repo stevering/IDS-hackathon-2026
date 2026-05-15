@@ -9,7 +9,7 @@
 // See internal/docs/backlog/chat-layout-based-state-hoisting.md (Phase B).
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useParams, usePathname } from "next/navigation";
+import { useParams, usePathname, useRouter } from "next/navigation";
 import { useFigmaPlugin } from "../hooks/useFigmaPlugin";
 import { useFigmaExecuteChannel } from "../hooks/useFigmaExecuteChannel";
 import { useClientRegistry } from "../hooks/useClientRegistry";
@@ -116,7 +116,8 @@ export default function ChatLayout({ children }: { children: React.ReactNode }) 
 
   const myDisplayShortId = registryShortId ?? clients.find((c) => c.clientId === myClientId)?.shortId ?? myClientId;
 
-  // ── URL params drive initial conversation selection ─────────────────
+  // ── URL is the source of truth ───────────────────────────────────────
+  const router = useRouter();
   const routeParams = useParams();
   const pathname = usePathname();
   const urlId = Array.isArray(routeParams?.id)
@@ -215,10 +216,24 @@ export default function ChatLayout({ children }: { children: React.ReactNode }) 
         } ${sidebarCollapsed ? "md:w-12" : "md:w-72"} md:relative md:top-auto md:left-auto md:z-10 md:h-full md:translate-x-0 transition-all duration-200 glass-sidebar`}>
           <ConversationSidebar
             conversations={convHook.conversations}
-            activeId={convHook.activeConversationId}
-            onSwitch={(id) => { convHook.switchConversation(id); setSidebarOpen(false); }}
-            onCreate={() => { convHook.createConversation(); setSidebarOpen(false); }}
-            onDelete={convHook.deleteConversation}
+            activeId={urlId}
+            onSwitch={(id) => {
+              router.push(`/chat/${id}`, { scroll: false });
+              // Fire-and-forget: still updates the server-side is_active marker.
+              convHook.switchConversation(id);
+              setSidebarOpen(false);
+            }}
+            onCreate={() => {
+              router.push("/chat", { scroll: false });
+              setSidebarOpen(false);
+            }}
+            onDelete={async (id) => {
+              await convHook.deleteConversation(id);
+              if (id === urlId) {
+                // After deleting the active conv, fall back to /chat (welcome).
+                router.push("/chat", { scroll: false });
+              }
+            }}
             onRename={convHook.renameConversation}
             collapsed={sidebarCollapsed}
             onToggleCollapse={toggleSidebar}
