@@ -1,8 +1,10 @@
 "use client";
 
 // Optional catch-all route — matches /chat (no id) and /chat/<uuid>.
-// A single segment means /chat ↔ /chat/<uuid> transitions keep the React
-// tree mounted, so the chat hooks don't reset state when the URL flips
-// (which would otherwise yank the user back into the previous conv via
-// the is_active flag reload).
-export { default } from "../../page";
+// The actual Home component lives in _home.tsx (segment-private, "_" prefix
+// keeps it out of the Next.js routing surface).
+import Home from "./_home";
+
+export default function ChatPage() {
+  return <Home />;
+}

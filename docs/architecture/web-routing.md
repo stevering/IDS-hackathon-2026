@@ -6,8 +6,9 @@ The Guardian webapp (`packages/web`, Next.js 16 App Router) exposes a small, mos
 
 | Path | File | Description |
 |---|---|---|
-| `/` | `app/page.tsx` | Root entry — renders `Home`. On mount, the URL ↔ state sync inside `Home` redirects to `/chat` or `/chat/<lastActiveId>` depending on the hook's initial pick. |
-| `/chat` and `/chat/<uuid>` | `app/chat/[[...id]]/page.tsx` | **Optional catch-all** route. `/chat` (no segment) is welcome / fresh-chat mode; `/chat/<uuid>` is a specific conversation. They share a single dynamic segment so flipping between them keeps `Home` mounted (no React tree remount → hooks don't reset → no bounce-back to the previous `is_active` conv). `useParams().id` is `string[] | undefined`; we take `id[0]`. Works equally for chats and orchestration sub-conversations. |
+| `/` | `app/page.tsx` | **Server Component** — `redirect('/chat')`. No React tree mounts at `/`, eliminating the double-mount that used to happen when `Home` first rendered at `/` and then again at `/chat/<id>`. |
+| `/chat` and `/chat/<uuid>` | `app/chat/[[...id]]/page.tsx` → `_home.tsx` | **Optional catch-all** route. `/chat` (no segment) is welcome / fresh-chat mode; `/chat/<uuid>` is a specific conversation. The page file is a thin wrapper that imports `_home.tsx` (segment-private, `_` prefix keeps it out of the routing surface). `useParams().id` is `string[] \| undefined`; we take `id[0]`. Works equally for chats and orchestration sub-conversations. |
+| `app/chat/layout.tsx` | `app/chat/layout.tsx` | **Shell layout**, mounted once per chat session and never remounted on `/chat` ↔ `/chat/<id>` navigation. Hosts the Figma plugin bridge, the execute channel, the client registry, the conversation list, the MCP instances, the sidebar and the sidebar UI state. The state survives sibling navigation, eliminating the 250-400 ms sidebar flicker that used to happen on every URL flip. See [`chat-state-architecture.md`](./chat-state-architecture.md). |
 | `/login`, `/signup`, `/signup/complete`, `/auth/callback`, `/oauth/authorize`, `/oauth/consent`, `/privacy` | `app/(auth)/*`, `app/auth/*`, `app/oauth/*`, `app/privacy/*` | Public pages (listed in `PUBLIC_PAGES` of `src/proxy.ts`). |
 | `/account` | `app/(main)/account/page.tsx` | BYOK keys, usage, developer toggles. |
 | `/install` | `app/(main)/install/page.tsx` | Plugin / overlay install screen. |
@@ -16,9 +17,9 @@ The Guardian webapp (`packages/web`, Next.js 16 App Router) exposes a small, mos
 
 ## How the chat URL stays in sync with state
 
-Three pages (`/`, `/chat`, `/chat/[id]`) all render the same React component (`Home` in `app/page.tsx`) via `export { default } from "../page"`. No code duplication; the three routes are pure entry points.
+Two chat URLs (`/chat` and `/chat/<uuid>`) resolve to a single segment file (`app/chat/[[...id]]/page.tsx`), which renders `Home` (`_home.tsx`). The root `/` is a server-side `redirect('/chat')` (no React tree mounts there). The shell hooks (sidebar, conversation list, Figma bridge, MCP) live in `app/chat/layout.tsx` and survive sibling navigation; the page below only re-renders, it does not remount.
 
-Inside `Home` (after the `useConversations` hook):
+Inside `_home.tsx` (after consuming the shell via `useChatShell()`):
 
 - `useParams()` returns `{ id }` only on `/chat/[id]`. On `/` and `/chat`, `urlId === null`.
 - The hook accepts `preferredInitialId` (3rd argument). On first load, if `urlId` matches one of the user's conversations, it wins over the `is_active` flag — that's what makes pasted links land on the right conv.

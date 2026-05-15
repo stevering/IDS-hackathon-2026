@@ -222,8 +222,3 @@ export function OrchestrationBanner({
     </button>
   );
 }
-
-// Keep the old named export as an alias so any stale imports still compile.
-// The OrchestrationBackBanner is no longer needed — use OrchestrationBanner
-// with isInOrchestrationConversation=true instead.
-export const OrchestrationBackBanner = OrchestrationBanner;
