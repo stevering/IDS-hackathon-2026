@@ -505,12 +505,26 @@ export async function chatWorkflow(params: ChatWorkflowParams): Promise<void> {
   let allFocusTools: LLMToolDefinition[] = [...mcpTools];
 
   if (useV2 && instanceManifest.length > 0) {
-    // Add the 3 meta-tools to the catalog (always available)
+    // Only expose the proxy tools (`guardian_call_instance_tool`,
+    // `guardian_get_instance_tools`) when there are actually non-focus
+    // instances to proxy to. Without this gate, Kimi (observed in conv
+    // 403956f1) saw `guardian_call_instance_tool` and preferred it over
+    // the direct focus tools — then hallucinated `label="Figma-Desktop-
+    // ripohi"` (a plugin shortId, not an MCP instance label) and failed.
+    // When the user has a single focused instance, the LLM has zero
+    // legitimate reason to call the proxy — force it into the direct
+    // focus tools (e.g. `figmaconsole_figma_execute`).
+    const hasNonFocusInstances = instanceManifest.some((e) => !e.isFocus);
+
     const metaSpecs: LLMToolDefinition[] = [
       { name: "guardian_list_instances", description: "List all MCP instances the user has configured and that are currently online.", parameters: { type: "object", properties: {}, required: [] } },
-      { name: "guardian_get_instance_tools", description: "Get the list of tools exposed by a specific MCP instance (by label).", parameters: { type: "object", properties: { label: { type: "string" } }, required: ["label"] } },
-      { name: "guardian_call_instance_tool", description: "Execute a tool on a non-focus MCP instance (by label).", parameters: { type: "object", properties: { label: { type: "string" }, tool_name: { type: "string" }, arguments: { type: "object" } }, required: ["label", "tool_name", "arguments"] } },
     ];
+    if (hasNonFocusInstances) {
+      metaSpecs.push(
+        { name: "guardian_get_instance_tools", description: "Get the list of tools exposed by a specific MCP instance (by label).", parameters: { type: "object", properties: { label: { type: "string" } }, required: ["label"] } },
+        { name: "guardian_call_instance_tool", description: "Execute a tool on a non-focus MCP instance (by label). ONLY use for instances that are NOT in your current focus — focus instances expose their tools directly with a prefix.", parameters: { type: "object", properties: { label: { type: "string" }, tool_name: { type: "string" }, arguments: { type: "object" } }, required: ["label", "tool_name", "arguments"] } },
+      );
+    }
     mcpTools.push(...metaSpecs);
 
     // Add the 2 tool-group meta-tools (always available, even when no filtering)
@@ -1327,13 +1341,26 @@ function buildManifestPrompt(manifest: InstanceManifestEntry[]): string {
     }
     lines.push("");
   }
-  lines.push(
-    "",
-    "Tool naming: `<preset>_<label>_<action>` (e.g. `github_github_list_repos`).",
-    "Default: use focus tools directly. For other instances, call `guardian_call_instance_tool(label, raw_tool_name, args)`.",
-    "  - `tool_name` = RAW name without prefix (e.g. `list_repos`, NOT `github_github_list_repos`).",
-    "",
-  );
+  const hasNonFocus = manifest.some((e) => !e.isFocus && !e.error);
+  if (hasNonFocus) {
+    lines.push(
+      "",
+      "Tool naming: `<preset>_<label>_<action>` (e.g. `github_github_list_repos`).",
+      "Default: use focus tools directly (they're already in your catalog with a prefix). For OTHER instances, call `guardian_call_instance_tool(label, raw_tool_name, args)`.",
+      "  - `tool_name` = RAW name without prefix (e.g. `list_repos`, NOT `github_github_list_repos`).",
+      "",
+    );
+  } else {
+    // All available instances are in focus — guardian_call_instance_tool
+    // is not exposed in the catalog (no non-focus targets exist). Force
+    // the LLM to use the prefixed focus tools directly so it cannot
+    // hallucinate calls to a label that doesn't exist.
+    lines.push(
+      "",
+      "All available instances are in your FOCUS. Their tools are already in your catalog with the instance prefix (e.g. `figmaconsole_figma_execute`). Call them directly — do NOT route through any proxy tool.",
+      "",
+    );
+  }
 
   if (hasUnavailable) {
     lines.push(
