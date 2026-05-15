@@ -40,12 +40,22 @@ export type ConversationMessage = {
  * Fetches conversations on mount, creates a default one if none exists,
  * and provides methods to switch, create, delete, and rename conversations.
  */
-export function useConversations(clientId: string, enabled = true, preferredInitialId: string | null = null) {
+export function useConversations(
+  clientId: string,
+  enabled = true,
+  preferredInitialId: string | null = null,
+  wantsFreshChat: boolean = false,
+) {
   // The preferred initial id is captured once on first load so that a URL like
-  // /c/<id> can drive which conversation is selected. After init, switching is
-  // owned by the page-level URL sync effects.
+  // /chat/<id> can drive which conversation is selected. After init, switching
+  // is owned by the page-level URL sync effects.
   const preferredInitialIdRef = useRef(preferredInitialId);
   preferredInitialIdRef.current = preferredInitialId;
+  // When the user is on /chat (no id) we force fresh-chat mode — even if they
+  // have existing conversations — so a remount triggered by router.replace
+  // doesn't silently fall back to the is_active conv and re-push /chat/<id>.
+  const wantsFreshChatRef = useRef(wantsFreshChat);
+  wantsFreshChatRef.current = wantsFreshChat;
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [activeConversationId, setActiveConversationId] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -133,6 +143,13 @@ export function useConversations(clientId: string, enabled = true, preferredInit
           // ensureConversation, so users with no history don't end up with
           // an empty "New conversation" placeholder in the DB.
           console.log("[Conversations] No conversations — entering fresh-chat mode");
+          setActiveConversationId(null);
+          initialized.current = true;
+        } else if (wantsFreshChatRef.current) {
+          // /chat (no id) → fresh-chat mode, even though the user has convs.
+          // The page-level URL sync stays put on /chat; the conv is created
+          // lazily on first message via ensureConversation.
+          console.log("[Conversations] /chat (no id) — entering fresh-chat mode despite existing convs");
           setActiveConversationId(null);
           initialized.current = true;
         } else {

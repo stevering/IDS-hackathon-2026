@@ -8,7 +8,7 @@ import type { UIMessage } from "ai";
 import { useChatWorkflow } from "./hooks/useChatWorkflow";
 import { useState, useRef, useEffect, useLayoutEffect, useMemo, useCallback } from "react";
 import Link from "next/link";
-import { useRouter, useParams } from "next/navigation";
+import { useRouter, useParams, usePathname } from "next/navigation";
 import type { GatewayModel } from "./api/gateway-models/route";
 import { useFigmaPlugin, pushPluginEvent, type PluginEvent, type FigmaPluginContext, type ExecuteCodeResult } from "./hooks/useFigmaPlugin";
 import { useFigmaExecuteChannel } from "./hooks/useFigmaExecuteChannel";
@@ -684,9 +684,16 @@ export default function Home() {
   // useParams() returns { id: string[] } under the catch-all (or {} on /chat).
   const router = useRouter();
   const routeParams = useParams();
+  const pathname = usePathname();
   const urlId = Array.isArray(routeParams?.id)
     ? (routeParams.id[0] ?? null)
     : ((routeParams?.id as string | undefined) ?? null);
+  // /chat (no id) intentionally means "fresh chat / welcome screen", even on
+  // a fresh mount triggered by router.replace. Without this signal the hook
+  // would fall back to the user's is_active conv on remount and Effect 1
+  // would immediately push /chat/<id>, defeating the "+ New conversation"
+  // button (and any future navigation to /chat).
+  const wantsFreshChat = pathname === "/chat";
 
   // ── Conversation persistence ────────────────────────────────────────
   const {
@@ -704,7 +711,7 @@ export default function Home() {
     loadConversations,
     ensureConversation,
     setActiveConversation,
-  } = useConversations(myClientId, !!myClientId, urlId);
+  } = useConversations(myClientId, !!myClientId, urlId, wantsFreshChat);
 
   // ── URL ↔ activeConversationId sync ───────────────────────────────────
   // lastPushedIdRef tracks the last id we (or the URL) acknowledged, so that
