@@ -7,8 +7,7 @@ The Guardian webapp (`packages/web`, Next.js 16 App Router) exposes a small, mos
 | Path | File | Description |
 |---|---|---|
 | `/` | `app/page.tsx` | Root entry — renders `Home`. On mount, the URL ↔ state sync inside `Home` redirects to `/chat` or `/chat/<lastActiveId>` depending on the hook's initial pick. |
-| `/chat` | `app/chat/page.tsx` | Welcome screen / fresh-chat mode. `activeConversationId === null`; the conversation is created lazily via `ensureConversation` when the first message is sent — at that point the URL flips to `/chat/<newId>`. |
-| `/chat/<uuid>` | `app/chat/[id]/page.tsx` | A specific conversation. `useParams()` inside `Home` reads `id`; the sync effects drive `activeConversationId`. Works equally for chats and orchestration sub-conversations (they're conversations with their own UUIDs). |
+| `/chat` and `/chat/<uuid>` | `app/chat/[[...id]]/page.tsx` | **Optional catch-all** route. `/chat` (no segment) is welcome / fresh-chat mode; `/chat/<uuid>` is a specific conversation. They share a single dynamic segment so flipping between them keeps `Home` mounted (no React tree remount → hooks don't reset → no bounce-back to the previous `is_active` conv). `useParams().id` is `string[] | undefined`; we take `id[0]`. Works equally for chats and orchestration sub-conversations. |
 | `/login`, `/signup`, `/signup/complete`, `/auth/callback`, `/oauth/authorize`, `/oauth/consent`, `/privacy` | `app/(auth)/*`, `app/auth/*`, `app/oauth/*`, `app/privacy/*` | Public pages (listed in `PUBLIC_PAGES` of `src/proxy.ts`). |
 | `/account` | `app/(main)/account/page.tsx` | BYOK keys, usage, developer toggles. |
 | `/install` | `app/(main)/install/page.tsx` | Plugin / overlay install screen. |

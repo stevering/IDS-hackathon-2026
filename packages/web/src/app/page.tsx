@@ -673,12 +673,20 @@ export default function Home() {
   const myDisplayShortId = registryShortId ?? clients.find(c => c.clientId === myClientId)?.shortId ?? myClientId;
 
   // ── URL routing ─────────────────────────────────────────────────────
-  // The same React component is mounted under three routes: / (root, self-
-  // redirects via Effect 1), /chat (welcome / fresh-chat), and /chat/<uuid>
-  // (specific conversation). useParams() returns { id } only on /chat/[id].
+  // Routes:
+  //   /              — root (the page renders Home, Effect 1 redirects)
+  //   /chat          — welcome / fresh-chat (catch-all with no segment)
+  //   /chat/<uuid>   — specific conversation
+  // /chat and /chat/<uuid> share a single optional catch-all segment
+  // (app/chat/[[...id]]/page.tsx), so flipping between them keeps Home
+  // mounted — switching away from a conv won't trigger a hook re-init
+  // that would pick the is_active conv and bounce the user back.
+  // useParams() returns { id: string[] } under the catch-all (or {} on /chat).
   const router = useRouter();
   const routeParams = useParams();
-  const urlId = (routeParams?.id as string | undefined) ?? null;
+  const urlId = Array.isArray(routeParams?.id)
+    ? (routeParams.id[0] ?? null)
+    : ((routeParams?.id as string | undefined) ?? null);
 
   // ── Conversation persistence ────────────────────────────────────────
   const {
