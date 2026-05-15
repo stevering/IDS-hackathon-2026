@@ -751,14 +751,15 @@ export default function Home() {
       lastPushedIdRef.current = urlId;
       return;
     }
+    // If state just transitioned to fresh-chat (activeConversationId === null,
+    // typically the "+ New conversation" click), Effect 1 has already pushed
+    // /chat. The URL hasn't caught up yet (urlId still holds the previous
+    // conv's id), so do NOT re-adopt it — that would defeat the fresh-chat
+    // transition. Wait for the URL to flip to /chat.
+    if (!activeConversationId) return;
     if (allConversations.length === 0) return; // wait for hook to load
     if (!allConversations.some((c) => c.id === urlId)) {
-      // Unknown id: only redirect if state has nothing to fall back to.
-      // Otherwise Effect 1 will push /chat/<activeConversationId> instead.
-      if (!activeConversationId) {
-        lastPushedIdRef.current = null;
-        router.replace("/chat", { scroll: false });
-      }
+      // Unknown id and state has a fallback — let Effect 1 push /chat/<active>
       return;
     }
     lastPushedIdRef.current = urlId;
