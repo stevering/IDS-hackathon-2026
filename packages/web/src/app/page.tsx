@@ -8,6 +8,7 @@ import type { UIMessage } from "ai";
 import { useChatWorkflow } from "./hooks/useChatWorkflow";
 import { useState, useRef, useEffect, useLayoutEffect, useMemo, useCallback } from "react";
 import Link from "next/link";
+import { useRouter, useParams } from "next/navigation";
 import type { GatewayModel } from "./api/gateway-models/route";
 import { useFigmaPlugin, pushPluginEvent, type PluginEvent, type FigmaPluginContext, type ExecuteCodeResult } from "./hooks/useFigmaPlugin";
 import { useFigmaExecuteChannel } from "./hooks/useFigmaExecuteChannel";
@@ -671,6 +672,14 @@ export default function Home() {
   // Use server-assigned shortId, falling back to presence-derived one
   const myDisplayShortId = registryShortId ?? clients.find(c => c.clientId === myClientId)?.shortId ?? myClientId;
 
+  // ── URL routing ─────────────────────────────────────────────────────
+  // The same React component is mounted under three routes: / (root, self-
+  // redirects via Effect 1), /chat (welcome / fresh-chat), and /chat/<uuid>
+  // (specific conversation). useParams() returns { id } only on /chat/[id].
+  const router = useRouter();
+  const routeParams = useParams();
+  const urlId = (routeParams?.id as string | undefined) ?? null;
+
   // ── Conversation persistence ────────────────────────────────────────
   const {
     conversations,
@@ -687,7 +696,74 @@ export default function Home() {
     loadConversations,
     ensureConversation,
     setActiveConversation,
-  } = useConversations(myClientId, !!myClientId);
+  } = useConversations(myClientId, !!myClientId, urlId);
+
+  // ── URL ↔ activeConversationId sync ───────────────────────────────────
+  // lastPushedIdRef tracks the last id we (or the URL) acknowledged, so that
+  // state→URL and URL→state effects don't fight each other.
+  const lastPushedIdRef = useRef<string | null>(urlId);
+  const prevActiveIdRef = useRef<string | null>(null);
+
+  // Effect 1 — state → URL: when activeConversationId changes (sidebar click,
+  // create, delete, orchestration auto-switch), push the matching URL.
+  useEffect(() => {
+    const prev = prevActiveIdRef.current;
+    prevActiveIdRef.current = activeConversationId;
+
+    if (!activeConversationId) {
+      // Fresh-chat / welcome: only push /chat if we previously had an active
+      // conv (e.g., user just deleted the last one) AND the URL still carries
+      // a conv id. Avoids clobbering the URL while the hook is still loading.
+      if (prev && urlId) {
+        lastPushedIdRef.current = null;
+        router.replace("/chat", { scroll: false });
+      }
+      return;
+    }
+
+    if (urlId === activeConversationId) {
+      lastPushedIdRef.current = activeConversationId;
+      return;
+    }
+
+    // State changed and differs from URL. If lastPushedRef already equals the
+    // current state, the mismatch came from an external URL change (back/
+    // forward); let Effect 2 handle it.
+    if (lastPushedIdRef.current === activeConversationId) {
+      return;
+    }
+
+    lastPushedIdRef.current = activeConversationId;
+    router.replace(`/chat/${activeConversationId}`, { scroll: false });
+  }, [activeConversationId, urlId, router]);
+
+  // Effect 2 — URL → state: when the URL changes externally (browser back/
+  // forward, paste-link), adopt it into state. Also validates the id.
+  useEffect(() => {
+    if (urlId === lastPushedIdRef.current) return; // we pushed this
+    if (!urlId) {
+      // navigated to / or /chat — clear ref so a later state push will fire
+      lastPushedIdRef.current = null;
+      return;
+    }
+    if (urlId === activeConversationId) {
+      // State already matches; nothing to do beyond syncing the ref
+      lastPushedIdRef.current = urlId;
+      return;
+    }
+    if (allConversations.length === 0) return; // wait for hook to load
+    if (!allConversations.some((c) => c.id === urlId)) {
+      // Unknown id: only redirect if state has nothing to fall back to.
+      // Otherwise Effect 1 will push /chat/<activeConversationId> instead.
+      if (!activeConversationId) {
+        lastPushedIdRef.current = null;
+        router.replace("/chat", { scroll: false });
+      }
+      return;
+    }
+    lastPushedIdRef.current = urlId;
+    setActiveConversation(urlId);
+  }, [urlId, activeConversationId, allConversations, setActiveConversation, router]);
 
   // ── Derive workflowId from active conversation metadata ──
   // When navigating to an orchestration conversation (sidebar click, F5 restore),

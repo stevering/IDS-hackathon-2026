@@ -136,12 +136,20 @@ export function useConversations(clientId: string, enabled = true, preferredInit
           setActiveConversationId(null);
           initialized.current = true;
         } else {
-          // Find an active conversation for this client, or use the most recent
+          // Prefer the conversation requested by the URL (/chat/<id>) when it
+          // matches one of the user's conversations. Otherwise fall back to the
+          // most recently active conv for this client, then the first conv.
+          const preferred = preferredInitialIdRef.current;
+          const fromUrl = preferred ? convs.find((c: Conversation) => c.id === preferred) : null;
           const active = convs.find(
             (c: Conversation) => c.is_active && c.client_id === clientId,
           );
-          const selectedId = active?.id ?? convs[0]?.id ?? null;
-          console.log("[Conversations] Selected active:", selectedId);
+          const selectedId = fromUrl?.id ?? active?.id ?? convs[0]?.id ?? null;
+          console.log(
+            "[Conversations] Selected active:",
+            selectedId,
+            fromUrl ? "(from URL)" : "(from is_active flag)",
+          );
           setActiveConversationId(selectedId);
           initialized.current = true;
         }
